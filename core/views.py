@@ -16,13 +16,14 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .decorators import super_admin_required
-from .forms import CategoryForm
-from .models import Bill, CashDrawer, Category, Cheque, Customer
+from .forms import CategoryForm, ProductForm
+from .models import Bill, CashDrawer, Category, Cheque, Customer, Product
 
 #: A cheque is "maturing soon" this many days out.
 CHEQUE_WARNING_DAYS = 3
@@ -185,9 +186,111 @@ def category_delete(request, pk):
     return redirect("core:category_list")
 
 
+# ------------------------------------------------------------------ products
+# Managers may list, create and edit. Deleting is super-admin only.
+
+
 @login_required
 def product_list(request):
-    return render(request, "core/placeholder.html", {"section": "Products"})
+    query = request.GET.get("q", "").strip()
+    category_id = request.GET.get("category", "").strip()
+
+    products = Product.objects.select_related("category").annotate(
+        custom_price_count=Count("customer_prices")
+    )
+    if query:
+        products = products.filter(name__icontains=query)
+
+    # An unparsable ?category= is ignored rather than 500ing on a bad filter.
+    selected_category = None
+    if category_id.isdigit():
+        selected_category = int(category_id)
+        products = products.filter(category_id=selected_category)
+
+    return render(
+        request,
+        "core/product_list.html",
+        {
+            "products": products,
+            "categories": Category.objects.all(),
+            "query": query,
+            "selected_category": selected_category,
+            "is_filtered": bool(query or selected_category),
+            "total_count": Product.objects.count(),
+        },
+    )
+
+
+@login_required
+def product_create(request):
+    form = ProductForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        product = form.save()
+        messages.success(request, f"Product '{product}' was created.")
+        return redirect("core:product_list")
+
+    return render(
+        request,
+        "core/product_form.html",
+        {"form": form, "is_edit": False},
+    )
+
+
+@login_required
+def product_update(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    form = ProductForm(request.POST or None, instance=product)
+
+    if request.method == "POST" and form.is_valid():
+        product = form.save()
+        messages.success(request, f"Product '{product}' was updated.")
+        return redirect("core:product_list")
+
+    return render(
+        request,
+        "core/product_form.html",
+        {"form": form, "product": product, "is_edit": True},
+    )
+
+
+@require_POST
+@super_admin_required
+def product_delete(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    label = str(product)
+
+    try:
+        product.delete()
+    except ProtectedError:
+        # Bill items, supplier bill items and production entries all PROTECT
+        # their product, so anything with history stays put.
+        messages.error(
+            request,
+            f"Cannot delete '{label}' — it is used by bills, supplier bills or "
+            f"production entries. Deactivate it instead to hide it from new bills.",
+        )
+    else:
+        messages.success(request, f"Product '{label}' was deleted.")
+
+    return redirect("core:product_list")
+
+
+@require_POST
+@login_required
+def product_toggle_active(request, pk):
+    """Flip is_active from the list page. Answers JSON for the inline toggle."""
+    product = get_object_or_404(Product, pk=pk)
+    product.is_active = not product.is_active
+    product.save(update_fields=["is_active"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "is_active": product.is_active,
+            "label": "Active" if product.is_active else "Inactive",
+        }
+    )
 
 
 @login_required

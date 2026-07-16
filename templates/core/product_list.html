@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Products · Senovka Plastics{% endblock %}
+{% block header %}Products{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <form method="get" role="search" class="flex w-full flex-col gap-2 sm:flex-row sm:max-w-2xl">
+    <div class="relative flex-1">
+      <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+        </svg>
+      </span>
+      <input type="search" name="q" value="{{ query }}"
+             placeholder="Search products…"
+             class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
+                    placeholder:text-slate-400 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+
+    <select name="category"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">All categories</option>
+      {% for category in categories %}
+        <option value="{{ category.pk }}" {% if category.pk == selected_category %}selected{% endif %}>
+          {{ category.name }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <div class="flex gap-2">
+      <button type="submit"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Search
+      </button>
+      {% if is_filtered %}
+        <a href="{% url 'core:product_list' %}"
+           class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+          Clear
+        </a>
+      {% endif %}
+    </div>
+  </form>
+
+  <a href="{% url 'core:product_create' %}"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Product
+  </a>
+</div>
+
+{% if is_filtered %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ products|length }} result{{ products|length|pluralize }}
+    <span class="text-slate-400">of {{ total_count }} products</span>
+  </p>
+{% endif %}
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Category</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Qty</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Default Price</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Custom Prices</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for product in products %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-5 py-3 font-medium text-slate-900">{{ product.name }}</td>
+            <td class="whitespace-nowrap px-5 py-3 text-slate-600">
+              {% if product.size %}{{ product.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ product.category.name }}</td>
+
+            {# Out of stock is the number an operator needs to spot at a glance. #}
+            <td class="whitespace-nowrap px-5 py-3 text-right font-medium
+                       {% if product.qty <= 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {{ product.qty|floatformat:"-3" }}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right text-slate-900">{{ product.default_price|floatformat:2 }}</td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right">
+              <span class="rounded-full px-2 py-0.5 text-xs font-semibold
+                           {% if product.custom_price_count %}bg-slate-100 text-slate-700{% else %}bg-slate-50 text-slate-400{% endif %}">
+                {{ product.custom_price_count }}
+              </span>
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3">
+              <button type="button"
+                      data-toggle-url="{% url 'core:product_toggle_active' product.pk %}"
+                      aria-pressed="{{ product.is_active|yesno:'true,false' }}"
+                      title="Click to {% if product.is_active %}deactivate{% else %}activate{% endif %}"
+                      class="js-toggle rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset transition
+                             disabled:opacity-50
+                             {% if product.is_active %}bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100
+                             {% else %}bg-slate-100 text-slate-500 ring-slate-200 hover:bg-slate-200{% endif %}">
+                {% if product.is_active %}Active{% else %}Inactive{% endif %}
+              </button>
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                <a href="{% url 'core:product_update' product.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+                {% if is_super_admin %}
+                  <button type="button"
+                          data-delete-url="{% url 'core:product_delete' product.pk %}"
+                          data-name="{{ product }}"
+                          data-prices="{{ product.custom_price_count }}"
+                          class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Delete
+                  </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8" class="px-5 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No products match your filters.</p>
+                <a href="{% url 'core:product_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear filters
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No products yet.</p>
+                <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Create the first one
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if is_super_admin %}
+<!-- ============ Delete confirmation modal (shared by every row) ============ -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">Delete product</h3>
+        <p class="mt-1 text-sm text-slate-600">
+          Delete <span id="delete-modal-name" class="font-semibold text-slate-900"></span>? This can't be undone.
+        </p>
+        <p id="delete-modal-warning" class="mt-2 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+        <p class="mt-2 text-xs text-slate-500">
+          Products used by bills, supplier bills or production entries can't be deleted —
+          deactivate those instead.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // ---- is_active quick toggle -------------------------------------------
+  (function () {
+    const CSRF = '{{ csrf_token }}';
+    const ON  = ['bg-emerald-50', 'text-emerald-700', 'ring-emerald-200', 'hover:bg-emerald-100'];
+    const OFF = ['bg-slate-100', 'text-slate-500', 'ring-slate-200', 'hover:bg-slate-200'];
+
+    document.querySelectorAll('.js-toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        // Guard against a double-click firing two flips that cancel out.
+        if (btn.disabled) return;
+        btn.disabled = true;
+
+        fetch(btn.dataset.toggleUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': CSRF, 'X-Requested-With': 'XMLHttpRequest' },
+        })
+          .then(function (res) {
+            if (!res.ok) throw new Error(res.status);
+            return res.json();
+          })
+          .then(function (data) {
+            btn.textContent = data.label;
+            btn.setAttribute('aria-pressed', String(data.is_active));
+            btn.title = 'Click to ' + (data.is_active ? 'deactivate' : 'activate');
+            btn.classList.remove.apply(btn.classList, data.is_active ? OFF : ON);
+            btn.classList.add.apply(btn.classList, data.is_active ? ON : OFF);
+          })
+          .catch(function () {
+            // Leave the badge showing the last known-good state.
+            btn.title = 'Could not update — please reload and try again.';
+          })
+          .finally(function () {
+            btn.disabled = false;
+          });
+      });
+    });
+  })();
+
+  // ---- delete modal ------------------------------------------------------
+  (function () {
+    const modal = document.getElementById('delete-modal');
+    if (!modal) return;  // managers don't get the modal
+
+    const form   = document.getElementById('delete-modal-form');
+    const nameEl = document.getElementById('delete-modal-name');
+    const warnEl = document.getElementById('delete-modal-warning');
+    const cancel = document.getElementById('delete-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.deleteUrl;
+      nameEl.textContent = '“' + btn.dataset.name + '”';
+
+      // CustomerPrice cascades, so say so before it silently disappears.
+      const prices = parseInt(btn.dataset.prices, 10);
+      if (prices > 0) {
+        warnEl.textContent = prices + ' customer price' + (prices === 1 ? '' : 's') +
+          ' set for this product will also be deleted.';
+        warnEl.classList.remove('hidden');
+      } else {
+        warnEl.classList.add('hidden');
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+</script>
+{% endblock %}
