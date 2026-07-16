@@ -2566,9 +2566,37 @@ def production_list(request):
 
 @login_required
 def ledger_index(request):
-    # The sidebar's Customer Ledger entry. The ledger itself is per-customer,
-    # at core:customer_ledger — this is still a placeholder section index.
-    return render(request, "core/placeholder.html", {"section": "Customer Ledger"})
+    """The sidebar's Customer Ledger entry: pick a customer, get their ledger.
+
+    Choosing one redirects to that customer's own ledger rather than drawing a
+    second copy here. One ledger page, one set of date filters, one PDF export
+    — two would only be two things to keep in step.
+    """
+    picked = request.GET.get("customer", "").strip()
+    if picked.isdigit() and Customer.objects.filter(pk=picked).exists():
+        return redirect("core:customer_ledger", pk=int(picked))
+
+    query = request.GET.get("q", "").strip()
+    customers = Customer.objects.annotate(
+        owed=Case(
+            When(balance__lt=0, then=Value(0) - F("balance")),
+            default=Value(ZERO),
+            output_field=MONEY,
+        )
+    )
+    if query:
+        customers = customers.filter(name__icontains=query)
+
+    return render(
+        request,
+        "core/ledger_index.html",
+        {
+            # Biggest debt first: the accounts most likely to be looked up.
+            "customers": customers.order_by("-owed", "name"),
+            "query": query,
+            "total_count": Customer.objects.count(),
+        },
+    )
 
 
 # -------------------------------------------------------------- sales report
