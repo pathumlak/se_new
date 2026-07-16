@@ -4,77 +4,193 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Senovka ERP{% endblock %}</title>
+  <title>{% block title %}Senovka Plastics{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   {% block extra_head %}{% endblock %}
 </head>
 <body class="h-full bg-slate-100 text-slate-800">
 
 {% if user.is_authenticated %}
-<div class="min-h-full">
+{# Active state keys off the resolved URL name, not request.path — path prefixes
+   would mark "Bill List" (/bills/) active while on "Make Bill" (/bills/new/). #}
+{% with active=request.resolver_match.url_name %}
+{% with link="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors" on="bg-slate-800 text-white" off="text-slate-400 hover:bg-slate-800/60 hover:text-white" %}
 
-  <!-- Mobile sidebar backdrop -->
+  <!-- Mobile backdrop -->
   <div id="sidebar-backdrop"
-       class="fixed inset-0 z-30 hidden bg-slate-900/50 lg:hidden"></div>
+       class="fixed inset-0 z-30 hidden bg-slate-900/60 backdrop-blur-sm lg:hidden"></div>
 
-  <!-- Sidebar -->
+  <!-- ======================= SIDEBAR ======================= -->
   <aside id="sidebar"
-         class="fixed inset-y-0 left-0 z-40 w-64 -translate-x-full transform bg-slate-900 text-slate-300
-                transition-transform duration-200 ease-in-out lg:translate-x-0">
-    <div class="flex h-16 items-center justify-between px-4 border-b border-slate-800">
-      <span class="text-lg font-semibold tracking-wide text-white">Senovka ERP</span>
-      <button id="sidebar-close" class="lg:hidden text-slate-400 hover:text-white" aria-label="Close navigation">
+         aria-label="Main navigation"
+         class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full transform flex-col
+                bg-slate-900 transition-transform duration-200 ease-in-out lg:translate-x-0">
+
+    <!-- Brand -->
+    <div class="flex h-16 shrink-0 items-center justify-between border-b border-slate-800 px-4">
+      <a href="{% url 'core:dashboard' %}" class="flex items-center gap-2.5">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-sm font-bold text-slate-900">SP</span>
+        <span class="text-base font-semibold tracking-tight text-white">Senovka Plastics</span>
+      </a>
+      <button id="sidebar-close" class="text-slate-400 hover:text-white lg:hidden" aria-label="Close navigation">
         <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
         </svg>
       </button>
     </div>
 
-    <nav class="mt-4 px-2 space-y-1">
-      {% url 'core:dashboard' as dashboard_url %}
-      <a href="{{ dashboard_url }}"
-         class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium
-                {% if request.path == dashboard_url %}bg-slate-800 text-white{% else %}hover:bg-slate-800 hover:text-white{% endif %}">
-        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round"
-                d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/>
+    <!-- Nav -->
+    <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+
+      <a href="{% url 'core:dashboard' %}" class="{{ link }} {% if active == 'dashboard' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.955-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
         </svg>
         Dashboard
       </a>
+
+      {% if is_super_admin %}
+      <a href="{% url 'core:category_list' %}" class="{{ link }} {% if active == 'category_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/>
+        </svg>
+        Categories
+        <span class="ml-auto rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 group-hover:text-slate-400">Admin</span>
+      </a>
+      {% endif %}
+
+      <a href="{% url 'core:product_list' %}" class="{{ link }} {% if active == 'product_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+        </svg>
+        Products
+      </a>
+
+      <a href="{% url 'core:customer_list' %}" class="{{ link }} {% if active == 'customer_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
+        </svg>
+        Customers
+      </a>
+
+      <a href="{% url 'core:make_bill' %}" class="{{ link }} {% if active == 'make_bill' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Make Bill
+      </a>
+
+      <a href="{% url 'core:bill_list' %}" class="{{ link }} {% if active == 'bill_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zM3.75 12h.007v.008H3.75V12zm0 5.25h.007v.008H3.75v-.008z"/>
+        </svg>
+        Bill List
+      </a>
+
+      <a href="{% url 'core:cheque_list' %}" class="{{ link }} {% if active == 'cheque_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/>
+        </svg>
+        Cheques
+      </a>
+
+      <a href="{% url 'core:cash_drawer' %}" class="{{ link }} {% if active == 'cash_drawer' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
+        </svg>
+        Cash Drawer
+      </a>
+
+      <a href="{% url 'core:supplier_bill_list' %}" class="{{ link }} {% if active == 'supplier_bill_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12"/>
+        </svg>
+        Supplier Bills
+      </a>
+
+      <a href="{% url 'core:production' %}" class="{{ link }} {% if active == 'production' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12M3 3l1.5 1.5M15 3l1.5 1.5M21 21v-9l-3.75-3"/>
+        </svg>
+        Production
+      </a>
+
+      <a href="{% url 'core:customer_ledger' %}" class="{{ link }} {% if active == 'customer_ledger' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+        </svg>
+        Customer Ledger
+      </a>
+
+      <a href="{% url 'core:sales_report' %}" class="{{ link }} {% if active == 'sales_report' %}{{ on }}{% else %}{{ off }}{% endif %}">
+        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+        </svg>
+        Sales Report
+      </a>
+
       {% block sidebar_nav %}{% endblock %}
     </nav>
-
-    <div class="absolute bottom-0 w-full border-t border-slate-800 p-4">
-      <p class="text-xs uppercase tracking-wide text-slate-500">Signed in as</p>
-      <p class="truncate text-sm font-medium text-white">{{ user.get_username }}</p>
-      <form method="post" action="{% url 'logout' %}" class="mt-3">
-        {% csrf_token %}
-        <button type="submit"
-                class="w-full rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200
-                       hover:bg-slate-700 hover:text-white">
-          Log out
-        </button>
-      </form>
-    </div>
   </aside>
 
-  <!-- Main column -->
+  <!-- ======================= MAIN ======================= -->
   <div class="lg:pl-64">
-    <header class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm">
-      <button id="sidebar-open" class="lg:hidden text-slate-600 hover:text-slate-900" aria-label="Open navigation">
+
+    <!-- Top bar -->
+    <header class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6">
+      <button id="sidebar-open" class="text-slate-600 hover:text-slate-900 lg:hidden" aria-label="Open navigation">
         <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
         </svg>
       </button>
-      <h1 class="text-base font-semibold text-slate-900">{% block header %}{% endblock %}</h1>
+
+      <h1 class="truncate text-base font-semibold text-slate-900">{% block header %}{% endblock %}</h1>
+
+      <div class="ml-auto flex items-center gap-3">
+        <div class="hidden text-right sm:block">
+          <p class="text-sm font-medium leading-tight text-slate-900">{{ user.get_username }}</p>
+          <p class="text-xs leading-tight text-slate-500">{{ user.email|default:"" }}</p>
+        </div>
+
+        {% if current_role %}
+          <span class="rounded-full px-2.5 py-1 text-xs font-semibold
+                       {% if is_super_admin %}bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200
+                       {% else %}bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200{% endif %}">
+            {{ user.get_role_display }}
+          </span>
+        {% endif %}
+
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium
+                         text-slate-700 transition hover:bg-slate-50 hover:text-slate-900">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
+            </svg>
+            <span class="hidden sm:inline">Log out</span>
+          </button>
+        </form>
+      </div>
     </header>
 
     <main class="p-4 sm:p-6 lg:p-8">
       {% if messages %}
         <div class="mb-6 space-y-2">
           {% for message in messages %}
-            <div class="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
-              {{ message }}
+            <div class="flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm
+                        {% if message.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800
+                        {% elif message.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800
+                        {% elif message.tags == 'warning' %}border-amber-200 bg-amber-50 text-amber-800
+                        {% else %}border-slate-200 bg-white text-slate-700{% endif %}">
+              <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                {% if message.tags == 'success' %}
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                {% else %}
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                {% endif %}
+              </svg>
+              <span>{{ message }}</span>
             </div>
           {% endfor %}
         </div>
@@ -83,31 +199,43 @@
       {% block content %}{% endblock %}
     </main>
   </div>
-</div>
+
+{% endwith %}
+{% endwith %}
 
 <script>
   (function () {
     const sidebar = document.getElementById('sidebar');
     const backdrop = document.getElementById('sidebar-backdrop');
+    const openBtn = document.getElementById('sidebar-open');
+    const closeBtn = document.getElementById('sidebar-close');
 
     function open() {
       sidebar.classList.remove('-translate-x-full');
       backdrop.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden', 'lg:overflow-auto');
     }
     function close() {
       sidebar.classList.add('-translate-x-full');
       backdrop.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden', 'lg:overflow-auto');
     }
 
-    document.getElementById('sidebar-open').addEventListener('click', open);
-    document.getElementById('sidebar-close').addEventListener('click', close);
+    openBtn.addEventListener('click', open);
+    closeBtn.addEventListener('click', close);
     backdrop.addEventListener('click', close);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+    // Reset inline mobile state when crossing into the lg breakpoint, so the
+    // desktop sidebar is never left translated off-canvas.
+    window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
+      if (e.matches) close();
+    });
   })();
 </script>
 
 {% else %}
-  {# Unauthenticated pages (login) render without the sidebar chrome. #}
+  {# Unauthenticated pages (login, anonymous 403) render without the chrome. #}
   {% block anon_content %}{% endblock %}
 {% endif %}
 

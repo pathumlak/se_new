@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block title %}Categories · Senovka Plastics{% endblock %}
+{% block header %}Categories{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <form method="get" role="search" class="flex w-full max-w-sm gap-2">
+    <div class="relative flex-1">
+      <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+        </svg>
+      </span>
+      <input type="search" name="q" value="{{ query }}"
+             placeholder="Search categories…"
+             class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
+                    placeholder:text-slate-400 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Search
+    </button>
+    {% if query %}
+      <a href="{% url 'core:category_list' %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </form>
+
+  <a href="{% url 'core:category_create' %}"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Category
+  </a>
+</div>
+
+{% if query %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ categories|length }} result{{ categories|length|pluralize }} for “{{ query }}”
+    <span class="text-slate-400">of {{ total_count }} categories</span>
+  </p>
+{% endif %}
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Products</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for category in categories %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-5 py-3 font-medium text-slate-900">{{ category.name }}</td>
+            <td class="px-5 py-3 text-slate-600">
+              {% if category.description %}
+                {{ category.description|truncatechars:80 }}
+              {% else %}
+                <span class="text-slate-300">—</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-right">
+              <span class="rounded-full px-2 py-0.5 text-xs font-semibold
+                           {% if category.product_count %}bg-slate-100 text-slate-700{% else %}bg-slate-50 text-slate-400{% endif %}">
+                {{ category.product_count }}
+              </span>
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                <a href="{% url 'core:category_update' category.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+                <button type="button"
+                        data-delete-url="{% url 'core:category_delete' category.pk %}"
+                        data-name="{{ category.name }}"
+                        data-count="{{ category.product_count }}"
+                        class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                  Delete
+                </button>
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" class="px-5 py-12 text-center">
+              {% if query %}
+                <p class="text-sm text-slate-500">No categories match “{{ query }}”.</p>
+                <a href="{% url 'core:category_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear search
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No categories yet.</p>
+                <a href="{% url 'core:category_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Create the first one
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ Delete confirmation modal (shared by every row) ============ -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">Delete category</h3>
+        <p class="mt-1 text-sm text-slate-600">
+          Delete <span id="delete-modal-name" class="font-semibold text-slate-900"></span>? This can't be undone.
+        </p>
+        <p id="delete-modal-warning" class="mt-2 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const modal   = document.getElementById('delete-modal');
+    const form    = document.getElementById('delete-modal-form');
+    const nameEl  = document.getElementById('delete-modal-name');
+    const warnEl  = document.getElementById('delete-modal-warning');
+    const cancel  = document.getElementById('delete-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.deleteUrl;
+      nameEl.textContent = '“' + btn.dataset.name + '”';
+
+      // Product.category is PROTECTed — warn before the POST rather than
+      // letting the server bounce it back with an error.
+      const count = parseInt(btn.dataset.count, 10);
+      if (count > 0) {
+        warnEl.textContent = count + ' product' + (count === 1 ? '' : 's') +
+          ' still belong to this category, so it cannot be deleted yet.';
+        warnEl.classList.remove('hidden');
+      } else {
+        warnEl.classList.add('hidden');
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,30 +1,91 @@
 {% extends "base.html" %}
-{% load crispy_forms_tags %}
 
-{% block title %}Sign in · Senovka ERP{% endblock %}
+{% block title %}Sign in · Senovka Plastics{% endblock %}
 
 {% block anon_content %}
-<div class="flex min-h-screen items-center justify-center px-4">
-  <div class="w-full max-w-sm">
+<div class="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-12">
+  <div class="w-full max-w-md">
+
+    <!-- Brand -->
     <div class="mb-8 text-center">
-      <h1 class="text-2xl font-bold tracking-tight text-slate-900">Senovka ERP</h1>
-      <p class="mt-1 text-sm text-slate-500">Sign in to continue</p>
+      <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-slate-900 shadow-lg">
+        <span class="text-xl font-bold text-white">SP</span>
+      </div>
+      <h1 class="text-2xl font-bold tracking-tight text-slate-900">Senovka Plastics</h1>
+      <p class="mt-1 text-sm text-slate-500">Enterprise Resource Planning</p>
     </div>
 
-    <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+    <!-- Card -->
+    <div class="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+      <h2 class="mb-6 text-lg font-semibold text-slate-900">Sign in to your account</h2>
+
       {% if form.errors %}
-        <div class="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
-          Your username and password didn't match. Please try again.
+        <div class="mb-5 flex gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <svg class="mt-0.5 h-5 w-5 shrink-0 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+          <p class="text-sm text-red-700">
+            {% if form.non_field_errors %}
+              {{ form.non_field_errors|join:" " }}
+            {% else %}
+              Please correct the errors below.
+            {% endif %}
+          </p>
         </div>
       {% endif %}
 
-      <form method="post">
+      <form method="post" novalidate>
         {% csrf_token %}
-        {{ form|crispy }}
-        <input type="hidden" name="next" value="{{ next }}">
+
+        <div class="space-y-5">
+          <div>
+            <label for="{{ form.username.id_for_label }}"
+                   class="mb-1.5 block text-sm font-medium text-slate-700">
+              Username
+            </label>
+            <input type="text"
+                   name="{{ form.username.html_name }}"
+                   id="{{ form.username.id_for_label }}"
+                   value="{{ form.username.value|default:'' }}"
+                   autocomplete="username"
+                   autofocus
+                   required
+                   class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900
+                          placeholder:text-slate-400 shadow-sm
+                          focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                   placeholder="Enter your username">
+            {% for error in form.username.errors %}
+              <p class="mt-1.5 text-xs text-red-600">{{ error }}</p>
+            {% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.password.id_for_label }}"
+                   class="mb-1.5 block text-sm font-medium text-slate-700">
+              Password
+            </label>
+            <input type="password"
+                   name="{{ form.password.html_name }}"
+                   id="{{ form.password.id_for_label }}"
+                   autocomplete="current-password"
+                   required
+                   class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900
+                          placeholder:text-slate-400 shadow-sm
+                          focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                   placeholder="Enter your password">
+            {% for error in form.password.errors %}
+              <p class="mt-1.5 text-xs text-red-600">{{ error }}</p>
+            {% endfor %}
+          </div>
+        </div>
+
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+
         <button type="submit"
-                class="mt-4 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white
-                       hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2">
+                class="mt-7 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white
+                       transition hover:bg-slate-800
+                       focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2">
           Sign in
         </button>
       </form>

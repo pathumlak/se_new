@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
     # Third party
     "crispy_forms",
     "crispy_tailwind",
@@ -52,6 +53,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.current_role",
             ],
         },
     },
@@ -96,9 +98,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "core.User"
 
-LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "core:dashboard"
-LOGOUT_REDIRECT_URL = "login"
+LOGIN_URL = "login"  # -> /login/
+LOGIN_REDIRECT_URL = "core:dashboard"  # -> /dashboard/
+LOGOUT_REDIRECT_URL = "login"  # -> /login/
 
 
 # --- Crispy forms ---------------------------------------------------------
