@@ -27,6 +27,7 @@ from core.models import (
     CustomerPrice,
     Payment,
     Product,
+    ProductionEntry,
     SupplierBill,
     SupplierBillItem,
 )
@@ -44,7 +45,7 @@ NAV_URL_NAMES = [
     ("core:cheque_list", True),
     ("core:cash_drawer", True),
     ("core:supplier_bill_list", True),
-    ("core:production", True),
+    ("core:production_list", True),
     ("core:ledger_index", True),
     ("core:sales_report", True),
 ]
@@ -4301,6 +4302,395 @@ class SupplierBillListTests(UserFactoryMixin, TestCase):
         html = self.client.get(reverse("core:supplier_bill_list")).content.decode()
         self.assertNotIn(reverse("core:supplier_bill_delete", args=[self.early.pk]), html)
         self.assertNotIn('id="delete-modal"', html)
+
+
+class ProductionTests(UserFactoryMixin, TestCase):
+    """Production is the other way stock reaches the shelf. Pipe starts at 10,
+    Tank at 4."""
+
+    def setUp(self):
+        self.client.force_login(self.make_admin())
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", size="50mm", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.tank = Product.objects.create(
+            name="Tank", category=cat,
+            default_price=Decimal("500.00"), qty=Decimal("4.000"),
+        )
+        self.today = timezone.localdate()
+
+    def payload(self, lines=None, production_date=None):
+        return {
+            "production_date": (production_date or self.today).isoformat()
+            if not isinstance(production_date, str)
+            else production_date,
+            "lines": lines if lines is not None else [
+                {"product_id": self.pipe.pk, "qty_produced": "5"}
+            ],
+        }
+
+    def save(self, payload=None):
+        return self.client.post(
+            reverse("core:production_create"),
+            json.dumps(payload if payload is not None else self.payload()),
+            content_type="application/json",
+        )
+
+    def stock(self, product):
+        product.refresh_from_db()
+        return product.qty
+
+    # ---- saving ----
+    def test_saving_writes_the_entry_and_adds_the_stock(self):
+        response = self.save()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+
+        entry = ProductionEntry.objects.get()
+        self.assertEqual(entry.product, self.pipe)
+        self.assertEqual(entry.production_date, self.today)
+        self.assertEqual(entry.qty_produced, Decimal("5.000"))
+        self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+
+    def test_the_snapshot_records_the_shelf_either_side(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.assertEqual(entry.stock_before, Decimal("10.000"))
+        self.assertEqual(entry.stock_after, Decimal("15.000"))
+
+    def test_the_snapshot_holds_still_when_stock_moves_on(self):
+        """That is the whole point of storing it: Product.qty is one running
+        number, so a later sale would otherwise erase what production found."""
+        self.save()
+        self.pipe.qty = Decimal("2.000")  # sold since
+        self.pipe.save(update_fields=["qty"])
+
+        entry = ProductionEntry.objects.get()
+        self.assertEqual(entry.stock_before, Decimal("10.000"))
+        self.assertEqual(entry.stock_after, Decimal("15.000"))
+
+    def test_only_rows_with_a_quantity_are_saved(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.tank.pk, "qty_produced": "0"},
+        ]))
+        self.assertEqual(ProductionEntry.objects.count(), 1)
+        self.assertEqual(ProductionEntry.objects.get().product, self.pipe)
+        self.assertEqual(self.stock(self.tank), Decimal("4.000"))
+
+    def test_a_whole_sheet_of_zeroes_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "0"},
+            {"product_id": self.tank.pk, "qty_produced": "0"},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one product", response.json()["error"])
+        self.assertFalse(ProductionEntry.objects.exists())
+
+    def test_several_products_in_one_day(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.tank.pk, "qty_produced": "2.5"},
+        ]))
+        self.assertEqual(ProductionEntry.objects.count(), 2)
+        self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+        self.assertEqual(self.stock(self.tank), Decimal("6.500"))
+
+    def test_production_can_be_backdated(self):
+        past = self.today - timedelta(days=5)
+        self.save(self.payload(production_date=past))
+        self.assertEqual(ProductionEntry.objects.get().production_date, past)
+        # The date labels the entry; the stock still lands on today's shelf.
+        self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+
+    def test_production_cannot_be_dated_in_the_future(self):
+        response = self.save(
+            self.payload(production_date=self.today + timedelta(days=1))
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("future", response.json()["error"])
+        self.assertFalse(ProductionEntry.objects.exists())
+
+    def test_a_missing_date_is_refused(self):
+        response = self.save({"production_date": "", "lines": [
+            {"product_id": self.pipe.pk, "qty_produced": "5"}
+        ]})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("production date", response.json()["error"])
+
+    def test_the_same_product_twice_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.pipe.pk, "qty_produced": "2"},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("on the sheet twice", response.json()["error"])
+
+    def test_a_negative_quantity_is_refused_not_a_500(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "-5"}
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot be negative", response.json()["error"])
+
+    def test_a_refused_sheet_writes_nothing(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.tank.pk, "qty_produced": "nonsense"},
+        ]))
+        self.assertFalse(ProductionEntry.objects.exists())
+        self.assertEqual(self.stock(self.pipe), Decimal("10.000"))
+
+    def test_junk_payloads_are_refused_not_500s(self):
+        for body in ["not json", json.dumps([]), ""]:
+            with self.subTest(body=body[:10]):
+                response = self.client.post(
+                    reverse("core:production_create"), body,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+
+    # ---- editing ----
+    def test_raising_the_quantity_adds_the_difference(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "8"}
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.qty_produced, Decimal("8.000"))
+        self.assertEqual(self.stock(self.pipe), Decimal("18.000"))
+
+    def test_lowering_the_quantity_takes_the_difference_back(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "2"}
+        )
+        self.assertEqual(self.stock(self.pipe), Decimal("12.000"))
+
+    def test_editing_keeps_stock_before_and_moves_stock_after(self):
+        """stock_before is what the entry found on the day, and correcting the
+        quantity now cannot change that. What it left behind does change."""
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "8"}
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.stock_before, Decimal("10.000"))
+        self.assertEqual(entry.stock_after, Decimal("18.000"))
+
+    def test_lowering_below_what_is_left_on_the_shelf_is_refused(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+
+        self.pipe.qty = Decimal("1.000")  # sold since
+        self.pipe.save(update_fields=["qty"])
+
+        response = self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "1"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"], "qty_produced",
+            "Can't take 4.000 back off Pipe 50mm — only 1.000 is left, so some "
+            "of it has been sold.",
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.qty_produced, Decimal("5.000"))
+        self.assertEqual(self.stock(self.pipe), Decimal("1.000"))
+
+    def test_a_zero_quantity_is_refused_on_edit(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        response = self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "0"}
+        )
+        self.assertFormError(
+            response.context["form"], "qty_produced",
+            "Quantity must be above 0. Delete the entry instead.",
+        )
+        self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+
+    def test_the_edit_page_renders(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        response = self.client.get(reverse("core:production_edit", args=[entry.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Pipe 50mm")
+        self.assertEqual(response.context["form"].initial["qty_produced"], Decimal("5.000"))
+
+    def test_a_manager_may_edit(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.client.force_login(self.make_manager())
+        response = self.client.get(reverse("core:production_edit", args=[entry.pk]))
+        self.assertEqual(response.status_code, 200)
+
+    # ---- deleting ----
+    def test_delete_takes_the_stock_back_off(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        response = self.client.post(
+            reverse("core:production_delete", args=[entry.pk]), follow=True
+        )
+        self.assertRedirects(response, reverse("core:production_list"))
+        self.assertFalse(ProductionEntry.objects.exists())
+        self.assertEqual(self.stock(self.pipe), Decimal("10.000"))
+
+    def test_delete_is_refused_when_the_stock_has_been_sold(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+
+        self.pipe.qty = Decimal("3.000")  # only 3 of the 15 left
+        self.pipe.save(update_fields=["qty"])
+
+        response = self.client.post(
+            reverse("core:production_delete", args=[entry.pk]), follow=True
+        )
+        self.assertTrue(ProductionEntry.objects.filter(pk=entry.pk).exists())
+        self.assertEqual(self.stock(self.pipe), Decimal("3.000"))
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertTrue(any("has been sold" in m for m in msgs), msgs)
+
+    def test_manager_cannot_delete(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.client.force_login(self.make_manager())
+        response = self.client.post(reverse("core:production_delete", args=[entry.pk]))
+        self.assertRedirects(response, reverse("core:dashboard"))
+        self.assertTrue(ProductionEntry.objects.exists())
+
+    def test_delete_rejects_get(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.assertEqual(
+            self.client.get(reverse("core:production_delete", args=[entry.pk])).status_code,
+            405,
+        )
+
+    # ---- the create page ----
+    def test_the_create_page_lists_active_products_with_their_stock(self):
+        response = self.client.get(reverse("core:production_create"))
+        self.assertEqual(response.status_code, 200)
+        names = [p.name for p in response.context["products"]]
+        self.assertEqual(sorted(names), ["Pipe", "Tank"])
+        self.assertContains(response, 'data-stock="10.000"')
+
+    def test_an_inactive_product_is_not_on_the_sheet(self):
+        self.pipe.is_active = False
+        self.pipe.save(update_fields=["is_active"])
+        response = self.client.get(reverse("core:production_create"))
+        self.assertNotIn("Pipe", [p.name for p in response.context["products"]])
+
+    def test_the_date_defaults_to_today_and_cannot_be_future(self):
+        response = self.client.get(reverse("core:production_create"))
+        stamp = self.today.isoformat()
+        self.assertContains(response, f'value="{stamp}" max="{stamp}"')
+
+    def test_pages_require_login(self):
+        self.client.logout()
+        for url in (
+            reverse("core:production_list"),
+            reverse("core:production_create"),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 302)
+                self.assertIn(reverse("login"), response["Location"])
+
+
+class ProductionListTests(UserFactoryMixin, TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cat = Category.objects.create(name="Pipes")
+        cls.pipe = Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("0.000")
+        )
+        cls.tank = Product.objects.create(
+            name="Tank", category=cat, default_price=Decimal("500.00"), qty=Decimal("0.000")
+        )
+
+        def entry(product, day, qty, before="0"):
+            return ProductionEntry.objects.create(
+                product=product, production_date=date(2026, 6, day),
+                qty_produced=Decimal(qty),
+                stock_before=Decimal(before),
+                stock_after=Decimal(before) + Decimal(qty),
+            )
+
+        # 1 Jun: two products. 5 Jun: one. 9 Jun: one.
+        cls.jun1_pipe = entry(cls.pipe, 1, "10")
+        cls.jun1_tank = entry(cls.tank, 1, "5")
+        cls.jun5_pipe = entry(cls.pipe, 5, "3", before="10")
+        cls.jun9_tank = entry(cls.tank, 9, "7", before="5")
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def days(self, **params):
+        response = self.client.get(reverse("core:production_list"), params)
+        self.response = response
+        return response.context["days"]
+
+    def test_entries_are_grouped_by_day_newest_first(self):
+        days = self.days()
+        self.assertEqual([d["date"] for d in days],
+                         [date(2026, 6, 9), date(2026, 6, 5), date(2026, 6, 1)])
+
+    def test_each_day_totals_its_products_and_quantity(self):
+        days = {d["date"]: d for d in self.days()}
+        first = days[date(2026, 6, 1)]
+        self.assertEqual(first["product_count"], 2)
+        self.assertEqual(first["total_qty"], Decimal("15.000"))
+
+        last = days[date(2026, 6, 9)]
+        self.assertEqual(last["product_count"], 1)
+        self.assertEqual(last["total_qty"], Decimal("7.000"))
+
+    def test_a_day_carries_its_entries_for_the_expanded_view(self):
+        days = {d["date"]: d for d in self.days()}
+        entries = days[date(2026, 6, 1)]["entries"]
+        self.assertEqual({e.product.name for e in entries}, {"Pipe", "Tank"})
+
+    def test_the_expanded_view_shows_the_snapshots(self):
+        self.days()
+        self.assertContains(self.response, "Stock Before")
+        self.assertContains(self.response, "Stock After")
+
+    def test_filter_by_date_range(self):
+        days = self.days(from_date="2026-06-05", to_date="2026-06-09")
+        self.assertEqual([d["date"] for d in days], [date(2026, 6, 9), date(2026, 6, 5)])
+
+    def test_filter_by_product(self):
+        days = self.days(product=self.pipe.pk)
+        self.assertEqual([d["date"] for d in days], [date(2026, 6, 5), date(2026, 6, 1)])
+        self.assertEqual(self.response.context["entry_count"], 2)
+
+    def test_unknown_filter_values_are_ignored_not_500s(self):
+        days = self.days(product="zzz", from_date="nonsense")
+        self.assertEqual(len(days), 3)
+        self.assertFalse(self.response.context["is_filtered"])
+
+    def test_row_actions_are_offered(self):
+        self.client.force_login(self.make_admin())
+        response = self.client.get(reverse("core:production_list"))
+        self.assertContains(response, reverse("core:production_edit", args=[self.jun1_pipe.pk]))
+        self.assertContains(response, reverse("core:production_delete", args=[self.jun1_pipe.pk]))
+
+    def test_manager_gets_no_delete_control(self):
+        html = self.client.get(reverse("core:production_list")).content.decode()
+        self.assertNotIn(reverse("core:production_delete", args=[self.jun1_pipe.pk]), html)
+        self.assertNotIn('id="delete-modal"', html)
+
+    def test_empty_state(self):
+        ProductionEntry.objects.all().delete()
+        response = self.client.get(reverse("core:production_list"))
+        self.assertEqual(list(response.context["days"]), [])
+        self.assertContains(response, "No production recorded yet.")
 
 
 class ContextProcessorTests(UserFactoryMixin, TestCase):

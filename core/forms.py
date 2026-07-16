@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import CashDrawer, Category, Cheque, Customer, Product
+from .models import CashDrawer, Category, Cheque, Customer, Product, ProductionEntry
 
 INPUT_CLASSES = (
     "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
@@ -196,6 +196,38 @@ class CustomerForm(forms.ModelForm):
         if limit < 0:
             raise forms.ValidationError("Credit limit cannot be negative.")
         return limit
+
+
+class ProductionEntryForm(forms.ModelForm):
+    """Correct one production entry.
+
+    Only the quantity: the product and the date say what was made and when,
+    and changing those makes it a different entry. stock_before and stock_after
+    are snapshots the view maintains, never typed.
+    """
+
+    class Meta:
+        model = ProductionEntry
+        fields = ["qty_produced"]
+        labels = {"qty_produced": "Quantity produced"}
+        widgets = {
+            "qty_produced": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.001",
+                    "min": "0",
+                    "autofocus": True,
+                }
+            ),
+        }
+
+    def clean_qty_produced(self):
+        qty = self.cleaned_data["qty_produced"]
+        if qty <= 0:
+            raise forms.ValidationError(
+                "Quantity must be above 0. Delete the entry instead."
+            )
+        return qty
 
 
 class SupplierQuickForm(forms.ModelForm):

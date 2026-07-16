@@ -113,7 +113,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
         Supplier Bills
       </a>
 
-      <a href="{% url 'core:production' %}" class="{{ link }} {% if active == 'production' %}{{ on }}{% else %}{{ off }}{% endif %}">
+      <a href="{% url 'core:production_list' %}" class="{{ link }} {% if active == 'production_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
         <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12M3 3l1.5 1.5M15 3l1.5 1.5M21 21v-9l-3.75-3"/>
         </svg>

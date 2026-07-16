@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Record Production · Senovka Plastics{% endblock %}
+{% block header %}Record Production{% endblock %}
+
+{% block content %}
+
+<!-- Date -->
+<div class="mb-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+  <label for="production_date" class="mb-1.5 block text-sm font-medium text-slate-700">
+    Production date <span class="text-rose-500">*</span>
+  </label>
+  {# max=today: production can be recorded late, never early. #}
+  <input type="date" id="production_date" value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"
+         class="block w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900
+                shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  <p class="mt-1.5 text-xs text-slate-400">
+    Defaults to today. Pick an earlier date to record production after the fact.
+  </p>
+
+  {% comment %}
+  Backdating labels the entries, not the stock: Current Stock below is the
+  shelf as it stands right now, and the production goes on top of it whatever
+  date is chosen. Say so rather than let a past date imply the figures rewind.
+  {% endcomment %}
+  <p id="backdate-note" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+</div>
+
+<!-- Sheet -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Current Stock</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Qty Produced</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">New Stock</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for product in products %}
+          <tr class="js-row hover:bg-slate-50" data-product-id="{{ product.pk }}" data-stock="{{ product.qty }}">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{{ product.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if product.size %}{{ product.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">
+              {{ product.qty|floatformat:"-3" }}
+            </td>
+
+            <td class="px-4 py-3 text-right">
+              <input type="number" step="0.001" min="0" inputmode="decimal" value="0"
+                     aria-label="Quantity produced for {{ product }}"
+                     class="js-qty w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm
+                            text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              <p class="js-error mt-1 hidden text-right text-xs text-rose-600"></p>
+            </td>
+
+            <td class="js-new whitespace-nowrap px-4 py-3 text-right text-slate-400">
+              {{ product.qty|floatformat:"-3" }}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="px-4 py-12 text-center">
+              <p class="text-sm text-slate-500">No active products.</p>
+              <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                Create one first
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Save -->
+<div class="sticky bottom-0 z-10 mt-4 pb-1">
+  <div class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-lg
+              sm:flex-row sm:items-center sm:justify-between">
+    <p class="text-sm text-slate-600">
+      <span id="count" class="font-semibold text-slate-900">0</span>
+      <span id="noun">products</span> ·
+      <span id="total" class="font-semibold text-slate-900">0</span> produced
+    </p>
+    <div class="flex items-center justify-end gap-2">
+      <p id="save-note" class="mr-1 text-xs" role="status"></p>
+      <a href="{% url 'core:production_list' %}"
+         class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </a>
+      <button type="button" id="save" disabled
+              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
+                     transition hover:bg-slate-800 disabled:opacity-50">
+        Save Production
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const SAVE_URL = '{% url "core:production_create" %}';
+    const CSRF = '{{ csrf_token }}';
+    const TODAY = '{{ today|date:"Y-m-d" }}';
+
+    function $(id) { return document.getElementById(id); }
+
+    const dateInput = $('production_date');
+    const backdate  = $('backdate-note');
+    const saveBtn   = $('save');
+    const saveNote  = $('save-note');
+    const countEl   = $('count');
+    const nounEl    = $('noun');
+    const totalEl   = $('total');
+
+    const rows = Array.from(document.querySelectorAll('.js-row'));
+
+    // Quantities carry 3 dp, so trailing zeros are noise: 10.000 reads as 10.
+    function trim(n) {
+      return String(Number(n.toFixed(3)));
+    }
+    // Number('') is 0, which would read an empty box as "none made" — which is
+    // the same as 0 here, so blank is fine. Anything unparsable is not.
+    function num(value) {
+      const text = String(value).trim();
+      if (text === '') return 0;
+      const n = Number(text);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function refresh() {
+      let count = 0;
+      let total = 0;
+      let bad = 0;
+
+      rows.forEach(function (row) {
+        const input = row.querySelector('.js-qty');
+        const error = row.querySelector('.js-error');
+        const newCell = row.querySelector('.js-new');
+        const stock = Number(row.dataset.stock);
+        const qty = num(input.value);
+
+        let message = '';
+        if (Number.isNaN(qty)) message = 'Enter a number.';
+        else if (qty < 0) message = 'Cannot be negative.';
+
+        error.textContent = message;
+        error.classList.toggle('hidden', message === '');
+        row.classList.toggle('bg-rose-50', message !== '');
+
+        if (message !== '') {
+          bad += 1;
+          newCell.textContent = '—';
+          return;
+        }
+
+        newCell.textContent = trim(stock + qty);
+        // Only a row with something on it is going anywhere.
+        const producing = qty > 0;
+        newCell.classList.toggle('text-slate-400', !producing);
+        newCell.classList.toggle('font-medium', producing);
+        newCell.classList.toggle('text-emerald-600', producing);
+
+        if (producing) {
+          count += 1;
+          total += qty;
+        }
+      });
+
+      countEl.textContent = count;
+      nounEl.textContent = count === 1 ? 'product' : 'products';
+      totalEl.textContent = trim(total);
+
+      saveBtn.disabled = count === 0 || bad > 0 || !dateInput.value;
+      saveNote.className = 'mr-1 text-xs text-slate-400';
+      saveNote.textContent = bad > 0
+        ? 'Fix the rows that need attention.'
+        : count === 0
+          ? 'Enter a quantity against at least one product.'
+          : '';
+    }
+
+    function checkDate() {
+      const chosen = dateInput.value;
+      if (chosen && chosen < TODAY) {
+        backdate.textContent = 'Recording against an earlier date. Current Stock below ' +
+          'is the shelf as it stands today, and production is added on top of it — ' +
+          'the figures do not rewind to that date.';
+        backdate.classList.remove('hidden');
+      } else {
+        backdate.classList.add('hidden');
+      }
+      refresh();
+    }
+
+    rows.forEach(function (row) {
+      // 'input' fires on keyup, paste and the spinner arrows alike.
+      row.querySelector('.js-qty').addEventListener('input', refresh);
+    });
+    dateInput.addEventListener('change', checkDate);
+
+    saveBtn.addEventListener('click', function () {
+      if (saveBtn.disabled) return;
+      // Held down for the round trip: a second click is a second day's worth.
+      saveBtn.disabled = true;
+      saveNote.textContent = 'Saving…';
+      saveNote.className = 'mr-1 text-xs text-slate-400';
+
+      const lines = [];
+      rows.forEach(function (row) {
+        const qty = num(row.querySelector('.js-qty').value);
+        if (qty > 0) {
+          lines.push({
+            product_id: Number(row.dataset.productId),
+            qty_produced: String(qty),
+          });
+        }
+      });
+
+      fetch(SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': CSRF,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ production_date: dateInput.value, lines: lines }),
+      })
+        .then(function (res) {
+          // A session that expired mid-sheet answers with the login HTML, not
+          // JSON. Anything unparsable counts as a failure.
+          return res.json()
+            .catch(function () { return null; })
+            .then(function (data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function (result) {
+          if (!result.ok || !result.data || !result.data.success) {
+            const message = result.data && result.data.error
+              ? result.data.error
+              : 'Could not save — please try again.';
+            throw new Error(message);
+          }
+          window.location = result.data.redirect;
+        })
+        .catch(function (err) {
+          saveNote.textContent = err.message;
+          saveNote.className = 'mr-1 text-xs text-rose-600';
+          saveBtn.disabled = false;
+        });
+    });
+
+    checkDate();
+  })();
+</script>
+{% endblock %}

@@ -311,6 +311,17 @@ class ProductionEntry(models.Model):
     )
     production_date = models.DateField()
     qty_produced = models.DecimalField(max_digits=12, decimal_places=3)
+
+    # A snapshot of the shelf either side of this entry, kept because
+    # Product.qty is a single running number: once a later sale moves it, there
+    # is no way to work out what production found or left behind.
+    #
+    # Only ever equal to Product.qty at the moment the entry was written. A
+    # sale afterwards moves the product on and leaves these where they were,
+    # which is the point of them.
+    stock_before = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    stock_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

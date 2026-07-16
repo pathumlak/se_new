@@ -34,6 +34,7 @@ from .forms import (
     CustomerForm,
     CustomerPriceForm,
     ProductForm,
+    ProductionEntryForm,
     ProductQuickForm,
     SupplierQuickForm,
 )
@@ -48,6 +49,7 @@ from .models import (
     CustomerPrice,
     Payment,
     Product,
+    ProductionEntry,
     SupplierBill,
     SupplierBillItem,
     User,
@@ -2294,9 +2296,258 @@ def supplier_bill_list(request):
     )
 
 
+# ------------------------------------------------------------- production
+# Stock made in-house. The only other thing that puts stock on the shelf is a
+# supplier bill; everything else takes it off.
+
+
+class ProductionError(BillError):
+    """A reason to roll the save back, worded for the operator.
+
+    Subclasses BillError so the shared _decimal parser's complaints are caught
+    here too rather than escaping as a 500.
+    """
+
+
+def _move_stock(product, delta):
+    """Apply a signed change to a product's stock.
+
+    Guarded downwards: correcting or removing production takes stock back off
+    the shelf, and it may already have been sold. Letting a product hold a
+    negative quantity would drop it out of every sales screen, which filters on
+    qty > 0.
+    """
+    if delta >= ZERO:
+        Product.objects.filter(pk=product.pk).update(qty=F("qty") + delta)
+        return
+
+    needed = -delta
+    moved = Product.objects.filter(pk=product.pk, qty__gte=needed).update(
+        qty=F("qty") - needed
+    )
+    if not moved:
+        product.refresh_from_db()
+        raise ProductionError(
+            f"Can't take {needed:.3f} back off {product} — only {product.qty:.3f} "
+            f"is left, so some of it has been sold."
+        )
+
+
+@transaction.atomic
+def _save_production(payload):
+    """Write one day's production, or none of it."""
+    production_date = _parse_date(payload.get("production_date"))
+    if production_date is None:
+        raise ProductionError("Choose a production date.")
+    if production_date > timezone.localdate():
+        raise ProductionError("Production can't be dated in the future.")
+
+    raw_lines = payload.get("lines")
+    if not isinstance(raw_lines, list):
+        raise ProductionError(MALFORMED)
+
+    products = {
+        product.pk: product
+        for product in Product.objects.filter(
+            pk__in=[raw.get("product_id") for raw in raw_lines if isinstance(raw, dict)],
+            is_active=True,
+        )
+    }
+
+    entries = []
+    seen = set()
+    for raw in raw_lines:
+        if not isinstance(raw, dict):
+            raise ProductionError(MALFORMED)
+
+        qty = _decimal(raw.get("qty_produced"), "Quantity produced", 3)
+        # Only rows with something on them are saved; the rest of the table is
+        # just the shelf, sitting there at zero.
+        if qty == ZERO:
+            continue
+
+        product = products.get(raw.get("product_id"))
+        if product is None:
+            raise ProductionError("A product on this sheet is no longer available.")
+        if product.pk in seen:
+            raise ProductionError(f"{product} is on the sheet twice.")
+        seen.add(product.pk)
+        entries.append((product, qty))
+
+    if not entries:
+        raise ProductionError("Enter a quantity against at least one product.")
+
+    written = []
+    for product, qty in entries:
+        # Read inside the transaction: the snapshot has to be the shelf as this
+        # entry found it, not as the page rendered it some minutes ago.
+        product.refresh_from_db()
+        before = product.qty
+
+        written.append(
+            ProductionEntry.objects.create(
+                product=product,
+                production_date=production_date,
+                qty_produced=qty,
+                stock_before=before,
+                stock_after=before + qty,
+            )
+        )
+        _move_stock(product, qty)
+
+    return production_date, written
+
+
+@transaction.atomic
+def _update_production(entry, qty):
+    """Correct one entry, moving the shelf by the difference."""
+    diff = qty - entry.qty_produced
+    _move_stock(entry.product, diff)
+
+    entry.qty_produced = qty
+    # stock_before stays: it is what this entry found, and no correction now
+    # changes what was on the shelf then. What it left behind does change.
+    entry.stock_after = entry.stock_before + qty
+    entry.save(update_fields=["qty_produced", "stock_after"])
+    return entry
+
+
+@transaction.atomic
+def _delete_production(entry):
+    _move_stock(entry.product, -entry.qty_produced)
+    entry.delete()
+
+
 @login_required
-def production(request):
-    return render(request, "core/placeholder.html", {"section": "Production"})
+def production_create(request):
+    if request.method == "POST":
+        try:
+            payload = json.loads(request.body or b"{}")
+        except json.JSONDecodeError:
+            return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+        if not isinstance(payload, dict):
+            return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+
+        try:
+            production_date, written = _save_production(payload)
+        except BillError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        total = sum((entry.qty_produced for entry in written), ZERO)
+        messages.success(
+            request,
+            f"{len(written)} product{'' if len(written) == 1 else 's'} produced on "
+            f"{production_date:%d %b %Y} — {total:.3f} in total.",
+        )
+        return JsonResponse(
+            {"success": True, "redirect": reverse("core:production_list")}
+        )
+
+    products = Product.objects.select_related("category")
+    return render(
+        request,
+        "core/production_create.html",
+        {
+            "products": products.filter(is_active=True),
+            "today": timezone.localdate(),
+        },
+    )
+
+
+@login_required
+def production_edit(request, pk):
+    entry = get_object_or_404(
+        ProductionEntry.objects.select_related("product"), pk=pk
+    )
+
+    form = ProductionEntryForm(request.POST or None, instance=entry)
+    if request.method == "POST" and form.is_valid():
+        try:
+            _update_production(entry, form.cleaned_data["qty_produced"])
+        except BillError as exc:
+            form.add_error("qty_produced", str(exc))
+        else:
+            messages.success(
+                request,
+                f"{entry.product} production on {entry.production_date:%d %b %Y} "
+                f"is now {entry.qty_produced:.3f}. Stock is {entry.product.qty:.3f}.",
+            )
+            return redirect("core:production_list")
+
+    return render(
+        request, "core/production_edit.html", {"form": form, "entry": entry}
+    )
+
+
+@require_POST
+@super_admin_required
+def production_delete(request, pk):
+    entry = get_object_or_404(
+        ProductionEntry.objects.select_related("product"), pk=pk
+    )
+    label = f"{entry.product} on {entry.production_date:%d %b %Y}"
+
+    try:
+        _delete_production(entry)
+    except BillError as exc:
+        messages.error(request, f"Cannot delete {label} — {exc}")
+        return redirect("core:production_list")
+
+    messages.success(request, f"Production of {label} was deleted and reversed.")
+    return redirect("core:production_list")
+
+
+@login_required
+def production_list(request):
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    product_id = request.GET.get("product", "").strip()
+    selected_product = int(product_id) if product_id.isdigit() else None
+
+    entries = ProductionEntry.objects.select_related("product")
+    if from_date:
+        entries = entries.filter(production_date__gte=from_date)
+    if to_date:
+        entries = entries.filter(production_date__lte=to_date)
+    if selected_product:
+        entries = entries.filter(product_id=selected_product)
+
+    # Newest day first, and within a day the order they were entered.
+    entries = entries.order_by("-production_date", "id")
+
+    # Grouped here rather than by a second query per day: the rows are already
+    # in hand and already in the right order.
+    days = []
+    for entry in entries:
+        if not days or days[-1]["date"] != entry.production_date:
+            days.append(
+                {
+                    "date": entry.production_date,
+                    "entries": [],
+                    "total_qty": ZERO,
+                }
+            )
+        days[-1]["entries"].append(entry)
+        days[-1]["total_qty"] += entry.qty_produced
+
+    for day in days:
+        day["product_count"] = len(day["entries"])
+
+    return render(
+        request,
+        "core/production_list.html",
+        {
+            "days": days,
+            "products": Product.objects.filter(production_entries__isnull=False).distinct(),
+            "from_date": from_date,
+            "to_date": to_date,
+            "selected_product": selected_product,
+            "is_filtered": bool(from_date or to_date or selected_product),
+            "entry_count": sum(day["product_count"] for day in days),
+            "total_count": ProductionEntry.objects.count(),
+        },
+    )
 
 
 @login_required

@@ -85,7 +85,11 @@ urlpatterns = [
     # Inline creation from the supplier bill form.
     path("api/supplier/create/", views.supplier_quick_create, name="supplier_quick_create"),
     path("api/product/create/", views.product_quick_create, name="product_quick_create"),
-    path("production/", views.production, name="production"),
+    path("production/", views.production_list, name="production_list"),
+    # GET renders the day's sheet; POST saves it.
+    path("production/create/", views.production_create, name="production_create"),
+    path("production/<int:pk>/edit/", views.production_edit, name="production_edit"),
+    path("production/<int:pk>/delete/", views.production_delete, name="production_delete"),
     # Section index only. The ledger itself is per-customer, above.
     path("ledger/", views.ledger_index, name="ledger_index"),
     path("reports/sales/", views.sales_report, name="sales_report"),
