@@ -2,19 +2,25 @@ import json
 import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core import mail
+from django.core.management import call_command
 from django.db import connection
-from django.test import Client, SimpleTestCase, TestCase
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
+from core import views
 from core.models import (
     Bill,
+    BillItem,
     CashDrawer,
+    CashTransfer,
     Category,
     Cheque,
     Customer,
@@ -392,9 +398,12 @@ class DashboardStatsTests(UserFactoryMixin, TestCase):
         self.assertEqual(self.ctx["cash_balance"], Decimal("3000.00"))
 
     def test_maturing_cheque_count_respects_window_and_status(self):
+        """Pending only, and no lower bound: a cheque that matured days ago and
+        still isn't banked is the most urgent of the lot. Held cheques are ones
+        we chose not to bank, so they aren't chased here."""
         self.assertEqual(self.ctx["maturing_count"], 3)
         numbers = {c.cheque_no for c in self.ctx["maturing_cheques"]}
-        self.assertEqual(numbers, {"DUE-TODAY", "DUE-3", "HELD-2"})
+        self.assertEqual(numbers, {"DUE-TODAY", "DUE-3", "OVERDUE"})
 
     def test_maturing_cheques_sorted_by_maturity(self):
         dates = [c.maturity_date for c in self.ctx["maturing_cheques"]]
@@ -420,8 +429,20 @@ class DashboardStatsTests(UserFactoryMixin, TestCase):
 
     def test_cheque_warning_cards_rendered(self):
         self.assertContains(self.response, "DUE-TODAY")
-        self.assertContains(self.response, "HELD-2")
+        self.assertContains(self.response, "OVERDUE")
         self.assertNotContains(self.response, "DAY-4")
+        self.assertNotContains(self.response, "HELD-2")
+
+    def test_the_warning_card_can_be_dismissed(self):
+        self.assertContains(self.response, 'id="dismiss-cheques"')
+        # Keyed to the day and the exact cheques, so a dismissal can't bury a
+        # warning for ever or hide a new one behind an old dismissal.
+        signature = self.response.context["cheque_signature"]
+        self.assertTrue(signature.startswith(self.today.isoformat() + ":"))
+        ids = sorted(c.pk for c in self.ctx["maturing_cheques"])
+        self.assertEqual(
+            signature, f"{self.today.isoformat()}:" + ",".join(str(i) for i in ids)
+        )
 
     def test_amounts_rendered_in_page(self):
         self.assertContains(self.response, "17,800.00")  # outstanding
@@ -1735,6 +1756,1788 @@ class BillCreateStepTwoTests(UserFactoryMixin, TestCase):
 
     def test_step_two_starts_hidden(self):
         self.assertContains(self.response, 'id="step-2" class="hidden')
+
+
+class BillCreatePaymentTests(UserFactoryMixin, TestCase):
+    """Step 3's validation is JavaScript. What Django owns is the contract it
+    reads: the payment codes, the account codes, and who is offered the credit
+    limit override."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(
+            name="Nimal",
+            balance=Decimal("-5000.00"),
+            credit_limit=Decimal("10000.00"),
+        )
+
+    def page(self, admin=False):
+        self.client.force_login(self.make_admin() if admin else self.make_manager())
+        return self.client.get(reverse("core:bill_create"))
+
+    def test_every_payment_type_is_offered(self):
+        response = self.page()
+        for value, _ in Bill.PaymentType.choices:
+            with self.subTest(payment_type=value):
+                self.assertContains(response, f'name="payment_type" value="{value}"')
+                self.assertContains(response, f'id="pay-{value}"')
+
+    def test_payment_values_come_straight_off_the_model(self):
+        """The save step stores these verbatim, so a typo here is a bill with
+        an unusable payment_type."""
+        self.assertEqual(
+            [v for v, _ in self.page().context["payment_types"]],
+            ["full_cash", "full_cheque", "partial", "mixed", "pay_later"],
+        )
+
+    def test_account_choices_come_straight_off_the_model(self):
+        self.assertEqual(
+            [v for v, _ in self.page().context["account_choices"]],
+            ["senovka", "dinusha"],
+        )
+
+    def test_transfer_accounts_are_offered_with_a_physical_cash_default(self):
+        response = self.page()
+        self.assertContains(response, 'id="fullcash-account"')
+        self.assertContains(response, "None (physical cash)")
+        self.assertContains(response, "Senovka Account")
+        self.assertContains(response, "Dinusha Account")
+
+    def test_cheque_fields_appear_for_every_type_that_takes_one(self):
+        response = self.page()
+        for prefix in ("fullchq", "partchq", "mixchq"):
+            for field in ("no", "bank", "branch", "acc", "amount", "received", "maturity"):
+                with self.subTest(field=f"{prefix}-{field}"):
+                    self.assertContains(response, f'id="{prefix}-{field}"')
+
+    def test_cheque_received_date_defaults_to_today(self):
+        response = self.page()
+        today = timezone.localdate().isoformat()
+        self.assertContains(response, f'id="fullchq-received" value="{today}"')
+
+    def test_customer_carries_the_credit_limit_for_the_check(self):
+        self.assertContains(self.page(), 'data-credit-limit="10000.00"')
+
+    def test_super_admin_gets_the_credit_override(self):
+        response = self.page(admin=True)
+        self.assertContains(response, 'id="credit-override"')
+        self.assertContains(response, "Override the credit limit")
+
+    def test_manager_gets_no_override_control_only_an_explanation(self):
+        """The script gates on this element's absence, so a manager must not be
+        served one at all."""
+        response = self.page()
+        self.assertNotContains(response, 'id="credit-override"')
+        self.assertContains(response, "Only a super admin can approve")
+
+    def test_script_is_told_the_role(self):
+        self.assertContains(self.page(admin=True), "IS_SUPER_ADMIN = true")
+        self.assertContains(self.page(), "IS_SUPER_ADMIN = false")
+
+    def test_step_three_starts_hidden(self):
+        self.assertContains(self.page(), 'id="step-3" class="hidden')
+
+
+class BillSaveTests(UserFactoryMixin, TestCase):
+    """Every figure below is hand-computed.
+
+    Nimal owes 5,000 (balance -5000). A 1,000 bill means 6,000 settles
+    everything: 1,000 for the goods and 5,000 for the debt.
+    """
+
+    def setUp(self):
+        self.user = self.make_manager()
+        self.client.force_login(self.user)
+
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", size="50mm", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.tank = Product.objects.create(
+            name="Tank", category=cat,
+            default_price=Decimal("500.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("-5000.00"), credit_limit=Decimal("10000.00")
+        )
+        self.url = reverse("core:bill_save")
+
+    def cheque(self, amount="6000.00", **overrides):
+        data = {
+            "cheque_no": "C-1001",
+            "bank_name": "BOC",
+            "branch": "Galle",
+            "acc_no": "123",
+            "amount": amount,
+            "received_date": "2026-07-16",
+            "maturity_date": "2026-08-16",
+        }
+        data.update(overrides)
+        return data
+
+    def payload(self, payment=None, lines=None, customer=None):
+        return {
+            "customer_id": (customer or self.nimal).pk,
+            "lines": lines if lines is not None else [
+                {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"}
+            ],
+            "payment": payment or {"type": "full_cash", "cash": "6000.00", "account": ""},
+        }
+
+    def post(self, payload=None, **kwargs):
+        return self.client.post(
+            self.url,
+            json.dumps(payload if payload is not None else self.payload()),
+            content_type="application/json",
+            **kwargs,
+        )
+
+    # ---- the happy path ----
+    def test_full_cash_writes_the_whole_bill(self):
+        response = self.post()
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+
+        bill = Bill.objects.get()
+        self.assertEqual(body["redirect"], reverse("core:bill_detail", args=[bill.pk]))
+        self.assertEqual(bill.customer, self.nimal)
+        self.assertEqual(bill.subtotal, Decimal("1000.00"))
+        self.assertEqual(bill.total_amount, Decimal("1000.00"))
+        self.assertEqual(bill.paid_amount, Decimal("6000.00"))
+        self.assertEqual(bill.payment_type, Bill.PaymentType.FULL_CASH)
+        self.assertEqual(bill.status, Bill.Status.PAID)
+        self.assertEqual(bill.bill_date, timezone.localdate())
+
+    def test_line_is_written_with_a_recomputed_total(self):
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}
+        ], payment={"type": "full_cash", "cash": "7000.00", "account": ""}))
+        item = BillItem.objects.get()
+        self.assertEqual(item.qty, Decimal("2.000"))
+        self.assertEqual(item.unit_price, Decimal("1000.00"))
+        self.assertEqual(item.line_total, Decimal("2000.00"))
+
+    def test_a_line_total_from_the_browser_is_ignored(self):
+        """The client could send anything; the server does its own sum."""
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00",
+             "line_total": "1.00"}
+        ], payment={"type": "full_cash", "cash": "7000.00", "account": ""}))
+        self.assertEqual(BillItem.objects.get().line_total, Decimal("2000.00"))
+        self.assertEqual(Bill.objects.get().subtotal, Decimal("2000.00"))
+
+    def test_stock_is_deducted(self):
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "3", "unit_price": "1000.00"}
+        ], payment={"type": "full_cash", "cash": "8000.00", "account": ""}))
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("7.000"))
+
+    # ---- the balance ----
+    def test_paying_in_full_settles_the_balance(self):
+        """-5000 owed, 1000 bill, 6000 paid -> square."""
+        self.post()
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("0.00"))
+        self.assertEqual(Bill.objects.get().balance_change, Decimal("5000.00"))
+
+    def test_pay_later_deepens_the_debt(self):
+        """A sale on credit must make the balance MORE negative, not less."""
+        self.post(self.payload(payment={"type": "pay_later"}))
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-6000.00"))
+
+        bill = Bill.objects.get()
+        self.assertEqual(bill.paid_amount, Decimal("0.00"))
+        self.assertEqual(bill.balance_change, Decimal("-1000.00"))
+        self.assertEqual(bill.status, Bill.Status.UNPAID)
+
+    def test_balance_change_is_the_move_the_bill_actually_made(self):
+        """new_balance = old_balance + balance_change, for any payment type."""
+        for payment, cash in (
+            ({"type": "pay_later"}, None),
+            ({"type": "full_cash", "cash": "6000.00", "account": ""}, "6000.00"),
+        ):
+            with self.subTest(payment=payment["type"]):
+                Bill.objects.all().delete()
+                self.nimal.balance = Decimal("-5000.00")
+                self.nimal.save(update_fields=["balance"])
+
+                before = self.nimal.balance
+                self.post(self.payload(payment=payment))
+                self.nimal.refresh_from_db()
+                bill = Bill.objects.get()
+                self.assertEqual(self.nimal.balance, before + bill.balance_change)
+
+    def test_a_customer_in_credit_can_buy_on_pay_later(self):
+        kamal = Customer.objects.create(name="Kamal", balance=Decimal("2500.00"))
+        self.post(self.payload(customer=kamal, payment={"type": "pay_later"}))
+        kamal.refresh_from_db()
+        # 2500 credit less a 1000 bill leaves 1500 credit.
+        self.assertEqual(kamal.balance, Decimal("1500.00"))
+
+    # ---- payment types ----
+    def test_full_cash_as_physical_cash_lands_in_the_drawer(self):
+        self.post()
+        payment = Payment.objects.get()
+        self.assertEqual(payment.method, Payment.Method.CASH)
+        self.assertEqual(payment.amount, Decimal("6000.00"))
+        self.assertEqual(payment.account, "")
+
+        entry = CashDrawer.objects.get()
+        self.assertEqual(entry.txn_type, CashDrawer.TxnType.IN)
+        self.assertEqual(entry.amount, Decimal("6000.00"))
+        self.assertEqual(entry.bill, Bill.objects.get())
+        self.assertFalse(CashTransfer.objects.exists())
+
+    def test_full_cash_banked_to_an_account_nets_the_drawer_to_zero(self):
+        """Cash in then straight out: writing only the transfer would take the
+        drawer down by money it never held."""
+        self.post(self.payload(
+            payment={"type": "full_cash", "cash": "6000.00", "account": "senovka"}
+        ))
+        transfer = CashTransfer.objects.get()
+        self.assertEqual(transfer.to_account, CashTransfer.Account.SENOVKA)
+        self.assertEqual(transfer.amount, Decimal("6000.00"))
+
+        kinds = sorted(CashDrawer.objects.values_list("txn_type", flat=True))
+        self.assertEqual(kinds, ["in", "transfer"])
+        self.assertEqual(views._cash_drawer_balance(), Decimal("0.00"))
+
+    def test_full_cheque_writes_the_cheque(self):
+        self.post(self.payload(
+            payment={"type": "full_cheque", "cheque": self.cheque()}
+        ))
+        payment = Payment.objects.get()
+        self.assertEqual(payment.method, Payment.Method.CHEQUE)
+
+        cheque = Cheque.objects.get()
+        self.assertEqual(cheque.cheque_no, "C-1001")
+        self.assertEqual(cheque.bank_name, "BOC")
+        self.assertEqual(cheque.branch, "Galle")
+        self.assertEqual(cheque.acc_no, "123")
+        self.assertEqual(cheque.amount, Decimal("6000.00"))
+        self.assertEqual(cheque.customer, self.nimal)
+        self.assertEqual(cheque.status, Cheque.Status.PENDING)
+        self.assertFalse(CashDrawer.objects.exists())
+
+    def test_partial_writes_both_legs(self):
+        self.post(self.payload(payment={
+            "type": "partial",
+            "cash": "2000.00",
+            "cheque": self.cheque(amount="4000.00"),
+        }))
+        methods = sorted(Payment.objects.values_list("method", flat=True))
+        self.assertEqual(methods, ["cash", "cheque"])
+        self.assertEqual(Bill.objects.get().paid_amount, Decimal("6000.00"))
+        self.assertEqual(Cheque.objects.get().amount, Decimal("4000.00"))
+
+    def test_mixed_writes_all_three_legs(self):
+        self.post(self.payload(payment={
+            "type": "mixed",
+            "cash": "1000.00",
+            "transfer": "2000.00",
+            "account": "dinusha",
+            "cheque": self.cheque(amount="3000.00"),
+        }))
+        methods = sorted(Payment.objects.values_list("method", flat=True))
+        self.assertEqual(methods, ["cash", "cheque", "transfer"])
+        self.assertEqual(Bill.objects.get().paid_amount, Decimal("6000.00"))
+
+        transfer = CashTransfer.objects.get()
+        self.assertEqual(transfer.to_account, CashTransfer.Account.DINUSHA)
+        self.assertEqual(transfer.amount, Decimal("2000.00"))
+        # The cash leg reached the drawer; the bank transfer never did.
+        self.assertEqual(views._cash_drawer_balance(), Decimal("1000.00"))
+
+    def test_mixed_cheque_is_optional(self):
+        self.post(self.payload(payment={
+            "type": "mixed", "cash": "4000.00", "transfer": "2000.00",
+            "account": "senovka",
+        }))
+        self.assertTrue(Bill.objects.exists())
+        self.assertFalse(Cheque.objects.exists())
+
+    # ---- custom prices ----
+    def test_an_edited_price_becomes_the_customers_price(self):
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "900.00"}
+        ], payment={"type": "full_cash", "cash": "5900.00", "account": ""}))
+        price = CustomerPrice.objects.get()
+        self.assertEqual(price.customer, self.nimal)
+        self.assertEqual(price.product, self.pipe)
+        self.assertEqual(price.unit_price, Decimal("900.00"))
+
+    def test_an_existing_custom_price_is_updated_not_duplicated(self):
+        CustomerPrice.objects.create(
+            customer=self.nimal, product=self.pipe, unit_price=Decimal("950.00")
+        )
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "900.00"}
+        ], payment={"type": "full_cash", "cash": "5900.00", "account": ""}))
+        self.assertEqual(CustomerPrice.objects.count(), 1)
+        self.assertEqual(CustomerPrice.objects.get().unit_price, Decimal("900.00"))
+
+    def test_billing_at_the_default_price_creates_no_custom_price(self):
+        """Otherwise every product ever sold picks up a redundant override."""
+        self.post()
+        self.assertFalse(CustomerPrice.objects.exists())
+
+    def test_billing_at_the_existing_custom_price_leaves_it_alone(self):
+        CustomerPrice.objects.create(
+            customer=self.nimal, product=self.pipe, unit_price=Decimal("900.00")
+        )
+        before = CustomerPrice.objects.get().updated_at
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "900.00"}
+        ], payment={"type": "full_cash", "cash": "5900.00", "account": ""}))
+        self.assertEqual(CustomerPrice.objects.get().updated_at, before)
+
+    def test_the_browsers_price_changed_flag_is_not_trusted(self):
+        """The comparison is against the stored price, not against a claim."""
+        self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00",
+             "price_changed": True}
+        ]))
+        self.assertFalse(CustomerPrice.objects.exists())
+
+    # ---- validation and rollback ----
+    def test_overselling_stock_saves_nothing(self):
+        # Paid in full, so the credit check can't fire and mask the stock one:
+        # 99 x 1000 = 99,000, plus the 5,000 already owed.
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "99", "unit_price": "1000.00"}
+        ], payment={"type": "full_cash", "cash": "104000.00", "account": ""}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Not enough stock", response.json()["error"])
+        self.assertRollbackClean()
+
+    def test_a_wrong_payment_total_saves_nothing(self):
+        response = self.post(self.payload(
+            payment={"type": "full_cash", "cash": "5000.00", "account": ""}
+        ))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Payment must total 6000.00", response.json()["error"])
+        self.assertRollbackClean()
+
+    def test_a_bad_second_line_rolls_back_the_first(self):
+        """The first line is written and its stock taken before the second one
+        fails, so this only holds if the transaction actually unwinds.
+
+        Paid in full again, so the failure that lands is the stock one.
+        1,000 + 49,500 = 50,500, plus the 5,000 owed.
+        """
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"},
+            {"product_id": self.tank.pk, "qty": "99", "unit_price": "500.00"},
+        ], payment={"type": "full_cash", "cash": "55500.00", "account": ""}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Not enough stock for Tank", response.json()["error"])
+        self.assertRollbackClean()
+        self.tank.refresh_from_db()
+        self.assertEqual(self.tank.qty, Decimal("10.000"))
+
+    def test_incomplete_cheque_details_save_nothing(self):
+        response = self.post(self.payload(payment={
+            "type": "full_cheque", "cheque": self.cheque(cheque_no=""),
+        }))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Cheque number is required.")
+        self.assertRollbackClean()
+
+    def test_backdated_maturity_is_refused(self):
+        response = self.post(self.payload(payment={
+            "type": "full_cheque",
+            "cheque": self.cheque(received_date="2026-07-16", maturity_date="2026-07-01"),
+        }))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot be before the received date", response.json()["error"])
+
+    def test_transfer_without_an_account_is_refused(self):
+        response = self.post(self.payload(payment={
+            "type": "mixed", "cash": "4000.00", "transfer": "2000.00", "account": "",
+        }))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("account for the transfer", response.json()["error"])
+
+    def test_the_same_product_twice_is_refused(self):
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"},
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"},
+        ], payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("on the bill twice", response.json()["error"])
+
+    def test_an_inactive_product_cannot_be_billed(self):
+        self.pipe.is_active = False
+        self.pipe.save(update_fields=["is_active"])
+        response = self.post(self.payload(payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertRollbackClean()
+
+    def test_a_supplier_cannot_be_billed(self):
+        supplier = Customer.objects.create(name="Raw Supplies", is_supplier=True)
+        response = self.post(self.payload(customer=supplier, payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "That customer can't be billed.")
+
+    def test_an_empty_bill_is_refused(self):
+        response = self.post(self.payload(lines=[], payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one product", response.json()["error"])
+
+    def test_junk_payloads_are_refused_not_500s(self):
+        for body in ["not json", json.dumps([]), json.dumps({}), ""]:
+            with self.subTest(body=body[:12]):
+                response = self.client.post(
+                    self.url, body, content_type="application/json"
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.json()["success"])
+        self.assertRollbackClean()
+
+    # ---- the credit limit ----
+    def test_pay_later_within_the_limit_is_allowed(self):
+        self.post(self.payload(payment={"type": "pay_later"}))
+        self.assertTrue(Bill.objects.exists())
+
+    def test_manager_cannot_bill_past_the_credit_limit(self):
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "10", "unit_price": "1000.00"}
+        ], payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("super admin has to approve", response.json()["error"])
+        self.assertRollbackClean()
+
+    def test_a_manager_forging_the_override_is_still_refused(self):
+        """The page hides the checkbox from managers; that is a courtesy, not
+        a control. The flag comes from the browser."""
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "10", "unit_price": "1000.00"}
+        ], payment={"type": "pay_later", "credit_override": True}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("super admin has to approve", response.json()["error"])
+        self.assertRollbackClean()
+
+    def test_super_admin_needs_the_override_to_pass_the_limit(self):
+        self.client.force_login(self.make_admin())
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "10", "unit_price": "1000.00"}
+        ], payment={"type": "pay_later"}))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("needs an override", response.json()["error"])
+        self.assertRollbackClean()
+
+    def test_super_admin_with_the_override_may_pass_the_limit(self):
+        self.client.force_login(self.make_admin())
+        response = self.post(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "10", "unit_price": "1000.00"}
+        ], payment={"type": "pay_later", "credit_override": True}))
+        self.assertEqual(response.status_code, 200)
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-15000.00"))
+
+    # ---- access ----
+    def test_save_rejects_get(self):
+        self.assertEqual(self.client.get(self.url).status_code, 405)
+
+    def test_save_requires_login(self):
+        self.client.logout()
+        response = self.post()
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+        self.assertRollbackClean()
+
+    def assertRollbackClean(self):
+        """Nothing the save touches may survive a refused bill."""
+        self.assertFalse(Bill.objects.exists())
+        self.assertFalse(BillItem.objects.exists())
+        self.assertFalse(Payment.objects.exists())
+        self.assertFalse(Cheque.objects.exists())
+        self.assertFalse(CashDrawer.objects.exists())
+        self.assertFalse(CashTransfer.objects.exists())
+        self.assertFalse(CustomerPrice.objects.exists())
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-5000.00"))
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
+
+
+class BillDetailTests(UserFactoryMixin, TestCase):
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", size="50mm", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("-5000.00"), credit_limit=Decimal("10000.00")
+        )
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cheque", "cheque": {
+                    "cheque_no": "C-1001", "bank_name": "BOC", "branch": "Galle",
+                    "acc_no": "123", "amount": "7000.00",
+                    "received_date": "2026-07-16", "maturity_date": "2026-08-16",
+                }},
+            }),
+            content_type="application/json",
+        )
+        self.bill = Bill.objects.get()
+
+    def url(self):
+        return reverse("core:bill_detail", args=[self.bill.pk])
+
+    def test_detail_renders_the_bill(self):
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f"Bill #{self.bill.pk}")
+        self.assertContains(response, "Nimal")
+        self.assertContains(response, "Full Cheque")
+        self.assertContains(response, "Paid")
+
+    def test_detail_shows_the_items_and_subtotal(self):
+        response = self.client.get(self.url())
+        self.assertContains(response, "Pipe")
+        self.assertContains(response, "50mm")
+        self.assertContains(response, "2,000.00")
+
+    def test_detail_shows_the_cheque(self):
+        response = self.client.get(self.url())
+        self.assertContains(response, "C-1001")
+        self.assertContains(response, "BOC")
+        self.assertContains(response, "Galle")
+
+    def test_detail_reconstructs_the_balance_either_side_of_the_bill(self):
+        response = self.client.get(self.url())
+        # -5000 before, +5000 from the bill, 0 after.
+        self.assertEqual(response.context["balance_before"], Decimal("-5000.00"))
+        self.assertEqual(response.context["bill"].balance_change, Decimal("5000.00"))
+        self.assertEqual(response.context["bill"].customer.balance, Decimal("0.00"))
+
+    def test_saving_flashes_a_message_onto_the_detail_page(self):
+        Bill.objects.all().delete()
+        self.nimal.balance = Decimal("-5000.00")
+        self.nimal.save(update_fields=["balance"])
+        response = self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"}],
+                "payment": {"type": "pay_later"},
+            }),
+            content_type="application/json",
+        )
+        bill = Bill.objects.get()
+        page = self.client.get(response.json()["redirect"])
+        msgs = [str(m) for m in page.context["messages"]]
+        self.assertIn(f"Bill #{bill.pk} for Nimal was saved.", msgs)
+
+    def test_detail_missing_bill_404s(self):
+        self.assertEqual(
+            self.client.get(reverse("core:bill_detail", args=[9999])).status_code, 404
+        )
+
+    def test_detail_requires_login(self):
+        self.client.logout()
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
+class BillMutationMixin(UserFactoryMixin):
+    """A saved bill to edit or delete.
+
+    Nimal owes 5,000. The bill is 2 pipes at 1,000 = 2,000, paid in full with
+    7,000 cash (2,000 for the goods, 5,000 clearing the debt), which squares
+    the account and leaves 8 pipes on the shelf.
+    """
+
+    def build(self):
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", size="50mm", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.tank = Product.objects.create(
+            name="Tank", category=cat,
+            default_price=Decimal("500.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("-5000.00"), credit_limit=Decimal("50000.00")
+        )
+
+        self.client.force_login(self.make_admin())
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+            }),
+            content_type="application/json",
+        )
+        self.bill = Bill.objects.get()
+
+    def assertOriginalBillUndone(self):
+        """The world as it was before the bill: stock back, account owing."""
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-5000.00"))
+
+
+class BillDeleteTests(BillMutationMixin, TestCase):
+    def setUp(self):
+        self.build()
+
+    def url(self):
+        return reverse("core:bill_delete", args=[self.bill.pk])
+
+    def test_the_saved_bill_starts_from_the_expected_state(self):
+        """Guards the fixture: the reversal tests mean nothing if this drifts."""
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("8.000"))
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("0.00"))
+        self.assertEqual(CashDrawer.objects.count(), 1)
+
+    def test_delete_reverses_everything_and_removes_the_bill(self):
+        response = self.client.post(self.url(), follow=True)
+        self.assertRedirects(response, reverse("core:bill_list"))
+        self.assertOriginalBillUndone()
+
+        self.assertFalse(Bill.objects.exists())
+        self.assertFalse(BillItem.objects.exists())
+        self.assertFalse(Payment.objects.exists())
+        self.assertFalse(CashDrawer.objects.exists())
+
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(f"Bill #{self.bill.pk} for Nimal was deleted and reversed.", msgs)
+
+    def test_delete_takes_the_cheque_and_transfer_with_it(self):
+        """Both hang off Payment by CASCADE, so deleting payments clears them."""
+        Bill.objects.all().delete()
+        self.nimal.balance = Decimal("-5000.00")
+        self.nimal.save(update_fields=["balance"])
+        self.pipe.qty = Decimal("10.000")
+        self.pipe.save(update_fields=["qty"])
+
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {
+                    "type": "mixed", "cash": "2000.00", "transfer": "2000.00",
+                    "account": "senovka",
+                    "cheque": {
+                        "cheque_no": "C-1", "bank_name": "BOC", "branch": "", "acc_no": "",
+                        "amount": "3000.00", "received_date": "2026-07-16",
+                        "maturity_date": "2026-08-16",
+                    },
+                },
+            }),
+            content_type="application/json",
+        )
+        bill = Bill.objects.get()
+        self.assertTrue(Cheque.objects.exists())
+        self.assertTrue(CashTransfer.objects.exists())
+
+        self.client.post(reverse("core:bill_delete", args=[bill.pk]))
+        self.assertFalse(Cheque.objects.exists())
+        self.assertFalse(CashTransfer.objects.exists())
+        self.assertOriginalBillUndone()
+
+    def test_cash_drawer_entries_do_not_outlive_the_bill(self):
+        """CashDrawer.bill is SET_NULL, so a cascade would leave them behind
+        still counting toward the drawer balance."""
+        self.assertEqual(views._cash_drawer_balance(), Decimal("7000.00"))
+        self.client.post(self.url())
+        self.assertFalse(CashDrawer.objects.exists())
+        self.assertEqual(views._cash_drawer_balance(), Decimal("0.00"))
+
+    def test_a_pay_later_bill_reverses_its_debt(self):
+        Bill.objects.all().delete()
+        self.nimal.balance = Decimal("-5000.00")
+        self.nimal.save(update_fields=["balance"])
+        self.pipe.qty = Decimal("10.000")
+        self.pipe.save(update_fields=["qty"])
+
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "pay_later"},
+            }),
+            content_type="application/json",
+        )
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-7000.00"))
+
+        self.client.post(reverse("core:bill_delete", args=[Bill.objects.get().pk]))
+        self.assertOriginalBillUndone()
+
+    def test_manager_cannot_delete_a_bill(self):
+        self.client.force_login(self.make_manager())
+        response = self.client.post(self.url())
+        self.assertRedirects(response, reverse("core:dashboard"))
+        self.assertTrue(Bill.objects.filter(pk=self.bill.pk).exists())
+
+    def test_delete_rejects_get(self):
+        self.assertEqual(self.client.get(self.url()).status_code, 405)
+        self.assertTrue(Bill.objects.filter(pk=self.bill.pk).exists())
+
+    def test_delete_missing_bill_404s(self):
+        self.assertEqual(
+            self.client.post(reverse("core:bill_delete", args=[9999])).status_code, 404
+        )
+
+    def test_modal_spells_out_what_will_be_reversed(self):
+        response = self.client.get(reverse("core:bill_detail", args=[self.bill.pk]))
+        reverses = json.loads(response.context["reverses"])
+        self.assertIn("1 line of stock returned", reverses)
+        self.assertIn("Nimal's balance returns to -5000.00", reverses)
+        self.assertIn(
+            "1 payment record removed, with any cheque or transfer on them", reverses
+        )
+        self.assertIn("1 cash drawer entry removed", reverses)
+
+    def test_manager_gets_no_delete_control(self):
+        self.client.force_login(self.make_manager())
+        for url in (reverse("core:bill_list"), reverse("core:bill_detail", args=[self.bill.pk])):
+            with self.subTest(url=url):
+                html = self.client.get(url).content.decode()
+                self.assertNotIn(self.url(), html)
+                self.assertNotIn('id="delete-modal"', html)
+
+
+class BillEditTests(BillMutationMixin, TestCase):
+    def setUp(self):
+        self.build()
+
+    def url(self):
+        return reverse("core:bill_edit", args=[self.bill.pk])
+
+    def post(self, payload):
+        return self.client.post(
+            self.url(), json.dumps(payload), content_type="application/json"
+        )
+
+    # ---- the page ----
+    def test_edit_page_renders_the_form(self):
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f"Editing")
+        self.assertContains(response, 'id="bill-initial"')
+        self.assertContains(response, "Save Changes")
+
+    def test_edit_page_prices_against_the_balance_without_this_bill(self):
+        """The bill squared the account, but the form has to read as it did
+        before it existed, or the biller re-pays a debt that is back."""
+        response = self.client.get(self.url())
+        nimal = next(c for c in response.context["customers"] if c.pk == self.nimal.pk)
+        self.assertEqual(nimal.balance, Decimal("0.00"))          # stored
+        self.assertEqual(nimal.balance_for_bill, Decimal("-5000.00"))  # for pricing
+        self.assertContains(response, 'data-balance="-5000.00"')
+
+    def test_other_customers_keep_their_real_balance(self):
+        kamal = Customer.objects.create(name="Kamal", balance=Decimal("-800.00"))
+        response = self.client.get(self.url())
+        row = next(c for c in response.context["customers"] if c.pk == kamal.pk)
+        self.assertEqual(row.balance_for_bill, Decimal("-800.00"))
+
+    def test_initial_carries_the_lines_and_payment(self):
+        initial = self.client.get(self.url()).context["initial"]
+        self.assertEqual(initial["customer_id"], self.nimal.pk)
+        self.assertEqual(initial["lines"], [
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}
+        ])
+        self.assertEqual(initial["payment"]["type"], "full_cash")
+        self.assertEqual(initial["payment"]["cash"], "7000.00")
+
+    def test_initial_carries_cheque_details_back_into_the_form(self):
+        Bill.objects.all().delete()
+        self.nimal.balance = Decimal("-5000.00")
+        self.nimal.save(update_fields=["balance"])
+        self.pipe.qty = Decimal("10.000")
+        self.pipe.save(update_fields=["qty"])
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cheque", "cheque": {
+                    "cheque_no": "C-9", "bank_name": "HNB", "branch": "Galle",
+                    "acc_no": "77", "amount": "7000.00",
+                    "received_date": "2026-07-16", "maturity_date": "2026-08-16",
+                }},
+            }),
+            content_type="application/json",
+        )
+        bill = Bill.objects.get()
+        initial = self.client.get(reverse("core:bill_edit", args=[bill.pk])).context["initial"]
+        self.assertEqual(initial["payment"]["cheque"]["cheque_no"], "C-9")
+        self.assertEqual(initial["payment"]["cheque"]["bank_name"], "HNB")
+        self.assertEqual(initial["payment"]["cheque"]["received_date"], "2026-07-16")
+
+    def test_products_endpoint_hands_back_this_bills_own_stock(self):
+        """8 on the shelf, 2 held by this bill: the edit may use all 10."""
+        plain = self.client.get(
+            reverse("core:bill_products", args=[self.nimal.pk])
+        ).json()
+        self.assertEqual(next(p for p in plain if p["id"] == self.pipe.pk)["qty"], "8")
+
+        editing = self.client.get(
+            reverse("core:bill_products", args=[self.nimal.pk]),
+            {"bill": self.bill.pk},
+        ).json()
+        self.assertEqual(next(p for p in editing if p["id"] == self.pipe.pk)["qty"], "10")
+
+    def test_a_product_this_bill_cleared_out_is_still_offered(self):
+        """Otherwise a bill that took the last unit could never be edited."""
+        self.pipe.qty = Decimal("0.000")
+        self.pipe.save(update_fields=["qty"])
+
+        plain = self.client.get(reverse("core:bill_products", args=[self.nimal.pk])).json()
+        self.assertNotIn(self.pipe.pk, [p["id"] for p in plain])
+
+        editing = self.client.get(
+            reverse("core:bill_products", args=[self.nimal.pk]), {"bill": self.bill.pk}
+        ).json()
+        self.assertEqual(next(p for p in editing if p["id"] == self.pipe.pk)["qty"], "2")
+
+    # ---- rewriting ----
+    def test_resaving_an_unchanged_bill_changes_nothing(self):
+        """The reversal and the re-apply have to cancel exactly, or every open
+        and save quietly doubles the bill."""
+        response = self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+        self.assertEqual(response.status_code, 200)
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("8.000"))
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("0.00"))
+        self.assertEqual(Bill.objects.count(), 1)
+        self.assertEqual(BillItem.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 1)
+        self.assertEqual(CashDrawer.objects.count(), 1)
+
+    def test_editing_the_quantity_moves_stock_by_the_difference(self):
+        # 2 pipes -> 3. Bill 3,000; with the 5,000 debt back, 8,000 settles it.
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "3", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "8000.00", "account": ""},
+        })
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("7.000"))
+
+        bill = Bill.objects.get()
+        self.assertEqual(bill.pk, self.bill.pk)  # same bill, rewritten
+        self.assertEqual(bill.subtotal, Decimal("3000.00"))
+        self.assertEqual(BillItem.objects.get().qty, Decimal("3.000"))
+
+    def test_editing_keeps_the_original_bill_date(self):
+        self.bill.bill_date = date(2026, 1, 5)
+        self.bill.save(update_fields=["bill_date"])
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+        self.assertEqual(Bill.objects.get().bill_date, date(2026, 1, 5))
+
+    def test_swapping_the_product_returns_the_old_stock_and_takes_the_new(self):
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.tank.pk, "qty": "4", "unit_price": "500.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+        self.pipe.refresh_from_db()
+        self.tank.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))  # all returned
+        self.assertEqual(self.tank.qty, Decimal("6.000"))
+
+    def test_changing_the_payment_type_rewrites_the_money(self):
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "pay_later"},
+        })
+        bill = Bill.objects.get()
+        self.assertEqual(bill.payment_type, Bill.PaymentType.PAY_LATER)
+        self.assertEqual(bill.paid_amount, Decimal("0.00"))
+        self.assertEqual(bill.status, Bill.Status.UNPAID)
+        self.assertFalse(Payment.objects.exists())
+        self.assertFalse(CashDrawer.objects.exists())
+
+        # 5,000 owed before, plus a 2,000 bill paid for by nobody.
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-7000.00"))
+
+    def test_moving_the_bill_to_another_customer_squares_both(self):
+        kamal = Customer.objects.create(
+            name="Kamal", balance=Decimal("0.00"), credit_limit=Decimal("50000.00")
+        )
+        self.post({
+            "customer_id": kamal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "pay_later"},
+        })
+        # Nimal gets his debt back and nothing else; Kamal takes the bill.
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("-5000.00"))
+        kamal.refresh_from_db()
+        self.assertEqual(kamal.balance, Decimal("-2000.00"))
+        self.assertEqual(Bill.objects.get().customer, kamal)
+
+    def test_an_edited_price_becomes_the_customers_price(self):
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "900.00"}],
+            "payment": {"type": "full_cash", "cash": "6800.00", "account": ""},
+        })
+        self.assertEqual(CustomerPrice.objects.get().unit_price, Decimal("900.00"))
+
+    # ---- rollback ----
+    def test_a_refused_edit_leaves_the_original_bill_intact(self):
+        """The reversal runs before validation can fail, so this only holds if
+        the whole thing unwinds."""
+        response = self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "1.00", "account": ""},
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Payment must total 7000.00", response.json()["error"])
+
+        # Everything exactly as the save left it.
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("8.000"))
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("0.00"))
+        self.assertEqual(Bill.objects.count(), 1)
+        self.assertEqual(BillItem.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 1)
+        self.assertEqual(CashDrawer.objects.count(), 1)
+
+        bill = Bill.objects.get()
+        self.assertEqual(bill.subtotal, Decimal("2000.00"))
+        self.assertEqual(bill.paid_amount, Decimal("7000.00"))
+
+    def test_an_edit_that_oversells_is_refused_and_rolled_back(self):
+        response = self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "99", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "104000.00", "account": ""},
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Not enough stock", response.json()["error"])
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("8.000"))
+        self.assertEqual(Bill.objects.count(), 1)
+
+    def test_edit_flashes_a_message_onto_the_detail_page(self):
+        response = self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+        page = self.client.get(response.json()["redirect"])
+        msgs = [str(m) for m in page.context["messages"]]
+        self.assertIn(f"Bill #{self.bill.pk} was updated.", msgs)
+
+    def test_a_manager_may_edit(self):
+        self.client.force_login(self.make_manager())
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+
+    def test_edit_requires_login(self):
+        self.client.logout()
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+    def test_edit_missing_bill_404s(self):
+        self.assertEqual(
+            self.client.get(reverse("core:bill_edit", args=[9999])).status_code, 404
+        )
+
+
+class BillListTests(UserFactoryMixin, TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(name="Nimal")
+        cls.kamal = Customer.objects.create(name="Kamal Traders")
+
+        def bill(customer, day, total, paid, payment_type, status):
+            return Bill.objects.create(
+                customer=customer,
+                bill_date=date(2026, 6, day),
+                subtotal=Decimal(total),
+                total_amount=Decimal(total),
+                paid_amount=Decimal(paid),
+                balance_change=Decimal(paid) - Decimal(total),
+                payment_type=payment_type,
+                status=status,
+            )
+
+        cls.paid = bill(cls.nimal, 1, "1000.00", "1000.00",
+                        Bill.PaymentType.FULL_CASH, Bill.Status.PAID)
+        cls.unpaid = bill(cls.kamal, 5, "2000.00", "0.00",
+                          Bill.PaymentType.PAY_LATER, Bill.Status.UNPAID)
+        cls.partial = bill(cls.nimal, 9, "3000.00", "1200.00",
+                           Bill.PaymentType.PARTIAL, Bill.Status.PARTIAL)
+        # Paid past the bill: the extra cleared old debt.
+        cls.overpaid = bill(cls.kamal, 12, "500.00", "4000.00",
+                            Bill.PaymentType.FULL_CASH, Bill.Status.PAID)
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def rows(self, **params):
+        response = self.client.get(reverse("core:bill_list"), params)
+        self.response = response
+        return {bill.pk: bill for bill in response.context["bills"]}
+
+    def test_list_renders_every_bill(self):
+        self.assertEqual(len(self.rows()), 4)
+        self.assertEqual(self.response.status_code, 200)
+
+    def test_outstanding_is_what_the_bill_still_owes(self):
+        rows = self.rows()
+        self.assertEqual(rows[self.unpaid.pk].outstanding, Decimal("2000.00"))
+        self.assertEqual(rows[self.partial.pk].outstanding, Decimal("1800.00"))
+        self.assertEqual(rows[self.paid.pk].outstanding, Decimal("0.00"))
+
+    def test_outstanding_floors_at_zero_when_a_payment_cleared_old_debt(self):
+        """4,000 against a 500 bill doesn't make the bill owe -3,500."""
+        self.assertEqual(self.rows()[self.overpaid.pk].outstanding, Decimal("0.00"))
+
+    def test_filter_by_date_range(self):
+        rows = self.rows(from_date="2026-06-05", to_date="2026-06-09")
+        self.assertEqual(set(rows), {self.unpaid.pk, self.partial.pk})
+
+    def test_filter_by_customer(self):
+        rows = self.rows(customer=self.nimal.pk)
+        self.assertEqual(set(rows), {self.paid.pk, self.partial.pk})
+
+    def test_filter_by_payment_type(self):
+        self.assertEqual(set(self.rows(payment_type="pay_later")), {self.unpaid.pk})
+
+    def test_filter_by_status(self):
+        self.assertEqual(set(self.rows(status="partial")), {self.partial.pk})
+
+    def test_filters_combine(self):
+        rows = self.rows(customer=self.kamal.pk, status="unpaid")
+        self.assertEqual(set(rows), {self.unpaid.pk})
+
+    def test_unknown_filter_values_are_ignored_not_500s(self):
+        rows = self.rows(payment_type="zzz", status="zzz", customer="zzz",
+                         from_date="nonsense")
+        self.assertEqual(len(rows), 4)
+        self.assertFalse(self.response.context["is_filtered"])
+
+    def test_empty_filter_result_renders_an_empty_state(self):
+        response = self.client.get(reverse("core:bill_list"), {"status": "cancelled"})
+        self.assertEqual(list(response.context["bills"]), [])
+        self.assertContains(response, "No bills match your filters")
+
+    def test_row_actions_are_offered(self):
+        self.client.force_login(self.make_admin())
+        response = self.client.get(reverse("core:bill_list"))
+        self.assertContains(response, reverse("core:bill_detail", args=[self.paid.pk]))
+        self.assertContains(response, reverse("core:bill_edit", args=[self.paid.pk]))
+        self.assertContains(response, reverse("core:bill_delete", args=[self.paid.pk]))
+
+    def test_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:bill_list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
+class ChequeModuleTests(UserFactoryMixin, TestCase):
+    """Nimal owes 5,000. A 1,000 bill paid by a 6,000 cheque squares him: 1,000
+    for the goods, 5,000 clearing the debt. If that cheque never becomes money,
+    all 6,000 has to come back."""
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("-5000.00"), credit_limit=Decimal("50000.00")
+        )
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cheque", "cheque": {
+                    "cheque_no": "C-1001", "bank_name": "BOC", "branch": "Galle",
+                    "acc_no": "77", "amount": "6000.00",
+                    "received_date": "2026-07-16", "maturity_date": "2026-08-16",
+                }},
+            }),
+            content_type="application/json",
+        )
+        self.cheque = Cheque.objects.get()
+
+    def balance(self):
+        self.nimal.refresh_from_db()
+        return self.nimal.balance
+
+    # ---- the starting point ----
+    def test_taking_the_cheque_squared_the_account(self):
+        """Guards the fixture: the reversal tests mean nothing if this drifts."""
+        self.assertEqual(self.balance(), Decimal("0.00"))
+        self.assertEqual(self.cheque.status, Cheque.Status.PENDING)
+
+    # ---- deposit ----
+    def test_deposit_marks_it_without_touching_the_balance(self):
+        response = self.client.post(
+            reverse("core:cheque_deposit", args=[self.cheque.pk]), follow=True
+        )
+        self.assertRedirects(response, reverse("core:cheque_list"))
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.status, Cheque.Status.DEPOSITED)
+        # The credit went on when the cheque was taken; clearing only confirms it.
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    # ---- hold ----
+    def test_hold_gives_the_debt_back(self):
+        self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.status, Cheque.Status.HELD)
+        # Not +6000: holding means we don't have the money, so he owes again.
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_hold_message_names_the_move(self):
+        response = self.client.post(
+            reverse("core:cheque_hold", args=[self.cheque.pk]), follow=True
+        )
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(
+            "Cheque C-1001 marked held. Nimal owes 6000.00 again — "
+            "balance is now -6000.00.",
+            msgs,
+        )
+
+    # ---- bounce ----
+    def test_bounce_records_the_new_date_and_gives_the_debt_back(self):
+        self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]),
+            {"bounce_new_date": "2026-09-01"},
+        )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.status, Cheque.Status.BOUNCED)
+        self.assertEqual(self.cheque.bounce_new_date, date(2026, 9, 1))
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_bounce_without_a_date_changes_nothing(self):
+        response = self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]), {}, follow=True
+        )
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(
+            "Enter the date the cheque is expected to be re-presented.", msgs
+        )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.status, Cheque.Status.PENDING)
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_a_deposited_cheque_can_still_bounce(self):
+        """It cleared, then came back. The credit has to come off just the same."""
+        self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+        self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]),
+            {"bounce_new_date": "2026-09-01"},
+        )
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_re_presenting_a_bounced_cheque_puts_the_credit_back(self):
+        self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]),
+            {"bounce_new_date": "2026-09-01"},
+        )
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+        self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_marking_the_same_status_twice_does_not_move_the_balance_twice(self):
+        for _ in range(2):
+            self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_actions_reject_get(self):
+        for name in ("cheque_deposit", "cheque_hold", "cheque_bounce"):
+            with self.subTest(action=name):
+                response = self.client.get(reverse(f"core:{name}", args=[self.cheque.pk]))
+                self.assertEqual(response.status_code, 405)
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_actions_require_login(self):
+        self.client.logout()
+        response = self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_actions_on_a_missing_cheque_404(self):
+        self.assertEqual(
+            self.client.post(reverse("core:cheque_hold", args=[9999])).status_code, 404
+        )
+
+    # ---- edit ----
+    def test_edit_page_renders(self):
+        response = self.client.get(reverse("core:cheque_edit", args=[self.cheque.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "C-1001")
+        self.assertTrue(response.context["credited"])
+
+    def payload(self, **overrides):
+        data = {
+            "cheque_no": "C-1001",
+            "bank_name": "BOC",
+            "branch": "Galle",
+            "acc_no": "77",
+            "amount": "6000.00",
+            "received_date": "2026-07-16",
+            "maturity_date": "2026-08-16",
+            "status": "pending",
+            "bounce_new_date": "",
+        }
+        data.update(overrides)
+        return data
+
+    def edit(self, **overrides):
+        return self.client.post(
+            reverse("core:cheque_edit", args=[self.cheque.pk]), self.payload(**overrides)
+        )
+
+    def test_editing_details_alone_leaves_the_balance_alone(self):
+        self.edit(bank_name="HNB", branch="Colombo")
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.bank_name, "HNB")
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_raising_the_amount_credits_the_difference(self):
+        self.edit(amount="6500.00")
+        # 500 more was received than we thought, so he is 500 in credit.
+        self.assertEqual(self.balance(), Decimal("500.00"))
+
+    def test_lowering_the_amount_takes_the_difference_back(self):
+        self.edit(amount="5500.00")
+        self.assertEqual(self.balance(), Decimal("-500.00"))
+
+    def test_changing_the_status_through_the_form_moves_the_balance_too(self):
+        self.edit(status="held")
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_amount_and_status_changing_together(self):
+        """Held means none of it counts, whatever the amount is corrected to."""
+        self.edit(amount="6500.00", status="held")
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_editing_the_amount_of_an_uncredited_cheque_leaves_the_balance(self):
+        self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+        self.edit(amount="6500.00", status="held")
+        # It isn't counted either way, so correcting it moves nothing.
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_bounced_without_a_new_date_is_rejected(self):
+        response = self.edit(status="bounced", bounce_new_date="")
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"], "bounce_new_date",
+            "A bounced cheque needs a new expected date.",
+        )
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_backdated_maturity_is_rejected(self):
+        response = self.edit(received_date="2026-07-16", maturity_date="2026-07-01")
+        self.assertFormError(
+            response.context["form"], "maturity_date",
+            "Maturity date cannot be before the received date.",
+        )
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_a_zero_amount_is_rejected(self):
+        response = self.edit(amount="0")
+        self.assertFormError(
+            response.context["form"], "amount", "Cheque amount must be above 0."
+        )
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_the_form_cannot_move_a_cheque_to_another_customer(self):
+        other = Customer.objects.create(name="Kamal")
+        self.client.post(
+            reverse("core:cheque_edit", args=[self.cheque.pk]),
+            self.payload(customer=other.pk),
+        )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.customer, self.nimal)
+
+    # ---- the ledger agrees with the account ----
+    def test_a_bounced_cheque_drops_out_of_the_ledger(self):
+        """The ledger's running total has to land where the account is, or the
+        two tell the customer different stories."""
+        response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
+        self.assertEqual(response.context["closing_balance"], Decimal("-5000.00"))
+
+        self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]),
+            {"bounce_new_date": "2026-09-01"},
+        )
+        response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
+        rows = response.context["rows"]
+        self.assertNotIn("Cheque received", [r["description"] for r in rows])
+        # Ledger runs positive where the account runs negative.
+        self.assertEqual(response.context["closing_balance"], Decimal("1000.00"))
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_a_held_cheque_drops_out_of_the_ledger_too(self):
+        self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
+        self.assertNotIn(
+            "Cheque received", [r["description"] for r in response.context["rows"]]
+        )
+
+    def test_a_deposited_cheque_stays_in_the_ledger(self):
+        self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
+        response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
+        self.assertIn(
+            "Cheque received", [r["description"] for r in response.context["rows"]]
+        )
+
+
+class ChequeListTests(UserFactoryMixin, TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(name="Nimal")
+        cls.kamal = Customer.objects.create(name="Kamal Traders")
+
+        cat = Category.objects.create(name="Pipes")
+        product = Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("50.000")
+        )
+        bill = Bill.objects.create(
+            customer=cls.nimal, bill_date=timezone.localdate(),
+            payment_type=Bill.PaymentType.FULL_CHEQUE,
+        )
+        cls.payment = Payment.objects.create(
+            bill=bill, method=Payment.Method.CHEQUE,
+            amount=Decimal("100.00"), paid_at=timezone.now(),
+        )
+        cls.today = timezone.localdate()
+
+        def cheque(no, customer, days, status, bank="BOC"):
+            return Cheque.objects.create(
+                payment=cls.payment, customer=customer, cheque_no=no,
+                bank_name=bank, branch="Galle", amount=Decimal("100.00"),
+                received_date=cls.today, maturity_date=cls.today + timedelta(days=days),
+                status=status,
+            )
+
+        # Inside the 3-day window and still pending: the rows to act on.
+        cls.due_today = cheque("DUE-TODAY", cls.nimal, 0, Cheque.Status.PENDING)
+        cls.due_3 = cheque("DUE-3", cls.kamal, 3, Cheque.Status.PENDING)
+        cls.overdue = cheque("OVERDUE", cls.nimal, -2, Cheque.Status.PENDING)
+        # Outside it, one way or another.
+        cls.day_4 = cheque("DAY-4", cls.nimal, 4, Cheque.Status.PENDING)
+        cls.deposited = cheque("DEPOSITED", cls.kamal, 1, Cheque.Status.DEPOSITED)
+        cls.bounced = cheque("BOUNCED", cls.nimal, 1, Cheque.Status.BOUNCED)
+        cls.held = cheque("HELD", cls.kamal, 1, Cheque.Status.HELD)
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def rows(self, **params):
+        response = self.client.get(reverse("core:cheque_list"), params)
+        self.response = response
+        return {c.cheque_no: c for c in response.context["cheques"]}
+
+    def test_list_renders_every_cheque(self):
+        self.assertEqual(len(self.rows()), 7)
+
+    def test_only_pending_cheques_inside_the_window_are_flagged(self):
+        rows = self.rows()
+        flagged = {no for no, c in rows.items() if c.is_due_soon}
+        self.assertEqual(flagged, {"DUE-TODAY", "DUE-3", "OVERDUE"})
+        self.assertEqual(self.response.context["due_count"], 3)
+
+    def test_a_deposited_cheque_maturing_today_is_not_flagged(self):
+        """Already banked, so there's nothing to chase."""
+        self.assertFalse(self.rows()["DEPOSITED"].is_due_soon)
+
+    def test_flagged_rows_get_the_amber_background(self):
+        response = self.client.get(reverse("core:cheque_list"))
+        self.assertContains(response, "bg-amber-50 hover:bg-amber-100")
+
+    def test_filter_by_status(self):
+        self.assertEqual(set(self.rows(status="bounced")), {"BOUNCED"})
+
+    def test_filter_by_customer(self):
+        self.assertEqual(
+            set(self.rows(customer=self.kamal.pk)), {"DUE-3", "DEPOSITED", "HELD"}
+        )
+
+    def test_filter_by_maturity_range(self):
+        rows = self.rows(
+            from_date=self.today.isoformat(),
+            to_date=(self.today + timedelta(days=1)).isoformat(),
+        )
+        self.assertEqual(set(rows), {"DUE-TODAY", "DEPOSITED", "BOUNCED", "HELD"})
+
+    def test_filters_combine(self):
+        rows = self.rows(customer=self.nimal.pk, status="pending")
+        self.assertEqual(set(rows), {"DUE-TODAY", "OVERDUE", "DAY-4"})
+
+    def test_unknown_filter_values_are_ignored_not_500s(self):
+        rows = self.rows(status="zzz", customer="zzz", from_date="nonsense")
+        self.assertEqual(len(rows), 7)
+        self.assertFalse(self.response.context["is_filtered"])
+
+    def test_the_action_a_cheque_is_already_in_is_not_offered(self):
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertNotIn(reverse("core:cheque_deposit", args=[self.deposited.pk]), html)
+        self.assertNotIn(reverse("core:cheque_hold", args=[self.held.pk]), html)
+        self.assertNotIn(reverse("core:cheque_bounce", args=[self.bounced.pk]), html)
+
+    def test_every_other_action_is_offered(self):
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertIn(reverse("core:cheque_deposit", args=[self.due_today.pk]), html)
+        self.assertIn(reverse("core:cheque_hold", args=[self.due_today.pk]), html)
+        self.assertIn(reverse("core:cheque_bounce", args=[self.due_today.pk]), html)
+        self.assertIn(reverse("core:cheque_edit", args=[self.due_today.pk]), html)
+
+    def test_actions_are_posts_carrying_csrf(self):
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertIn('method="post"', html)
+        self.assertIn("csrfmiddlewaretoken", html)
+
+    def test_the_bounce_modal_says_what_the_balance_will_do(self):
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertIn('id="bounce-modal"', html)
+        self.assertIn('name="bounce_new_date"', html)
+        # A credited cheque warns; one already held has nothing to reverse.
+        self.assertIn('data-credited="yes"', html)
+        self.assertIn('data-credited="no"', html)
+
+    def test_customer_filter_lists_only_customers_with_cheques(self):
+        Customer.objects.create(name="Nobody")
+        names = [c.name for c in self.rows() and self.response.context["customers"]]
+        self.assertNotIn("Nobody", names)
+
+    def test_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:cheque_list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
+class ChequeDeleteTests(UserFactoryMixin, TestCase):
+    """Deleting a cheque entered in error, as opposed to bouncing a real one."""
+
+    def setUp(self):
+        self.client.force_login(self.make_admin())
+
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("-5000.00"), credit_limit=Decimal("50000.00")
+        )
+        self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cheque", "cheque": {
+                    "cheque_no": "C-1001", "bank_name": "BOC", "branch": "", "acc_no": "",
+                    "amount": "6000.00", "received_date": "2026-07-16",
+                    "maturity_date": "2026-08-16",
+                }},
+            }),
+            content_type="application/json",
+        )
+        self.cheque = Cheque.objects.get()
+
+    def url(self, cheque=None):
+        return reverse("core:cheque_delete", args=[(cheque or self.cheque).pk])
+
+    def balance(self):
+        self.nimal.refresh_from_db()
+        return self.nimal.balance
+
+    def test_deleting_a_pending_cheque_gives_the_debt_back(self):
+        response = self.client.post(self.url(), follow=True)
+        self.assertRedirects(response, reverse("core:cheque_list"))
+        self.assertFalse(Cheque.objects.exists())
+        # Not +6000: the cheque never became money, so he owes it again.
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(
+            "Cheque C-1001 was deleted. Nimal owes 6000.00 again — "
+            "balance is now -6000.00.",
+            msgs,
+        )
+
+    def test_deleting_takes_the_payment_with_it(self):
+        self.assertTrue(Payment.objects.exists())
+        self.client.post(self.url())
+        self.assertFalse(Payment.objects.exists())
+        self.assertFalse(Cheque.objects.exists())
+
+    def test_a_deposited_cheque_cannot_be_deleted(self):
+        self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
+        response = self.client.post(self.url(), follow=True)
+
+        self.assertTrue(Cheque.objects.filter(pk=self.cheque.pk).exists())
+        self.assertTrue(Payment.objects.exists())
+        self.assertEqual(self.balance(), Decimal("0.00"))
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(
+            "Cheque C-1001 has been deposited, so it can't be deleted. "
+            "The money is in the bank — mark it bounced if it came back.",
+            msgs,
+        )
+
+    def test_deleting_a_bounced_cheque_does_not_reverse_twice(self):
+        """Bouncing already took the credit off; deleting must not take it
+        again."""
+        self.client.post(
+            reverse("core:cheque_bounce", args=[self.cheque.pk]),
+            {"bounce_new_date": "2026-09-01"},
+        )
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+        self.client.post(self.url())
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+        self.assertFalse(Cheque.objects.exists())
+
+    def test_deleting_a_held_cheque_does_not_reverse_twice(self):
+        self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
+        self.client.post(self.url())
+        self.assertEqual(self.balance(), Decimal("-6000.00"))
+
+    def test_manager_cannot_delete_a_cheque(self):
+        self.client.force_login(self.make_manager())
+        response = self.client.post(self.url())
+        self.assertRedirects(response, reverse("core:dashboard"))
+        self.assertTrue(Cheque.objects.exists())
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_manager_gets_no_delete_control(self):
+        self.client.force_login(self.make_manager())
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertNotIn(self.url(), html)
+        self.assertNotIn('id="delete-modal"', html)
+
+    def test_a_deposited_cheque_is_offered_no_delete_button(self):
+        self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
+        html = self.client.get(reverse("core:cheque_list")).content.decode()
+        self.assertNotIn(f'data-delete-url="{self.url()}"', html)
+
+    def test_delete_rejects_get(self):
+        self.assertEqual(self.client.get(self.url()).status_code, 405)
+        self.assertTrue(Cheque.objects.exists())
+
+    def test_delete_missing_cheque_404s(self):
+        self.assertEqual(
+            self.client.post(reverse("core:cheque_delete", args=[9999])).status_code, 404
+        )
+
+
+class NotifyChequesCommandTests(TestCase):
+    """The command is built for cron, so its exit code is the interface."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.today = timezone.localdate()
+        cls.nimal = Customer.objects.create(name="Nimal Stores")
+
+        cat = Category.objects.create(name="Pipes")
+        Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("50.000")
+        )
+        bill = Bill.objects.create(
+            customer=cls.nimal, bill_date=cls.today,
+            payment_type=Bill.PaymentType.FULL_CHEQUE,
+        )
+        cls.payment = Payment.objects.create(
+            bill=bill, method=Payment.Method.CHEQUE,
+            amount=Decimal("100.00"), paid_at=timezone.now(),
+        )
+
+    def cheque(self, no, days, status=Cheque.Status.PENDING, amount="1500.00"):
+        return Cheque.objects.create(
+            payment=self.payment, customer=self.nimal, cheque_no=no,
+            bank_name="BOC", amount=Decimal(amount),
+            received_date=self.today,
+            maturity_date=self.today + timedelta(days=days),
+            status=status,
+        )
+
+    def run_command(self, **options):
+        out = StringIO()
+        try:
+            call_command("notify_cheques", stdout=out, **options)
+        except SystemExit as exc:
+            return out.getvalue(), exc.code
+        return out.getvalue(), 0
+
+    def test_exits_zero_and_says_so_when_there_is_nothing_to_chase(self):
+        output, code = self.run_command()
+        self.assertEqual(code, 0)
+        self.assertIn("No pending cheques maturing", output)
+
+    def test_exits_one_when_cheques_are_found(self):
+        """Non-zero is the whole point: cron reads it."""
+        self.cheque("C-1", 1)
+        output, code = self.run_command()
+        self.assertEqual(code, 1)
+
+    def test_table_carries_every_column(self):
+        self.cheque("C-1", 2, amount="1500.00")
+        output, _ = self.run_command()
+        for heading in ("Customer", "Cheque No", "Bank", "Amount", "Maturity Date", "Days Left"):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, output)
+        self.assertIn("Nimal Stores", output)
+        self.assertIn("C-1", output)
+        self.assertIn("BOC", output)
+        self.assertIn("1,500.00", output)
+        self.assertIn((self.today + timedelta(days=2)).strftime("%Y-%m-%d"), output)
+
+    def test_days_left_reads_plainly(self):
+        self.cheque("DUE-TODAY", 0)
+        self.cheque("DUE-2", 2)
+        self.cheque("LATE", -3)
+        output, _ = self.run_command()
+        self.assertIn("today", output)
+        self.assertIn("3 overdue", output)
+
+    def test_summary_totals_the_cheques(self):
+        self.cheque("C-1", 1, amount="1500.00")
+        self.cheque("C-2", 2, amount="2500.00")
+        output, _ = self.run_command()
+        self.assertIn("2 pending cheques maturing", output)
+        self.assertIn("4,000.00", output)
+
+    def test_only_pending_cheques_inside_the_window_are_reported(self):
+        self.cheque("IN-WINDOW", 3)
+        self.cheque("OVERDUE", -5)
+        self.cheque("TOO-FAR", 4)
+        self.cheque("DEPOSITED", 1, status=Cheque.Status.DEPOSITED)
+        self.cheque("BOUNCED", 1, status=Cheque.Status.BOUNCED)
+        self.cheque("HELD", 1, status=Cheque.Status.HELD)
+
+        output, code = self.run_command()
+        self.assertEqual(code, 1)
+        self.assertIn("IN-WINDOW", output)
+        self.assertIn("OVERDUE", output)
+        self.assertNotIn("TOO-FAR", output)
+        self.assertNotIn("DEPOSITED", output)
+        self.assertNotIn("BOUNCED", output)
+        self.assertNotIn("HELD", output)
+
+    def test_days_option_widens_the_window(self):
+        self.cheque("DAY-6", 6)
+        _, code = self.run_command()
+        self.assertEqual(code, 0)
+
+        output, code = self.run_command(days=7)
+        self.assertEqual(code, 1)
+        self.assertIn("DAY-6", output)
+
+    def test_the_command_matches_what_the_dashboard_shows(self):
+        """Two places asking the same question must not disagree."""
+        self.cheque("IN-WINDOW", 1)
+        self.cheque("OVERDUE", -5)
+        self.cheque("TOO-FAR", 9)
+        self.cheque("HELD", 1, status=Cheque.Status.HELD)
+
+        User = get_user_model()
+        User.objects.create_user(username="dash", password="pw", role=User.Role.MANAGER)
+        self.client.login(username="dash", password="pw")
+        dashboard = self.client.get(reverse("core:dashboard"))
+        on_dashboard = {c.cheque_no for c in dashboard.context["maturing_cheques"]}
+
+        output, _ = self.run_command()
+        in_command = {
+            no for no in ("IN-WINDOW", "OVERDUE", "TOO-FAR", "HELD") if no in output
+        }
+        self.assertEqual(on_dashboard, in_command)
+        self.assertEqual(in_command, {"IN-WINDOW", "OVERDUE"})
+
+    # ---- email ----
+    @override_settings(
+        ADMINS=[("Owner", "owner@senovka.local")],
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    )
+    def test_emails_the_admins_when_configured(self):
+        self.cheque("C-1", 1, amount="1500.00")
+        output, code = self.run_command()
+
+        self.assertEqual(code, 1)
+        self.assertEqual(len(mail.outbox), 1)
+        sent = mail.outbox[0]
+        self.assertIn("1 pending cheque maturing", sent.subject)
+        self.assertIn("C-1", sent.body)
+        self.assertIn("1,500.00", sent.body)
+        self.assertEqual(sent.to, ["owner@senovka.local"])
+        self.assertIn("Emailed owner@senovka.local.", output)
+
+    @override_settings(ADMINS=[])
+    def test_says_plainly_when_no_email_could_be_sent(self):
+        """Silence would leave the operator unsure whether mail went out."""
+        self.cheque("C-1", 1)
+        output, _ = self.run_command()
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIn("ADMINS is not configured, so no email was sent.", output)
+
+    @override_settings(
+        ADMINS=[("Owner", "owner@senovka.local")],
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    )
+    def test_no_email_option_prints_only(self):
+        self.cheque("C-1", 1)
+        output, code = self.run_command(no_email=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIn("C-1", output)
+
+    @override_settings(ADMINS=[("Owner", "owner@senovka.local")])
+    def test_no_email_is_sent_when_there_is_nothing_to_report(self):
+        _, code = self.run_command()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class ContextProcessorTests(UserFactoryMixin, TestCase):

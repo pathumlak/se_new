@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import Category, Customer, Product
+from .models import Category, Cheque, Customer, Product
 
 INPUT_CLASSES = (
     "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
@@ -196,6 +196,88 @@ class CustomerForm(forms.ModelForm):
         if limit < 0:
             raise forms.ValidationError("Credit limit cannot be negative.")
         return limit
+
+
+class ChequeForm(forms.ModelForm):
+    """Correct a cheque's details.
+
+    `customer` and `payment` are absent: a cheque belongs to the payment that
+    brought it in, and moving it to someone else's account is not a
+    correction. Changing `amount` or `status` moves the customer's balance —
+    the view works out by how much.
+    """
+
+    class Meta:
+        model = Cheque
+        fields = [
+            "cheque_no",
+            "bank_name",
+            "branch",
+            "acc_no",
+            "amount",
+            "received_date",
+            "maturity_date",
+            "status",
+            "bounce_new_date",
+        ]
+        widgets = {
+            "cheque_no": forms.TextInput(attrs={"class": INPUT_CLASSES, "autofocus": True}),
+            "bank_name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. BOC"}
+            ),
+            "branch": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "acc_no": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "amount": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0"}
+            ),
+            "received_date": forms.DateInput(
+                attrs={"class": INPUT_CLASSES, "type": "date"}
+            ),
+            "maturity_date": forms.DateInput(
+                attrs={"class": INPUT_CLASSES, "type": "date"}
+            ),
+            "status": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "bounce_new_date": forms.DateInput(
+                attrs={"class": INPUT_CLASSES, "type": "date"}
+            ),
+        }
+        help_texts = {
+            "bounce_new_date": "The date the customer agreed to re-present it.",
+            "amount": "Changing this moves the customer's balance by the difference.",
+        }
+
+    def clean_cheque_no(self):
+        return self.cleaned_data["cheque_no"].strip()
+
+    def clean_bank_name(self):
+        return self.cleaned_data["bank_name"].strip()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Cheque amount must be above 0.")
+        return amount
+
+    def clean(self):
+        cleaned = super().clean()
+
+        received = cleaned.get("received_date")
+        maturity = cleaned.get("maturity_date")
+        if received and maturity and maturity < received:
+            self.add_error(
+                "maturity_date", "Maturity date cannot be before the received date."
+            )
+
+        # A bounced cheque without a re-presentation date is a dead end: the
+        # cheque list has nothing to chase it by.
+        if cleaned.get("status") == Cheque.Status.BOUNCED and not cleaned.get(
+            "bounce_new_date"
+        ):
+            self.add_error(
+                "bounce_new_date", "A bounced cheque needs a new expected date."
+            )
+
+        return cleaned
 
 
 class CustomerPriceForm(forms.Form):

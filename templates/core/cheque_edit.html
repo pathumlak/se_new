@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Edit cheque {{ cheque.cheque_no }} · Senovka Plastics{% endblock %}
+{% block header %}Edit Cheque{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+
+  <!-- Breadcrumb -->
+  <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
+    <a href="{% url 'core:cheque_list' %}" class="hover:text-slate-900">Cheques</a>
+    <span class="text-slate-300">/</span>
+    <span class="text-slate-700">{{ cheque.cheque_no }}</span>
+  </nav>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    {% if form.non_field_errors %}
+      <div class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        {{ form.non_field_errors|join:" " }}
+      </div>
+    {% endif %}
+
+    {# The cheque belongs to a payment on a bill; it can't be moved to someone else. #}
+    <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+      <p class="text-sm text-slate-700">
+        From <a href="{% url 'core:customer_detail' cheque.customer.pk %}" class="font-semibold text-slate-900 hover:underline">{{ cheque.customer.name }}</a>
+        {% if cheque.payment.bill_id %}
+          against <a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ cheque.payment.bill_id }}</a>
+        {% endif %}
+      </p>
+      <p class="mt-0.5 text-xs text-slate-500">
+        Current balance: {{ cheque.customer.balance|floatformat:2|intcomma }}
+        {% if credited %}
+          · this cheque is counted as received
+        {% else %}
+          · this cheque is not counted as received
+        {% endif %}
+      </p>
+    </div>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="space-y-5">
+
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.cheque_no.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.cheque_no.label }} <span class="text-rose-500">*</span>
+            </label>
+            {{ form.cheque_no }}
+            {% for error in form.cheque_no.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.bank_name.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.bank_name.label }} <span class="text-rose-500">*</span>
+            </label>
+            {{ form.bank_name }}
+            {% for error in form.bank_name.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.branch.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.branch.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
+            </label>
+            {{ form.branch }}
+            {% for error in form.branch.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.acc_no.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.acc_no.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
+            </label>
+            {{ form.acc_no }}
+            {% for error in form.acc_no.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <label for="{{ form.amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.amount.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.amount }}
+          {% if form.amount.help_text %}
+            <p class="mt-1.5 text-xs text-slate-400">{{ form.amount.help_text }}</p>
+          {% endif %}
+          {% for error in form.amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.received_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.received_date.label }} <span class="text-rose-500">*</span>
+            </label>
+            {{ form.received_date }}
+            {% for error in form.received_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.maturity_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.maturity_date.label }} <span class="text-rose-500">*</span>
+            </label>
+            {{ form.maturity_date }}
+            {% for error in form.maturity_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.status.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.status.label }}
+            </label>
+            {{ form.status }}
+            <p class="mt-1.5 text-xs text-slate-400">
+              Pending and deposited count as received; held and bounced don't.
+            </p>
+            {% for error in form.status.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.bounce_new_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.bounce_new_date.label }}
+            </label>
+            {{ form.bounce_new_date }}
+            {% if form.bounce_new_date.help_text %}
+              <p class="mt-1.5 text-xs text-slate-400">{{ form.bounce_new_date.help_text }}</p>
+            {% endif %}
+            {% for error in form.bounce_new_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <div class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <p class="text-xs text-amber-800">
+            Changing the amount or the status moves {{ cheque.customer.name }}'s balance
+            by the difference. The message after saving says by how much.
+          </p>
+        </div>
+      </div>
+
+      <div class="mt-7 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
+        <a href="{% url 'core:cheque_list' %}"
+           class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </a>
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          Save changes
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

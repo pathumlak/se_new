@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Bills · Senovka Plastics{% endblock %}
+{% block header %}Bill List{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+  <form method="get" class="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+    <div>
+      <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
+      <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+             class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <div>
+      <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">To</label>
+      <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+             class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+
+    <div>
+      <label for="customer" class="mb-1.5 block text-xs font-medium text-slate-600">Customer</label>
+      {# Native select: typing jumps to a name, which is the search the list needs. #}
+      <select id="customer" name="customer"
+              class="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">All customers</option>
+        {% for customer in customers %}
+          <option value="{{ customer.pk }}" {% if customer.pk == selected_customer %}selected{% endif %}>
+            {{ customer.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label for="payment_type" class="mb-1.5 block text-xs font-medium text-slate-600">Payment</label>
+      <select id="payment_type" name="payment_type"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">Any type</option>
+        {% for value, label in payment_types %}
+          <option value="{{ value }}" {% if value == payment_type %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label for="status" class="mb-1.5 block text-xs font-medium text-slate-600">Status</label>
+      <select id="status" name="status"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">Any status</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="flex gap-2">
+      <button type="submit"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Filter
+      </button>
+      {% if is_filtered %}
+        <a href="{% url 'core:bill_list' %}"
+           class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+          Clear
+        </a>
+      {% endif %}
+    </div>
+  </form>
+
+  <a href="{% url 'core:bill_create' %}"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Bill
+  </a>
+</div>
+
+{% if is_filtered %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ bills|length }} result{{ bills|length|pluralize }}
+    <span class="text-slate-400">of {{ total_count }} bills</span>
+  </p>
+{% endif %}
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Paid</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Outstanding</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Payment Type</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for bill in bills %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:bill_detail' bill.pk %}" class="font-medium text-slate-900 hover:underline">
+                #{{ bill.pk }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="text-slate-900 hover:underline">
+                {{ bill.customer.name }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
+
+            {# Zero is the good case here, so only real debt gets colour. #}
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if bill.outstanding > 0 %}text-rose-600{% else %}text-slate-400{% endif %}">
+              {{ bill.outstanding|floatformat:2|intcomma }}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.get_payment_type_display }}</td>
+
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if bill.status == 'paid' %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Paid</span>
+              {% elif bill.status == 'partial' %}
+                <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Partial</span>
+              {% elif bill.status == 'unpaid' %}
+                <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Unpaid</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">{{ bill.get_status_display }}</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                <a href="{% url 'core:bill_detail' bill.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  View
+                </a>
+                <a href="{% url 'core:bill_edit' bill.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+                {% if is_super_admin %}
+                  <button type="button"
+                          data-delete-url="{% url 'core:bill_delete' bill.pk %}"
+                          data-bill="Bill #{{ bill.pk }}"
+                          data-customer="{{ bill.customer.name }}"
+                          data-total="{{ bill.total_amount|floatformat:2|intcomma }}"
+                          data-reverses="{{ bill.reverses }}"
+                          class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Delete
+                  </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="9" class="px-4 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No bills match your filters.</p>
+                <a href="{% url 'core:bill_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear filters
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No bills yet.</p>
+                <a href="{% url 'core:bill_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Make the first one
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if is_super_admin %}
+  {% include "core/_bill_delete_modal.html" %}
+{% endif %}
+{% endblock %}

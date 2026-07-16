@@ -1,0 +1,76 @@
+{% comment %}
+Cheque capture, included once per payment type that can take a cheque
+(full cheque, partial, mixed). `prefix` namespaces the ids so three copies can
+sit on one page; the script reads them back through the same prefix.
+
+Branch and account number are optional here because Cheque.branch and
+Cheque.acc_no are blank=True on the model.
+
+Spelled as a comment tag because the hash-style comment is single-line only:
+spanning lines, it isn't stripped and renders onto the page as text.
+{% endcomment %}
+<div class="grid gap-4 sm:grid-cols-2">
+  <div>
+    <label for="{{ prefix }}-no" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Cheque No <span class="text-rose-500">*</span>
+    </label>
+    <input type="text" id="{{ prefix }}-no"
+           class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div>
+    <label for="{{ prefix }}-bank" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Bank Name <span class="text-rose-500">*</span>
+    </label>
+    <input type="text" id="{{ prefix }}-bank" placeholder="e.g. BOC"
+           class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div>
+    <label for="{{ prefix }}-branch" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Branch <span class="text-xs font-normal text-slate-400">(optional)</span>
+    </label>
+    <input type="text" id="{{ prefix }}-branch"
+           class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div>
+    <label for="{{ prefix }}-acc" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Account No <span class="text-xs font-normal text-slate-400">(optional)</span>
+    </label>
+    <input type="text" id="{{ prefix }}-acc"
+           class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div>
+    <label for="{{ prefix }}-amount" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Cheque Amount <span class="text-rose-500">*</span>
+    </label>
+    <input type="number" step="0.01" min="0" inputmode="decimal" id="{{ prefix }}-amount"
+           class="js-money block w-full rounded-lg border border-slate-300 px-3 py-2 text-right text-sm text-slate-900
+                  shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label for="{{ prefix }}-received" class="mb-1.5 block text-sm font-medium text-slate-700">
+        Received <span class="text-rose-500">*</span>
+      </label>
+      <input type="date" id="{{ prefix }}-received" value="{{ today|date:'Y-m-d' }}"
+             class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <div>
+      <label for="{{ prefix }}-maturity" class="mb-1.5 block text-sm font-medium text-slate-700">
+        Maturity <span class="text-rose-500">*</span>
+      </label>
+      <input type="date" id="{{ prefix }}-maturity"
+             class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+  </div>
+</div>

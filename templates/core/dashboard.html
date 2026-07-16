@@ -80,7 +80,8 @@
 
 <!-- ===================== CHEQUE WARNINGS ===================== -->
 {% if maturing_cheques %}
-<section class="mt-8">
+{# Rendered visible: if the script never runs, an unpaid-cheque warning showing is the safe failure. #}
+<section id="cheque-warnings" class="mt-8" data-signature="{{ cheque_signature }}">
   <div class="mb-3 flex items-center gap-2">
     <svg class="h-5 w-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
@@ -88,6 +89,16 @@
     <h2 class="text-base font-semibold text-slate-900">
       Cheques maturing within {{ warning_days }} day{{ warning_days|pluralize }}
     </h2>
+
+    <a href="{% url 'core:cheque_list' %}?status=pending"
+       class="text-xs font-medium text-slate-500 hover:text-slate-900">
+      Manage
+    </a>
+
+    <button type="button" id="dismiss-cheques"
+            class="ml-auto rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">
+      Dismiss
+    </button>
   </div>
 
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -221,4 +232,36 @@
   </section>
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const warnings = document.getElementById('cheque-warnings');
+    if (!warnings) return;
+
+    const KEY = 'senovka:cheques-dismissed';
+    const signature = warnings.dataset.signature;
+
+    // The signature carries today's date and the exact cheque ids, so a
+    // dismissal lasts until either changes: the warning is back tomorrow, and
+    // straight away if a different cheque starts maturing.
+    let stored = null;
+    try {
+      stored = window.localStorage.getItem(KEY);
+    } catch (e) {
+      // Private browsing and the like. Showing the warning is the safe default.
+    }
+    if (stored === signature) warnings.classList.add('hidden');
+
+    document.getElementById('dismiss-cheques').addEventListener('click', function () {
+      warnings.classList.add('hidden');
+      try {
+        window.localStorage.setItem(KEY, signature);
+      } catch (e) {
+        // Dismissed for this page view only, which is no worse than not at all.
+      }
+    });
+  })();
+</script>
 {% endblock %}

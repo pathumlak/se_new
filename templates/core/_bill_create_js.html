@@ -16,6 +16,16 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // A real pk stands in for the customer id so Django builds the path; the
     // sentinel is swapped for the chosen customer at request time.
     const URL_TEMPLATE = '{% url "core:bill_products" 999999999 %}';
+    // Whichever of bill_save / bill_edit rendered the page.
+    const SAVE_URL = '{{ save_url }}';
+    const CSRF = '{{ csrf_token }}';
+
+    // Present only when editing: the bill to rebuild the page from.
+    const initialEl = document.getElementById('bill-initial');
+    const INITIAL = initialEl ? JSON.parse(initialEl.textContent) : null;
+    // On an edit the bill's own lines have already taken their stock, so the
+    // endpoint is asked to hand it back before reporting what's available.
+    const STOCK_QUERY = INITIAL ? '?bill={{ bill.pk|default:"" }}' : '';
 
     const MIN_QTY = 1;
 
@@ -66,6 +76,30 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const modalSearch = document.getElementById('add-modal-search');
     const modalEmpty  = document.getElementById('add-modal-empty');
 
+    // ---- step 3 ----
+    const IS_SUPER_ADMIN = {{ is_super_admin|yesno:"true,false" }};
+
+    const step3      = document.getElementById('step-3');
+    const rail3      = document.getElementById('rail-3');
+    const toPayment  = document.getElementById('to-payment');
+    const toPayNote  = document.getElementById('to-payment-note');
+    const saveBtn    = document.getElementById('save-bill');
+    const saveNote   = document.getElementById('save-note');
+    const payErrors  = document.getElementById('pay-errors');
+
+    const pay = {
+      subtotal: document.getElementById('pay-subtotal'),
+      adjust:   document.getElementById('pay-adjust'),
+      target:   document.getElementById('pay-target'),
+      entered:  document.getElementById('pay-entered'),
+      balance:  document.getElementById('preview-balance'),
+      note:     document.getElementById('preview-note'),
+      later:    document.getElementById('paylater-message'),
+      credit:   document.getElementById('credit-warning'),
+      creditText: document.getElementById('credit-warning-text'),
+      override: document.getElementById('credit-override'),  // super admins only
+    };
+
     // Products as the server last described them for this customer.
     let loaded = [];
     // productId -> {product, tr, qtyInput, priceInput, ...}. A Map keeps the
@@ -73,12 +107,27 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const lines = new Map();
     let requestToken = 0;
     let currentCustomer = '';
+    // Step 3 reads the items total, so recalc() publishes it here rather than
+    // the payment section re-deriving it from the DOM.
+    let currentSubtotal = 0;
 
     const MONEY = new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
     function money(n) { return MONEY.format(n); }
+    function $(id) { return document.getElementById(id); }
+
+    function currentOption() { return select.selectedOptions[0]; }
+
+    function dataNumber(key) {
+      const option = currentOption();
+      const value = option ? num(option.dataset[key]) : NaN;
+      return Number.isNaN(value) ? 0 : value;
+    }
+    // Negative means the customer owes us; positive means we owe them.
+    function balanceNow() { return dataNumber('balance'); }
+    function creditLimitNow() { return dataNumber('creditLimit'); }
 
     // Number('') is 0, which would read an empty box as a free product.
     function num(value) {
@@ -176,7 +225,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
       refreshPicker();
       show('loading');
 
-      fetch(URL_TEMPLATE.replace('999999999', customerId), {
+      return fetch(URL_TEMPLATE.replace('999999999', customerId) + STOCK_QUERY, {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       })
         .then(function (res) {
@@ -271,10 +320,21 @@ spanning lines, it isn't stripped and renders onto the page as text.
         if (line.changed) changed += 1;
       });
 
+      currentSubtotal = subtotal;
       subtotalEl.textContent = money(subtotal);
 
       const hasLines = lines.size > 0;
       billEmpty.classList.toggle('hidden', hasLines);
+
+      // Payment is priced off the items, so a bill with a broken row must not
+      // reach it.
+      const ready = hasLines && invalid === 0;
+      toPayment.disabled = !ready;
+      toPayNote.textContent = !hasLines
+        ? 'Add at least one item.'
+        : invalid > 0
+          ? 'Fix the rows that need attention first.'
+          : '';
 
       if (invalid > 0) {
         invalidNote.textContent = invalid + (invalid === 1 ? ' row needs' : ' rows need') +
@@ -293,13 +353,13 @@ spanning lines, it isn't stripped and renders onto the page as text.
       }
 
       updateSummary(subtotal);
+      refreshPayment();
     }
 
     function updateSummary(subtotal) {
-      const option = select.selectedOptions[0];
+      const option = currentOption();
       const name = option && option.dataset.name ? option.dataset.name : '';
-      const balanceRaw = option ? num(option.dataset.balance) : NaN;
-      const balance = Number.isNaN(balanceRaw) ? 0 : balanceRaw;
+      const balance = balanceNow();
 
       summary.customer.textContent = name;
       summary.balance.textContent = money(balance);
@@ -337,6 +397,269 @@ spanning lines, it isn't stripped and renders onto the page as text.
       } else {
         summary.collectNote.textContent = 'This bill only.';
       }
+    }
+
+    // ================= step 3: payment =================
+
+    function selectedType() {
+      const picked = document.querySelector('.js-type:checked');
+      return picked ? picked.value : '';
+    }
+
+    /**
+     * What the customer hands over to settle everything: this bill plus what
+     * they already owe, or this bill less any credit they hold. A negative
+     * balance is debt and a positive one is credit, so both cases are the one
+     * subtraction.
+     */
+    function collectTarget() {
+      return round2(currentSubtotal - balanceNow());
+    }
+
+    function readMoney(el, label, errors, optional) {
+      const raw = el.value.trim();
+      if (raw === '') {
+        if (optional) return 0;
+        errors.push(label + ' is required.');
+        return NaN;
+      }
+      const value = num(raw);
+      if (Number.isNaN(value)) {
+        errors.push(label + ' must be a number.');
+        return NaN;
+      }
+      if (value < 0) {
+        errors.push(label + ' cannot be negative.');
+        return NaN;
+      }
+      return value;
+    }
+
+    /**
+     * The cheque amount; 0 when an optional cheque is left blank; NaN when the
+     * details don't hold up. Anything with an amount must carry the fields the
+     * Cheque model needs — branch and account number are blank=True there, so
+     * they stay optional here.
+     */
+    function readCheque(prefix, required, errors) {
+      const amountEl = $(prefix + '-amount');
+      const raw = amountEl.value.trim();
+      if (!required && raw === '') return 0;
+
+      const amount = num(raw);
+      if (Number.isNaN(amount) || amount <= 0) {
+        errors.push('Enter a cheque amount above 0.');
+        return NaN;
+      }
+
+      if (!$(prefix + '-no').value.trim()) errors.push('Cheque number is required.');
+      if (!$(prefix + '-bank').value.trim()) errors.push('Bank name is required.');
+
+      const received = $(prefix + '-received').value;
+      const maturity = $(prefix + '-maturity').value;
+      if (!received) errors.push('Cheque received date is required.');
+      if (!maturity) errors.push('Cheque maturity date is required.');
+      // Both are yyyy-mm-dd, so comparing the strings compares the dates.
+      if (received && maturity && maturity < received) {
+        errors.push('Cheque maturity date cannot be before the received date.');
+      }
+      return amount;
+    }
+
+    function validatePayment() {
+      const errors = [];
+      const type = selectedType();
+      const target = collectTarget();
+      const balance = balanceNow();
+      let paid = 0;
+      let blocked = false;
+
+      if (type === 'full_cash') {
+        paid = readMoney($('fullcash-amount'), 'Amount received', errors, false);
+      } else if (type === 'full_cheque') {
+        paid = readCheque('fullchq', true, errors);
+      } else if (type === 'partial') {
+        const cash = readMoney($('partial-cash'), 'Cash amount', errors, false);
+        const cheque = readCheque('partchq', true, errors);
+        paid = (Number.isNaN(cash) || Number.isNaN(cheque)) ? NaN : round2(cash + cheque);
+      } else if (type === 'mixed') {
+        const cash = readMoney($('mixed-cash'), 'Cash amount', errors, true);
+        const transfer = readMoney($('mixed-transfer'), 'Transfer amount', errors, true);
+        const cheque = readCheque('mixchq', false, errors);
+
+        if (Number.isNaN(cash) || Number.isNaN(transfer) || Number.isNaN(cheque)) {
+          paid = NaN;
+        } else {
+          paid = round2(cash + transfer + cheque);
+          if (transfer > 0 && !$('mixed-account').value) {
+            errors.push('Choose an account for the transfer.');
+          }
+          if (paid === 0) errors.push('Enter at least one payment amount.');
+        }
+      } else if (type === 'pay_later') {
+        paid = 0;
+      } else {
+        errors.push('Choose a payment type.');
+        paid = 0;
+      }
+
+      const settled = Number.isNaN(paid) ? 0 : paid;
+      const after = round2(balance - currentSubtotal + settled);
+
+      if (type && type !== 'pay_later' && !Number.isNaN(paid)) {
+        if (target <= 0) {
+          // Their credit already covers the bill, so there is nothing to hand
+          // over and no amount that could match.
+          errors.push('Nothing to collect — the credit covers this bill. Use Pay Later.');
+        } else if (round2(paid) !== target) {
+          const diff = round2(target - paid);
+          errors.push(diff > 0
+            ? 'Short by ' + money(diff) + ' — payment must total ' + money(target) + '.'
+            : 'Over by ' + money(Math.abs(diff)) + ' — payment must total ' + money(target) + '.');
+        }
+      }
+
+      // Only Pay Later can leave money outstanding; every other type is held
+      // to the full amount above, so it always lands the balance on zero.
+      if (type === 'pay_later') {
+        const owed = after < 0 ? Math.abs(after) : 0;
+        const limit = creditLimitNow();
+        if (owed > limit) {
+          pay.creditText.textContent = 'This bill leaves ' + money(owed) +
+            ' outstanding, past the ' + money(limit) + ' credit limit.';
+          pay.credit.classList.remove('hidden');
+          if (IS_SUPER_ADMIN) {
+            blocked = !(pay.override && pay.override.checked);
+            if (blocked) errors.push('Tick the override to save past the credit limit.');
+          } else {
+            blocked = true;
+            errors.push('Over the credit limit — a super admin has to approve this.');
+          }
+        } else {
+          pay.credit.classList.add('hidden');
+          if (pay.override) pay.override.checked = false;
+        }
+      }
+
+      return {
+        ok: type !== '' && errors.length === 0 && !blocked && !Number.isNaN(paid),
+        type: type,
+        paid: settled,
+        after: after,
+        target: target,
+        errors: errors,
+      };
+    }
+
+    function refreshPayment() {
+      const balance = balanceNow();
+      const result = validatePayment();
+
+      pay.subtotal.textContent = money(currentSubtotal);
+      // What the balance does to the bill: debt adds, credit comes off.
+      pay.adjust.textContent = money(round2(-balance));
+      pay.target.textContent = money(result.target);
+      pay.entered.textContent = money(result.paid);
+
+      pay.balance.textContent = money(result.after);
+      pay.balance.className = 'mt-0.5 text-xl font-semibold ' +
+        (result.after < 0 ? 'text-rose-600' : result.after > 0 ? 'text-emerald-600' : 'text-slate-900');
+      pay.note.textContent = result.after < 0
+        ? 'Customer will owe ' + money(Math.abs(result.after)) + '.'
+        : result.after > 0
+          ? 'We will owe them ' + money(result.after) + '.'
+          : 'Settled in full.';
+
+      pay.later.textContent = 'Full amount of ' + money(currentSubtotal) +
+        ' will be added to customer outstanding balance.';
+
+      payErrors.replaceChildren();
+      if (result.errors.length > 0) {
+        result.errors.forEach(function (message) {
+          const li = document.createElement('li');
+          li.textContent = message;
+          payErrors.appendChild(li);
+        });
+        payErrors.classList.remove('hidden');
+      } else {
+        payErrors.classList.add('hidden');
+      }
+
+      saveBtn.disabled = !result.ok;
+    }
+
+    function onTypeChange() {
+      const type = selectedType();
+      document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
+        panel.classList.toggle('hidden', panel.id !== 'pay-' + type);
+      });
+
+      // Prefill the obvious figure, but never overwrite something typed.
+      const target = collectTarget();
+      if (target > 0) {
+        if (type === 'full_cash' && $('fullcash-amount').value.trim() === '') {
+          $('fullcash-amount').value = target.toFixed(2);
+        }
+        if (type === 'full_cheque' && $('fullchq-amount').value.trim() === '') {
+          $('fullchq-amount').value = target.toFixed(2);
+        }
+      }
+      refreshPayment();
+    }
+
+    function chequePayload(prefix) {
+      return {
+        cheque_no: $(prefix + '-no').value.trim(),
+        bank_name: $(prefix + '-bank').value.trim(),
+        branch: $(prefix + '-branch').value.trim(),
+        acc_no: $(prefix + '-acc').value.trim(),
+        amount: $(prefix + '-amount').value.trim(),
+        received_date: $(prefix + '-received').value,
+        maturity_date: $(prefix + '-maturity').value,
+      };
+    }
+
+    function paymentPayload() {
+      const type = selectedType();
+      const payload = { type: type };
+
+      if (type === 'full_cash') {
+        payload.cash = $('fullcash-amount').value.trim();
+        payload.account = $('fullcash-account').value;
+      } else if (type === 'full_cheque') {
+        payload.cheque = chequePayload('fullchq');
+      } else if (type === 'partial') {
+        payload.cash = $('partial-cash').value.trim();
+        payload.cheque = chequePayload('partchq');
+      } else if (type === 'mixed') {
+        payload.cash = $('mixed-cash').value.trim();
+        payload.transfer = $('mixed-transfer').value.trim();
+        payload.account = $('mixed-account').value;
+        const cheque = chequePayload('mixchq');
+        if (cheque.amount !== '') payload.cheque = cheque;
+      }
+
+      payload.credit_override = !!(pay.override && pay.override.checked);
+      return payload;
+    }
+
+    function enterStep3() {
+      step2.classList.add('hidden');
+      step2.classList.remove('grid');
+      step3.classList.remove('hidden');
+      step3.classList.add('grid');
+      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+      refreshPayment();
+    }
+
+    function backToItems() {
+      step3.classList.add('hidden');
+      step3.classList.remove('grid');
+      step2.classList.remove('hidden');
+      step2.classList.add('grid');
+      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
     }
 
     function numberInput(value, extra) {
@@ -455,7 +778,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
           price_changed: line.changed,
         });
       });
-      return { customer_id: select.value, lines: out };
+      return { customer_id: select.value, lines: out, payment: paymentPayload() };
     }
     // The save step (not built yet) reads the bill through this.
     document.addEventListener('bill:collect', function (e) {
@@ -476,11 +799,27 @@ spanning lines, it isn't stripped and renders onto the page as text.
       billBody.replaceChildren();
       step2.classList.add('hidden');
       step2.classList.remove('grid');
+      step3.classList.add('hidden');
+      step3.classList.remove('grid');
       step1.classList.remove('hidden');
       rail1.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
       rail2.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+
+      // The payment belongs to the bill that was just abandoned.
+      const picked = document.querySelector('.js-type:checked');
+      if (picked) picked.checked = false;
+      document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
+        panel.classList.add('hidden');
+      });
+      step3.querySelectorAll('input[type="number"], input[type="text"]').forEach(function (el) {
+        el.value = '';
+      });
+      if (pay.override) pay.override.checked = false;
+
       checkboxes().forEach(function (box) { box.checked = false; });
       refreshPicker();
+      recalc();
     }
 
     // ================= modal =================
@@ -619,6 +958,146 @@ spanning lines, it isn't stripped and renders onto the page as text.
       resetToStep1();
     });
 
+    // ---- step 3 ----
+    toPayment.addEventListener('click', function () {
+      if (toPayment.disabled) return;
+      enterStep3();
+    });
+    document.getElementById('back-to-items').addEventListener('click', backToItems);
+
+    document.querySelectorAll('.js-type').forEach(function (radio) {
+      radio.addEventListener('change', onTypeChange);
+    });
+
+    // One listener for the whole section: every amount, date and dropdown in
+    // there feeds the same validation pass.
+    step3.addEventListener('input', refreshPayment);
+    step3.addEventListener('change', function (e) {
+      if (!e.target.classList.contains('js-type')) refreshPayment();
+    });
+
+    saveBtn.addEventListener('click', function () {
+      if (saveBtn.disabled) return;
+
+      // Held down for the whole round trip: a second click is a second bill.
+      saveBtn.disabled = true;
+      saveNote.textContent = 'Saving…';
+      saveNote.className = 'mt-1.5 text-center text-xs text-slate-400';
+
+      fetch(SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': CSRF,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(collectBill()),
+      })
+        .then(function (res) {
+          // A session that expired mid-bill answers with the login HTML, not
+          // JSON, so anything unparsable counts as a failure.
+          return res.json()
+            .catch(function () { return null; })
+            .then(function (data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function (result) {
+          if (!result.ok || !result.data || !result.data.success) {
+            const message = result.data && result.data.error
+              ? result.data.error
+              : 'Could not save the bill — please try again.';
+            throw new Error(message);
+          }
+          // The server rolls back on any error, so reaching here means the
+          // bill is written. Leave the button down and go read it.
+          window.location = result.data.redirect;
+        })
+        .catch(function (err) {
+          saveNote.textContent = err.message;
+          saveNote.className = 'mt-1.5 text-center text-xs text-rose-600';
+          // Nothing was written, so the bill on screen is still saveable.
+          saveBtn.disabled = false;
+        });
+    });
+
+    // ---- editing: rebuild the page from the saved bill ----
+
+    function setValue(id, value) {
+      const el = $(id);
+      if (el && value !== undefined && value !== null) el.value = value;
+    }
+
+    function hydratePayment(payment) {
+      if (!payment || !payment.type) return;
+
+      setValue('fullcash-amount', payment.type === 'full_cash' ? payment.cash : undefined);
+      setValue('fullcash-account', payment.type === 'full_cash' ? payment.account : undefined);
+      setValue('partial-cash', payment.type === 'partial' ? payment.cash : undefined);
+      setValue('mixed-cash', payment.type === 'mixed' ? payment.cash : undefined);
+      setValue('mixed-transfer', payment.type === 'mixed' ? payment.transfer : undefined);
+      setValue('mixed-account', payment.type === 'mixed' ? payment.account : undefined);
+
+      const cheque = payment.cheque;
+      if (cheque) {
+        const prefix = payment.type === 'full_cheque' ? 'fullchq'
+          : payment.type === 'partial' ? 'partchq' : 'mixchq';
+        setValue(prefix + '-no', cheque.cheque_no);
+        setValue(prefix + '-bank', cheque.bank_name);
+        setValue(prefix + '-branch', cheque.branch);
+        setValue(prefix + '-acc', cheque.acc_no);
+        setValue(prefix + '-amount', cheque.amount);
+        setValue(prefix + '-received', cheque.received_date);
+        setValue(prefix + '-maturity', cheque.maturity_date);
+      }
+
+      const radio = document.querySelector('.js-type[value="' + payment.type + '"]');
+      if (radio) {
+        radio.checked = true;
+        // Shows the panel; its prefill only fills blanks, so it can't tread on
+        // anything set above.
+        onTypeChange();
+      }
+    }
+
+    function hydrate() {
+      const missing = [];
+      (INITIAL.lines || []).forEach(function (line) {
+        const product = loaded.find(function (candidate) {
+          return String(candidate.id) === String(line.product_id);
+        });
+        if (!product) {
+          missing.push(line.product_id);
+          return;
+        }
+        addLine(product);
+        const row = lines.get(product.id);
+        row.qtyInput.value = line.qty;
+        row.priceInput.value = line.unit_price;
+      });
+
+      if (missing.length > 0) {
+        // The endpoint keeps a bill's own products however low or inactive
+        // they have gone, so reaching here means one was deleted outright.
+        const note = $('hydrate-note');
+        note.textContent = missing.length + (missing.length === 1 ? ' line' : ' lines') +
+          ' could not be restored — the product no longer exists. Saving now drops ' +
+          (missing.length === 1 ? 'it' : 'them') + ' from the bill.';
+        note.classList.remove('hidden');
+      }
+
+      hydratePayment(INITIAL.payment);
+      if (lines.size > 0) enterStep2();
+      recalc();
+    }
+
     refreshPicker();
+    recalc();
+
+    if (INITIAL) {
+      select.value = String(INITIAL.customer_id);
+      currentCustomer = select.value;
+      load(select.value).then(function () {
+        if (loaded.length > 0 || (INITIAL.lines || []).length > 0) hydrate();
+      });
+    }
   })();
 </script>

@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Cheques · Senovka Plastics{% endblock %}
+{% block header %}Cheques{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<form method="get" class="mb-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+  <div>
+    <label for="status" class="mb-1.5 block text-xs font-medium text-slate-600">Status</label>
+    <select id="status" name="status"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">Any status</option>
+      {% for value, label in statuses %}
+        <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="customer" class="mb-1.5 block text-xs font-medium text-slate-600">Customer</label>
+    <select id="customer" name="customer"
+            class="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">All customers</option>
+      {% for customer in customers %}
+        <option value="{{ customer.pk }}" {% if customer.pk == selected_customer %}selected{% endif %}>
+          {{ customer.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">Maturity from</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">Maturity to</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div class="flex gap-2">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Filter
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:cheque_list' %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+{% if due_count %}
+  <p class="mb-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+    <span class="font-semibold">{{ due_count }} pending cheque{{ due_count|pluralize }}</span>
+    matur{{ due_count|pluralize:"es,e" }} within {{ warning_days }} days or already has.
+  </p>
+{% endif %}
+
+{% if is_filtered %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ cheques|length }} result{{ cheques|length|pluralize }}
+    <span class="text-slate-400">of {{ total_count }} cheques</span>
+  </p>
+{% endif %}
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bank</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Branch</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Received</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Maturity</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for cheque in cheques %}
+          {# Pending and maturing: the row the operator is meant to act on today. #}
+          <tr class="{% if cheque.is_due_soon %}bg-amber-50 hover:bg-amber-100{% else %}hover:bg-slate-50{% endif %}">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{{ cheque.cheque_no }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:customer_detail' cheque.customer.pk %}" class="text-slate-900 hover:underline">
+                {{ cheque.customer.name }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ cheque.bank_name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if cheque.branch %}{{ cheque.branch }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">
+              {{ cheque.amount|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ cheque.received_date|date:"j M Y" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 {% if cheque.is_due_soon %}font-medium text-amber-800{% else %}text-slate-600{% endif %}">
+              {{ cheque.maturity_date|date:"j M Y" }}
+              {% if cheque.bounce_new_date %}
+                <span class="block text-xs text-slate-400">re-present {{ cheque.bounce_new_date|date:"j M Y" }}</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if cheque.status == 'pending' %}
+                <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Pending</span>
+              {% elif cheque.status == 'deposited' %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Deposited</span>
+              {% elif cheque.status == 'bounced' %}
+                <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Bounced</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Held</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                {% if cheque.status != 'deposited' %}
+                  <form method="post" action="{% url 'core:cheque_deposit' cheque.pk %}">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                      Deposited
+                    </button>
+                  </form>
+                {% endif %}
+
+                {% if cheque.status != 'held' %}
+                  <form method="post" action="{% url 'core:cheque_hold' cheque.pk %}">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+                      Hold
+                    </button>
+                  </form>
+                {% endif %}
+
+                {% if cheque.status != 'bounced' %}
+                  <button type="button"
+                          data-bounce-url="{% url 'core:cheque_bounce' cheque.pk %}"
+                          data-cheque="{{ cheque.cheque_no }}"
+                          data-customer="{{ cheque.customer.name }}"
+                          data-amount="{{ cheque.amount|floatformat:2|intcomma }}"
+                          {# Pending and deposited are the states still credited to the customer. #}
+                          data-credited="{% if cheque.status == 'pending' or cheque.status == 'deposited' %}yes{% else %}no{% endif %}"
+                          class="js-bounce rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Bounced
+                  </button>
+                {% endif %}
+
+                <a href="{% url 'core:cheque_edit' cheque.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+
+                {% if is_super_admin and cheque.status != 'deposited' %}
+                  {# Deposited cheques are in the bank; the server refuses those too. #}
+                  <button type="button"
+                          data-delete-url="{% url 'core:cheque_delete' cheque.pk %}"
+                          data-cheque="{{ cheque.cheque_no }}"
+                          data-customer="{{ cheque.customer.name }}"
+                          data-amount="{{ cheque.amount|floatformat:2|intcomma }}"
+                          data-credited="{% if cheque.status == 'pending' %}yes{% else %}no{% endif %}"
+                          class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Delete
+                  </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="9" class="px-4 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No cheques match your filters.</p>
+                <a href="{% url 'core:cheque_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear filters
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No cheques yet.</p>
+                <p class="mt-1 text-xs text-slate-400">Cheques appear here when a bill is paid with one.</p>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if is_super_admin %}
+<!-- ====================== Delete modal ====================== -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">
+          Delete cheque <span id="delete-modal-cheque"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          <span id="delete-modal-customer" class="font-semibold text-slate-900"></span>
+          ·
+          <span id="delete-modal-amount" class="font-semibold text-slate-900"></span>
+        </p>
+
+        <p id="delete-modal-effect" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+        <p class="mt-2 text-xs text-slate-500">
+          The payment that recorded this cheque goes with it. For a cheque that
+          came back, mark it bounced instead — that keeps the history.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete cheque
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ====================== Bounce modal ====================== -->
+<div id="bounce-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="bounce-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <form method="post" id="bounce-modal-form">
+      {% csrf_token %}
+
+      <div class="flex items-start gap-4">
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h3 id="bounce-modal-title" class="text-base font-semibold text-slate-900">
+            Mark cheque <span id="bounce-modal-cheque"></span> bounced
+          </h3>
+          <p class="mt-1 text-sm text-slate-600">
+            <span id="bounce-modal-customer" class="font-semibold text-slate-900"></span>
+            ·
+            <span id="bounce-modal-amount" class="font-semibold text-slate-900"></span>
+          </p>
+
+          <p id="bounce-modal-effect" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+          <div class="mt-4">
+            <label for="bounce_new_date" class="mb-1.5 block text-sm font-medium text-slate-700">
+              New expected date <span class="text-rose-500">*</span>
+            </label>
+            <input type="date" id="bounce_new_date" name="bounce_new_date" required
+                   class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                          focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+            <p class="mt-1.5 text-xs text-slate-400">When the customer has agreed to re-present it.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" id="bounce-modal-cancel"
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Mark bounced
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const modal = document.getElementById('bounce-modal');
+    if (!modal) return;
+
+    const form     = document.getElementById('bounce-modal-form');
+    const chequeEl = document.getElementById('bounce-modal-cheque');
+    const custEl   = document.getElementById('bounce-modal-customer');
+    const amountEl = document.getElementById('bounce-modal-amount');
+    const effectEl = document.getElementById('bounce-modal-effect');
+    const dateEl   = document.getElementById('bounce_new_date');
+    const cancel   = document.getElementById('bounce-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.bounceUrl;
+      chequeEl.textContent = btn.dataset.cheque;
+      custEl.textContent = btn.dataset.customer;
+      amountEl.textContent = btn.dataset.amount;
+
+      // A cheque still credited to the customer gives the debt back when it
+      // bounces; one already held or bounced was never counted, so nothing
+      // moves. Say which, rather than let the balance shift unannounced.
+      if (btn.dataset.credited === 'yes') {
+        effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
+          ' again — the payment is taken back off their balance.';
+        effectEl.classList.remove('hidden');
+      } else {
+        effectEl.classList.add('hidden');
+      }
+
+      dateEl.value = '';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      dateEl.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-bounce').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+
+  // ---- delete (super admins only; the modal isn't rendered otherwise) ----
+  (function () {
+    const modal = document.getElementById('delete-modal');
+    if (!modal) return;
+
+    const form     = document.getElementById('delete-modal-form');
+    const chequeEl = document.getElementById('delete-modal-cheque');
+    const custEl   = document.getElementById('delete-modal-customer');
+    const amountEl = document.getElementById('delete-modal-amount');
+    const effectEl = document.getElementById('delete-modal-effect');
+    const cancel   = document.getElementById('delete-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.deleteUrl;
+      chequeEl.textContent = btn.dataset.cheque;
+      custEl.textContent = btn.dataset.customer;
+      amountEl.textContent = btn.dataset.amount;
+
+      // Only a pending cheque is still credited, so only that one moves the
+      // balance on the way out.
+      if (btn.dataset.credited === 'yes') {
+        effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
+          ' again — the payment is taken back off their balance.';
+        effectEl.classList.remove('hidden');
+      } else {
+        effectEl.classList.add('hidden');
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+</script>
+{% endblock %}
