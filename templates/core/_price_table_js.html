@@ -1,0 +1,232 @@
+{% comment %}
+Save All editor, shared by product_prices.html and customer_prices.html. Both
+render rows with the same hooks — .js-price-row carrying data-customer-id and
+data-product-id — so one routine drives either direction.
+
+Only edited rows are sent, and the server saves the batch in one transaction:
+either every row lands or none does.
+
+Spelled as a comment tag because the hash-style comment is single-line only:
+spanning lines, it isn't stripped and renders onto the page as text.
+{% endcomment %}
+<script>
+  (function () {
+    const CSRF     = '{{ csrf_token }}';
+    const SAVE_URL = '{% url "core:customer_price_save_all" %}';
+    const HIDE_MS  = 5000;
+
+    const rows       = Array.from(document.querySelectorAll('.js-price-row'));
+    const bar        = document.getElementById('save-bar');
+    const saveBtn    = document.getElementById('save-all');
+    const discardBtn = document.getElementById('save-discard');
+    const countEl    = document.getElementById('save-count');
+    const nounEl     = document.getElementById('save-noun');
+    const summaryEl  = document.getElementById('save-summary');
+    if (!rows.length || !bar) return;
+
+    let hideTimer = null;
+
+    // ---- what counts as an edit ------------------------------------------
+    // A row is dirty when its input differs from the price the server last
+    // gave us. A blank input is never dirty: blanks are ignored, not read as
+    // a request to clear the price.
+    function value(row) {
+      return row.querySelector('.js-price').value.trim();
+    }
+    function isDirty(row) {
+      const input = row.querySelector('.js-price');
+      return value(row) !== '' && value(row) !== input.dataset.original;
+    }
+    function dirtyRows() {
+      return rows.filter(isDirty);
+    }
+    function findRow(customerId, productId) {
+      return rows.find(function (row) {
+        return row.dataset.customerId === String(customerId) &&
+               row.dataset.productId === String(productId);
+      });
+    }
+
+    // ---- per-row chrome ---------------------------------------------------
+    function mark(row) {
+      const input = row.querySelector('.js-price');
+      const hint  = row.querySelector('.js-hint');
+
+      row.classList.toggle('bg-amber-50', isDirty(row));
+
+      // Two ways a row silently sends nothing, both worth saying out loud
+      // rather than letting Save All look like it no-opped:
+      //   - a number input holding unparsable text reports value ''
+      //   - a blanked field is skipped, not read as a request to clear
+      let message = '';
+      if (input.validity && input.validity.badInput) {
+        message = 'Not a number — this row is ignored.';
+      } else if (value(row) === '' && input.dataset.original !== '') {
+        message = 'Blank is ignored — ' + input.dataset.original + ' stays.';
+      }
+      hint.textContent = message;
+      hint.classList.toggle('hidden', message === '');
+    }
+    function rowError(row, message) {
+      const status = row.querySelector('.js-status');
+      status.textContent = message;
+      status.classList.remove('hidden');
+      row.classList.add('bg-rose-50');
+      row.classList.remove('bg-amber-50');
+    }
+    function clearRowError(row) {
+      row.querySelector('.js-status').classList.add('hidden');
+      row.classList.remove('bg-rose-50');
+    }
+    function clearRowErrors() {
+      rows.forEach(clearRowError);
+    }
+
+    // ---- the bar ----------------------------------------------------------
+    function show() {
+      clearTimeout(hideTimer);
+      bar.classList.remove('hidden');
+    }
+    function hide() {
+      bar.classList.add('hidden');
+      summaryEl.textContent = '';
+    }
+    function summary(message, ok) {
+      summaryEl.textContent = message;
+      summaryEl.classList.remove('text-emerald-600', 'text-rose-600', 'text-slate-500');
+      summaryEl.classList.add(
+        ok === true ? 'text-emerald-600' : ok === false ? 'text-rose-600' : 'text-slate-500'
+      );
+    }
+    function refresh() {
+      const n = dirtyRows().length;
+      countEl.textContent = n;
+      nounEl.textContent = n === 1 ? 'change' : 'changes';
+      saveBtn.disabled = n === 0;
+      discardBtn.disabled = n === 0;
+      // At zero the bar is left alone: it is either already hidden, or still
+      // showing the summary of the save that just cleared it.
+      if (n > 0) show();
+    }
+
+    function applyResult(result) {
+      const row = findRow(result.customer_id, result.product_id);
+      if (!row) return;
+
+      const input     = row.querySelector('.js-price');
+      const priceCell = row.querySelector('.js-price-cell');
+
+      // The cell held either a real price or a muted "default (x)"; either way
+      // it now shows what was just saved.
+      priceCell.textContent = result.price;
+      priceCell.classList.remove('text-slate-400');
+      priceCell.classList.add('font-medium', 'text-slate-900');
+
+      row.querySelector('.js-updated').textContent = result.updated_at;
+      input.value = result.price;
+      input.dataset.original = result.price;
+      mark(row);
+    }
+
+    // ---- save -------------------------------------------------------------
+    function save() {
+      const targets = dirtyRows();
+      if (!targets.length) return;
+
+      saveBtn.disabled = true;
+      discardBtn.disabled = true;
+      clearRowErrors();
+      summary('Saving…', null);
+
+      fetch(SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': CSRF,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rows: targets.map(function (row) {
+            return {
+              customer_id: row.dataset.customerId,
+              product_id:  row.dataset.productId,
+              unit_price:  value(row),
+            };
+          }),
+        }),
+      })
+        .then(function (res) {
+          // A session that expired mid-page answers with the login HTML, not
+          // JSON. Treat anything unparsable as a failure, never as a save.
+          return res.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          if (!data.success) {
+            (data.errors || []).forEach(function (item) {
+              const row = findRow(item.customer_id, item.product_id);
+              if (row) rowError(row, item.error);
+            });
+            throw new Error(data.error || 'Could not save — reload and try again.');
+          }
+
+          (data.results || []).forEach(applyResult);
+          summary(data.saved + ' price' + (data.saved === 1 ? '' : 's') + ' saved', true);
+          hideTimer = setTimeout(hide, HIDE_MS);
+        })
+        .catch(function (err) {
+          // Nothing was written, so every edit stays on screen to retry.
+          summary(err.message, false);
+        })
+        .finally(refresh);
+    }
+
+    function discard() {
+      rows.forEach(function (row) {
+        const input = row.querySelector('.js-price');
+        input.value = input.dataset.original;
+        mark(row);
+      });
+      clearRowErrors();
+      refresh();
+      hide();
+    }
+
+    // ---- wiring -----------------------------------------------------------
+    rows.forEach(function (row) {
+      const input = row.querySelector('.js-price');
+      input.addEventListener('input', function () {
+        // Editing a rejected row clears its message, so the error can't
+        // outlive the value that caused it.
+        clearRowError(row);
+        mark(row);
+        refresh();
+      });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();  // a bare Enter would submit nothing and reload
+          save();
+        }
+      });
+    });
+
+    saveBtn.addEventListener('click', save);
+    discardBtn.addEventListener('click', discard);
+
+    document.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        save();
+      }
+    });
+
+    // Edits live only in the DOM until Save All, so leaving would drop them.
+    window.addEventListener('beforeunload', function (e) {
+      if (dirtyRows().length) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    refresh();
+  })();
+</script>

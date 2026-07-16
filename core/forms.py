@@ -1,6 +1,8 @@
+from decimal import Decimal
+
 from django import forms
 
-from .models import Category, Product
+from .models import Category, Customer, Product
 
 INPUT_CLASSES = (
     "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
@@ -115,3 +117,48 @@ class ProductForm(forms.ModelForm):
             raise forms.ValidationError(f"'{label}' already exists.")
 
         return cleaned
+
+
+class CustomerPriceForm(forms.Form):
+    """Validates one price save from a price table's AJAX call.
+
+    Field names mirror the POST keys the tables send. A plain Form, not a
+    ModelForm: (customer, product) is unique_together, so a ModelForm would
+    reject a re-price of an existing pair as a duplicate instead of updating
+    it. The view resolves create-vs-update itself.
+    """
+
+    customer_id = forms.ModelChoiceField(
+        queryset=Customer.objects.all(),
+        error_messages={
+            "required": "Missing customer.",
+            "invalid_choice": "That customer no longer exists.",
+        },
+    )
+    product_id = forms.ModelChoiceField(
+        queryset=Product.objects.all(),
+        error_messages={
+            "required": "Missing product.",
+            "invalid_choice": "That product no longer exists.",
+        },
+    )
+    # Mirrors CustomerPrice.unit_price, so anything the column can't hold is
+    # rejected with a message instead of raising at save().
+    unit_price = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0"),
+        error_messages={
+            "required": "Enter a price.",
+            "invalid": "Enter a valid number.",
+            "min_value": "Price cannot be negative.",
+            "max_decimal_places": "Use at most 2 decimal places.",
+            "max_digits": "That price is too large.",
+        },
+    )
+
+    def first_error(self):
+        """The one message the row shows beneath its input."""
+        for messages in self.errors.values():
+            return messages[0]
+        return "Could not save."

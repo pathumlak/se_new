@@ -11,8 +11,13 @@
 <body class="h-full bg-slate-100 text-slate-800">
 
 {% if user.is_authenticated %}
-{# Active state keys off the resolved URL name, not request.path — path prefixes
-   would mark "Bill List" (/bills/) active while on "Make Bill" (/bills/new/). #}
+{% comment %}
+Active state keys off the resolved URL name, not request.path — path prefixes
+would mark "Bill List" (/bills/) active while on "Make Bill" (/bills/new/).
+
+Spelled as a comment tag because the hash-style comment is single-line only:
+spanning lines, it isn't stripped and renders onto the page as text.
+{% endcomment %}
 {% with active=request.resolver_match.url_name %}
 {% with link="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors" on="bg-slate-800 text-white" off="text-slate-400 hover:bg-slate-800/60 hover:text-white" %}
 

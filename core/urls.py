@@ -26,7 +26,15 @@ urlpatterns = [
         views.product_toggle_active,
         name="product_toggle_active",
     ),
+    path("products/<int:pk>/prices/", views.product_prices, name="product_prices"),
     path("customers/", views.customer_list, name="customer_list"),
+    path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
+    # Serves the Save All button on both price pages above.
+    path(
+        "api/customer-price/save-all/",
+        views.customer_price_save_all,
+        name="customer_price_save_all",
+    ),
     path("bills/new/", views.make_bill, name="make_bill"),
     path("bills/", views.bill_list, name="bill_list"),
     path("cheques/", views.cheque_list, name="cheque_list"),

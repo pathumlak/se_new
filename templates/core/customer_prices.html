@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Prices · {{ customer.name }} · Senovka Plastics{% endblock %}
+{% block header %}Customer Prices{% endblock %}
+
+{% block content %}
+
+<!-- Customer summary -->
+<div class="mb-5 min-w-0">
+  <a href="{% url 'core:customer_list' %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    Customers
+  </a>
+
+  <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ customer.name }}</h2>
+
+  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+    {% if customer.phone %}<span>{{ customer.phone }}</span><span class="text-slate-300">·</span>{% endif %}
+    {# Debtors carry a negative balance; show what they owe as a positive figure. #}
+    <span>
+      Balance
+      <span class="font-medium {% if customer.balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+        {{ customer.balance|floatformat:2 }}
+      </span>
+    </span>
+    {% if customer.is_supplier %}
+      <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+        Supplier
+      </span>
+    {% endif %}
+    {% if not customer.is_active %}
+      <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+        Inactive
+      </span>
+    {% endif %}
+  </div>
+</div>
+
+<p class="mb-3 text-sm text-slate-500">
+  {{ custom_count }} product{{ custom_count|pluralize }} priced
+  <span class="text-slate-400">of {{ rows|length }} shown</span>
+</p>
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Default Price</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Custom Price</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Last Updated</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">New Price</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="js-price-row hover:bg-slate-50"
+              data-customer-id="{{ customer.pk }}"
+              data-product-id="{{ row.product.pk }}">
+
+            <td class="whitespace-nowrap px-5 py-3 font-medium text-slate-900">
+              {{ row.product.name }}
+              {% if not row.product.is_active %}
+                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Inactive
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-slate-600">
+              {% if row.product.size %}{{ row.product.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right text-slate-600">
+              {{ row.product.default_price|floatformat:2 }}
+            </td>
+
+            {# Falls back to the product's default until someone prices it here. #}
+            <td class="js-price-cell whitespace-nowrap px-5 py-3 text-right
+                       {% if row.has_custom %}font-medium text-slate-900{% else %}text-slate-400{% endif %}">
+              {% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% else %}default ({{ row.product.default_price|floatformat:2 }}){% endif %}
+            </td>
+
+            <td class="js-updated whitespace-nowrap px-5 py-3 text-slate-500">
+              {% if row.has_custom %}{{ row.updated_at }}{% else %}—{% endif %}
+            </td>
+
+            <td class="px-5 py-3">
+              <div class="flex justify-end">
+                {# data-original is what Save All diffs against to find edits. #}
+                <input type="number" step="0.01" min="0" inputmode="decimal"
+                       value="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
+                       data-original="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
+                       placeholder="{{ row.product.default_price|floatformat:2 }}"
+                       aria-label="Custom price for {{ row.product }}"
+                       class="js-price w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm
+                              text-slate-900 placeholder:text-slate-300 shadow-sm
+                              focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              </div>
+              <p class="js-hint mt-1 hidden text-right text-xs text-slate-400"></p>
+              <p class="js-status mt-1 hidden text-right text-xs text-rose-600" role="status"></p>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="px-5 py-12 text-center">
+              <p class="text-sm text-slate-500">No products yet.</p>
+              <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                Create the first one
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "core/_price_save_bar.html" %}
+
+{% endblock %}
+
+{% block extra_js %}
+  {% include "core/_price_table_js.html" %}
+{% endblock %}

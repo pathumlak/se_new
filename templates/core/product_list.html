@@ -118,6 +118,10 @@
 
             <td class="whitespace-nowrap px-5 py-3 text-right">
               <div class="flex justify-end gap-1">
+                <a href="{% url 'core:product_prices' product.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Prices
+                </a>
                 <a href="{% url 'core:product_update' product.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
