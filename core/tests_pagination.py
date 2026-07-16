@@ -1,4 +1,4 @@
-"""Throwaway verification for the pagination work. Deleted after it runs."""
+"""Pagination: page sizes, filter preservation, and list ordering."""
 from datetime import date, timedelta
 from decimal import Decimal
 

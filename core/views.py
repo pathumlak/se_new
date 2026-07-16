@@ -884,30 +884,81 @@ def _qty_text(value):
     return text or "0"
 
 
+#: What the walk-in holding account is called when it is first created. Only a
+#: starting name — the account is found by its flag, so renaming it is safe.
+WALK_IN_ACCOUNT_NAME = "Walk-in Customer"
+
+
+def _walk_in_customer():
+    """The one account every walk-in bill hangs off, made on first use.
+
+    Created with no credit limit: a walk-in is a counter sale, and nobody is
+    extending credit to a name on a slip.
+    """
+    customer = Customer.objects.filter(is_walk_in_account=True).order_by("pk").first()
+    if customer is not None:
+        return customer
+    return Customer.objects.create(
+        name=WALK_IN_ACCOUNT_NAME,
+        is_walk_in_account=True,
+        is_supplier=False,
+        is_active=True,
+        credit_limit=ZERO,
+    )
+
+
+def _billable_customers():
+    """Who a bill may be made out to, priced against their current balance.
+
+    Suppliers are bought from on supplier bills rather than sold to, and an
+    inactive account should not be taking new business. The walk-in holding
+    account is left out too: it is reached by the Walk-in toggle, and offering
+    it in the dropdown as well would let a bill be booked to it without a name.
+    """
+    return list(
+        Customer.objects.filter(
+            is_active=True, is_supplier=False, is_walk_in_account=False
+        )
+    )
+
+
+def _bill_form_context(request, customers):
+    """What both bill pages need to draw the form."""
+    return {
+        "customers": customers,
+        "today": timezone.localdate(),
+        # The page prices a walk-in against the holding account, which has no
+        # CustomerPrice rows — so the endpoint quotes it default prices. Created
+        # on first sight of a bill form rather than on first walk-in sale, so
+        # the page always has an id to ask about.
+        "walk_in_customer_id": _walk_in_customer().pk,
+        # Tabs over the product grid. Driven off the table rather than a fixed
+        # list, because categories are operator-managed — a hardcoded tab would
+        # be wrong the first time one is added or renamed.
+        "categories": Category.objects.all(),
+        # Straight off the models, so the radio values and account codes the
+        # page posts are the ones the save step will store.
+        "payment_types": Bill.PaymentType.choices,
+        "account_choices": Payment.Account.choices,
+    }
+
+
 @login_required
 def bill_create(request):
-    # Suppliers are bought from on supplier bills rather than sold to, and an
-    # inactive account should not be taking new business.
-    customers = list(Customer.objects.filter(is_active=True, is_supplier=False))
+    customers = _billable_customers()
     for customer in customers:
         # A new bill prices against the balance as it stands. The edit page
         # sets this differently, which is the only difference between them.
         customer.balance_for_bill = customer.balance
 
-    return render(
-        request,
-        "core/bill_create.html",
+    context = _bill_form_context(request, customers)
+    context.update(
         {
-            "customers": customers,
-            "today": timezone.localdate(),
-            # Straight off the models, so the radio values and account codes the
-            # page posts are the ones the save step will store.
-            "payment_types": Bill.PaymentType.choices,
-            "account_choices": Payment.Account.choices,
             "save_url": reverse("core:bill_save"),
             "is_edit": False,
-        },
+        }
     )
+    return render(request, "core/bill_create.html", context)
 
 
 @require_GET
@@ -915,8 +966,11 @@ def bill_create(request):
 def bill_products(request, customer_id):
     """What this customer can be billed for, at their own price.
 
-    Feeds the step 1 product table. Inactive and out-of-stock products are
-    left out entirely: neither can go on a new bill.
+    Feeds the product grid. Inactive products are left out entirely — they
+    cannot go on a bill. Out-of-stock ones are reported with qty 0 and drawn as
+    dimmed, unsellable cards: the biller looking for a product is better told it
+    exists and is finished than left to wonder whether it was ever set up. The
+    save step refuses them regardless of what the page allows.
 
     ?bill=<id> asks the same question for an edit, where the bill's own lines
     have already taken their stock. Those quantities are added back and the
@@ -948,8 +1002,8 @@ def bill_products(request, customer_id):
     )
 
     sellable = Product.objects.filter(
-        Q(is_active=True, qty__gt=0) | Q(pk__in=list(held))
-    )
+        Q(is_active=True) | Q(pk__in=list(held))
+    ).select_related("category")
 
     products = []
     for product in sellable:
@@ -965,6 +1019,10 @@ def bill_products(request, customer_id):
                 "qty": _qty_text(available),
                 "unit_price": f"{unit_price:.2f}",
                 "has_custom_price": override is not None,
+                # Drives the category tabs over the grid. The id is what the
+                # tabs match on — names are operator-entered and change.
+                "category_id": product.category_id,
+                "category": product.category.name,
             }
         )
 
@@ -992,6 +1050,26 @@ def _decimal(raw, label, places):
 
     step = Decimal("0.01") if places == 2 else Decimal("0.001")
     return value.quantize(step, rounding=ROUND_HALF_UP)
+
+
+def _read_bill_date(raw):
+    """The date a new bill is billed on, off the payload.
+
+    Blank means today, which is what the picker is pre-set to and what every
+    bill written before the picker existed got. A future date is refused: the
+    goods have not left the yard yet, and a bill dated forward would sit ahead
+    of the running balance in every ledger it appears in.
+    """
+    text = str(raw if raw is not None else "").strip()
+    if text == "":
+        return timezone.localdate()
+
+    parsed = _parse_date(text)
+    if parsed is None:
+        raise BillError("That bill date isn't a real date.")
+    if parsed > timezone.localdate():
+        raise BillError("A bill can't be dated in the future.")
+    return parsed
 
 
 def _optional_decimal(raw, label):
@@ -1039,11 +1117,16 @@ def _read_cheque(raw, required):
     }
 
 
-def _read_payment(raw, subtotal, customer):
+def _read_payment(raw, total, customer):
     """Re-derive every payment leg from the payload.
 
     The page validates all of this already; none of that is evidence, so it is
     all recomputed here from the customer's stored balance.
+
+    `total` is what the bill comes to — goods plus delivery, less any discount
+    — not the subtotal of the lines. Collecting against the subtotal would ask
+    the customer for the delivery they are not paying and refuse them the
+    discount they were given.
     """
     raw = raw or {}
     kind = str(raw.get("type") or "").strip()
@@ -1094,7 +1177,7 @@ def _read_payment(raw, subtotal, customer):
     # What settles everything: this bill plus any debt, less any credit. A
     # negative balance is debt and a positive one is credit, so both are the
     # one subtraction.
-    target = (subtotal - customer.balance).quantize(Decimal("0.01"))
+    target = (total - customer.balance).quantize(Decimal("0.01"))
 
     if kind == Bill.PaymentType.PAY_LATER:
         paid = ZERO
@@ -1107,13 +1190,17 @@ def _read_payment(raw, subtotal, customer):
     return parts
 
 
-def _check_credit_limit(customer, subtotal, parts, user):
+def _check_credit_limit(customer, total, parts, user):
     """Only Pay Later can leave money outstanding; every other type is held to
-    the full amount, so it lands the balance on zero."""
+    the full amount, so it lands the balance on zero.
+
+    Measured against the bill's total rather than its subtotal: what the
+    customer ends up owing is what the bill came to.
+    """
     if parts["type"] != Bill.PaymentType.PAY_LATER:
         return
 
-    after = customer.balance - subtotal
+    after = customer.balance - total
     owed = -after if after < ZERO else ZERO
     if owed <= customer.credit_limit:
         return
@@ -1261,16 +1348,28 @@ def _update_bill(bill, user, payload):
 
 
 def _write_bill(bill, user, payload):
-    # Read fresh: on an edit the reversal above moved the balance with an F()
-    # expression, which leaves any object already in memory stale.
-    customer = (
-        Customer.objects.filter(
+    is_walk_in = bool(payload.get("is_walk_in"))
+    walk_in_name = str(payload.get("walk_in_name") or "").strip()
+
+    if is_walk_in:
+        # A walk-in still lands on a real account, because Bill.customer is
+        # required and the ledger has to balance somewhere. Who actually took
+        # the goods is walk_in_name, and it is the only record of them — so it
+        # is required rather than decorative.
+        if not walk_in_name:
+            raise BillError("Enter the walk-in customer's name.")
+        if len(walk_in_name) > 255:
+            raise BillError("That walk-in name is too long.")
+        customer = _walk_in_customer()
+    else:
+        walk_in_name = ""
+        # Read fresh: on an edit the reversal above moved the balance with an
+        # F() expression, which leaves any object already in memory stale.
+        customer = Customer.objects.filter(
             pk=payload.get("customer_id"), is_active=True, is_supplier=False
-        )
-        .first()
-    )
-    if customer is None:
-        raise BillError("That customer can't be billed.")
+        ).first()
+        if customer is None:
+            raise BillError("That customer can't be billed.")
 
     raw_lines = payload.get("lines")
     if not isinstance(raw_lines, list) or not raw_lines:
@@ -1322,10 +1421,43 @@ def _write_bill(bill, user, payload):
             }
         )
 
-    total = subtotal
-    parts = _read_payment(payload.get("payment"), subtotal, customer)
+    # Delivery is charged on top of the goods; the discount comes off the lot.
+    # Both are optional, so a payload without them prices exactly as before.
+    delivery_charge = _optional_decimal(payload.get("delivery_charge"), "Delivery charge")
+    discount_amount = _optional_decimal(payload.get("discount_amount"), "Discount")
+    discount_reason = str(payload.get("discount_reason") or "").strip()[:255]
+
+    if discount_amount > ZERO and not discount_reason:
+        # Money off a bill is the one figure on it that nothing else explains.
+        raise BillError("Give a reason for the discount.")
+    if discount_amount == ZERO:
+        discount_reason = ""
+
+    total = subtotal + delivery_charge - discount_amount
+    if total < ZERO:
+        raise BillError(
+            f"The discount is more than the bill — {subtotal + delivery_charge:.2f} "
+            f"including delivery, discounted by {discount_amount:.2f}."
+        )
+
+    # Everything downstream prices against `total`, not the subtotal: the
+    # payment collects what the bill actually comes to, and the credit limit
+    # measures the debt it actually leaves.
+    parts = _read_payment(payload.get("payment"), total, customer)
     parts["credit_override"] = bool((payload.get("payment") or {}).get("credit_override"))
-    _check_credit_limit(customer, subtotal, parts, user)
+
+    if is_walk_in and parts["type"] == Bill.PaymentType.PAY_LATER:
+        # Every walk-in shares the one holding account, so debt left on it
+        # belongs to nobody in particular: the balance would say what walk-ins
+        # owe in total and never which of them. Refused here rather than left to
+        # the credit limit, which would turn a rule into an arithmetic accident
+        # and say "past the 0.00 credit limit" to someone who never set one.
+        raise BillError(
+            "A walk-in sale can't be put on account — there is no account to "
+            "put it on. Take payment now, or bill this to a regular customer."
+        )
+
+    _check_credit_limit(customer, total, parts, user)
 
     paid = parts["paid"]
     if paid >= total:
@@ -1345,13 +1477,18 @@ def _write_bill(bill, user, payload):
     # yard that day whatever gets corrected afterwards.
     bill.customer = customer
     if bill.pk is None:
-        bill.bill_date = timezone.localdate()
+        bill.bill_date = _read_bill_date(payload.get("bill_date"))
     bill.subtotal = subtotal
+    bill.delivery_charge = delivery_charge
+    bill.discount_amount = discount_amount
+    bill.discount_reason = discount_reason
     bill.total_amount = total
     bill.paid_amount = paid
     bill.balance_change = balance_change
     bill.payment_type = parts["type"]
     bill.status = status
+    bill.is_walk_in = is_walk_in
+    bill.walk_in_name = walk_in_name
     bill.notes = str(payload.get("notes") or "").strip()
     bill.save()
 
@@ -1503,6 +1640,12 @@ def _bill_initial(bill):
     """The bill as the create page's own payload shape, for rehydrating it."""
     return {
         "customer_id": bill.customer_id,
+        "bill_date": bill.bill_date.isoformat(),
+        "is_walk_in": bill.is_walk_in,
+        "walk_in_name": bill.walk_in_name,
+        "delivery_charge": f"{bill.delivery_charge:.2f}",
+        "discount_amount": f"{bill.discount_amount:.2f}",
+        "discount_reason": bill.discount_reason,
         "lines": [
             {
                 "product_id": item.product_id,
@@ -1571,9 +1714,10 @@ def bill_edit(request, pk):
     # The page prices this bill as though it had never been saved, so the
     # customer it belongs to is offered the balance it would have without it.
     # Every other customer's balance is already free of this bill.
-    customers = list(Customer.objects.filter(is_active=True, is_supplier=False))
+    customers = _billable_customers()
     if bill.customer not in customers:
-        # Retired or turned supplier since; still has to be editable.
+        # Retired, turned supplier, or the walk-in holding account: whichever
+        # this bill was made out to, it still has to be editable.
         customers.insert(0, bill.customer)
     for customer in customers:
         customer.balance_for_bill = (
@@ -1582,20 +1726,16 @@ def bill_edit(request, pk):
             else customer.balance
         )
 
-    return render(
-        request,
-        "core/bill_edit.html",
+    context = _bill_form_context(request, customers)
+    context.update(
         {
             "bill": bill,
-            "customers": customers,
-            "today": timezone.localdate(),
-            "payment_types": Bill.PaymentType.choices,
-            "account_choices": Payment.Account.choices,
             "save_url": reverse("core:bill_edit", args=[bill.pk]),
             "initial": _bill_initial(bill),
             "is_edit": True,
-        },
+        }
     )
+    return render(request, "core/bill_edit.html", context)
 
 
 @require_POST
@@ -2644,6 +2784,10 @@ def production_list(request):
             "to_date": to_date,
             "selected_product": selected_product,
             "is_filtered": bool(from_date or to_date or selected_product),
+            # Entries across every day the filter matched, not just this page's.
+            # The pager counts days, which is what a row is here, so this is the
+            # only figure that says how much production that adds up to.
+            "entry_count": sum(day["product_count"] for day in days),
         },
     )
 

@@ -17,233 +17,274 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
 <!-- Step rail -->
 <ol class="mb-5 flex items-center gap-2 text-xs font-medium">
-  <li id="rail-1" class="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white">
+  <li id="rail-build" class="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white">
     <span class="flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-bold text-slate-900">1</span>
-    Choose products
+    Products &amp; items
   </li>
   <li class="text-slate-300">→</li>
-  <li id="rail-2" class="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400">
+  <li id="rail-pay" class="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400">
     <span class="flex h-4 w-4 items-center justify-center rounded-full bg-slate-300 text-[10px] font-bold text-white">2</span>
-    Bill items
-  </li>
-  <li class="text-slate-300">→</li>
-  <li id="rail-3" class="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400">
-    <span class="flex h-4 w-4 items-center justify-center rounded-full bg-slate-300 text-[10px] font-bold text-white">3</span>
     Payment
   </li>
 </ol>
 
-<!-- Customer -->
+<!-- ========================= BILL HEADER ========================= -->
 <div class="mb-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-  <label for="customer" class="mb-1.5 block text-sm font-medium text-slate-700">
-    Customer <span class="text-rose-500">*</span>
-  </label>
+  <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
 
-  <select id="customer"
-          class="block w-full max-w-xl rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
-                 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-    <option value="">Select a customer</option>
-    {% for customer in customers %}
-      {# Balance rides along in the label so the biller sees what they owe before picking; the dataset carries it unformatted for the summary maths. #}
-      <option value="{{ customer.pk }}"
-              data-name="{{ customer.name }}"
-              data-balance="{{ customer.balance_for_bill }}"
-              data-credit-limit="{{ customer.credit_limit }}">
-        {{ customer.name }} (Balance: {{ customer.balance_for_bill|floatformat:2|intcomma }})
-      </option>
-    {% empty %}
-      <option value="" disabled>No active customers</option>
-    {% endfor %}
-  </select>
+    <!-- Bill date -->
+    <div>
+      <label for="bill-date" class="mb-1.5 block text-sm font-medium text-slate-700">
+        Bill Date <span class="text-rose-500">*</span>
+      </label>
+      {# max: a bill dated forward would sit ahead of the running balance in every ledger it lands in. The save step refuses it too. #}
+      <input type="date" id="bill-date"
+             value="{{ today|date:'Y-m-d' }}"
+             max="{{ today|date:'Y-m-d' }}"
+             {% if is_edit %}disabled{% endif %}
+             class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900
+                    disabled:bg-slate-50 disabled:text-slate-400">
+      {% if is_edit %}
+        <p class="mt-1.5 text-xs text-slate-400">
+          An edit keeps the date it was billed on.
+        </p>
+      {% endif %}
+    </div>
 
-  <p class="mt-1.5 text-xs text-slate-400">
-    A negative balance is what the customer already owes us.
-  </p>
+    <!-- Who the bill is for -->
+    <div class="sm:col-span-2">
+      <span class="mb-1.5 block text-sm font-medium text-slate-700">Bill to</span>
+
+      {# Radio rather than a checkbox: the two modes are exclusive, and each names itself rather than leaving one implied by the other being off. #}
+      <div class="mb-3 inline-flex rounded-lg border border-slate-300 p-0.5">
+        <label class="cursor-pointer">
+          <input type="radio" name="bill_mode" value="regular" id="mode-regular" class="js-mode peer sr-only" checked>
+          <span class="block rounded-md px-3 py-1.5 text-xs font-semibold text-slate-500
+                       peer-checked:bg-slate-900 peer-checked:text-white">
+            Regular Customer
+          </span>
+        </label>
+        <label class="cursor-pointer">
+          <input type="radio" name="bill_mode" value="walk_in" id="mode-walkin" class="js-mode peer sr-only">
+          <span class="block rounded-md px-3 py-1.5 text-xs font-semibold text-slate-500
+                       peer-checked:bg-slate-900 peer-checked:text-white">
+            Walk-in Customer
+          </span>
+        </label>
+      </div>
+
+      <!-- Regular -->
+      <div id="mode-panel-regular">
+        <select id="customer"
+                class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
+                       shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+          <option value="">Select a customer</option>
+          {% for customer in customers %}
+            {# Balance rides along in the label so the biller sees what they owe before picking; the dataset carries it unformatted for the summary maths. #}
+            <option value="{{ customer.pk }}"
+                    data-name="{{ customer.name }}"
+                    data-balance="{{ customer.balance_for_bill }}"
+                    data-credit-limit="{{ customer.credit_limit }}">
+              {{ customer.name }} (Balance: {{ customer.balance_for_bill|floatformat:2|intcomma }})
+            </option>
+          {% empty %}
+            <option value="" disabled>No active customers</option>
+          {% endfor %}
+        </select>
+        <p class="mt-1.5 text-xs text-slate-400">
+          A negative balance is what the customer already owes us.
+        </p>
+      </div>
+
+      <!-- Walk-in -->
+      <div id="mode-panel-walkin" class="hidden">
+        <input type="text" id="walkin-name" maxlength="255" placeholder="Who is buying?"
+               class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <p class="mt-1.5 text-xs text-slate-400">
+          Walk-ins share one holding account and must be paid in full — there is
+          no account to leave a balance on.
+        </p>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# Only ever filled in on an edit, when a line's product has gone entirely. #}
 <p id="hydrate-note" class="mb-4 hidden rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700"></p>
 
-<!-- ============================ STEP 1 ============================ -->
-<div id="step-1">
-  <div id="panel-idle" class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
-    <p class="text-sm text-slate-500">Select a customer to load their prices.</p>
-  </div>
+<!-- ===================== PRODUCTS + BILL ITEMS ===================== -->
+{% comment %}
+  One screen, two columns: the cards pick products, the panel prices them.
 
-  <div id="panel-loading" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
-    <p class="text-sm text-slate-500">Loading products…</p>
-  </div>
+  There is no "add selected" step between them — clicking a card puts the
+  product straight on the bill and clicking it again takes it off, so the panel
+  is always what the bill currently says. The panel is the source of truth for
+  what is on the bill; a card's highlight is only a reflection of it.
 
-  <div id="panel-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
-    <p id="error-text" class="text-sm text-rose-700"></p>
-    <button type="button" id="retry"
-            class="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50">
-      Try again
-    </button>
-  </div>
+  On a narrow screen the panel stacks under the cards, which is why it carries
+  its own heading rather than relying on sitting beside them.
+{% endcomment %}
+<div id="step-build" class="grid gap-5 lg:grid-cols-3">
 
-  <div id="panel-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
-    <p class="text-sm text-slate-500">Nothing in stock to bill.</p>
-    <p class="mt-1 text-xs text-slate-400">Only active products with stock on hand can go on a bill.</p>
-  </div>
+  <!-- ---------------------------- cards ---------------------------- -->
+  <div class="lg:col-span-2">
 
-  <div id="panel-table" class="hidden">
-    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-slate-200 text-sm">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="w-12 px-5 py-2.5 text-left">
-                <input type="checkbox" id="select-all" aria-label="Select all products"
-                       class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-1 focus:ring-slate-900">
-              </th>
-              <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
-              <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
-              <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Stock Qty</th>
-              <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Unit Price</th>
-              <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Note</th>
-            </tr>
-          </thead>
-          <tbody id="product-rows" class="divide-y divide-slate-100"></tbody>
-        </table>
-      </div>
+    <div id="panel-idle" class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
+      <p class="text-sm text-slate-500">Choose who the bill is for to load their prices.</p>
     </div>
 
-    <div class="sticky bottom-0 z-10 mt-4 pb-1">
-      <div class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-lg
-                  sm:flex-row sm:items-center sm:justify-between">
-        <p class="text-sm text-slate-600">
-          <span id="selected-count" class="font-semibold text-slate-900">0</span>
-          <span id="selected-noun">products</span> selected
-        </p>
-        <button type="button" id="add-selected" disabled
-                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
+    <div id="panel-loading" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
+      <p class="text-sm text-slate-500">Loading products…</p>
+    </div>
+
+    <div id="panel-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
+      <p id="error-text" class="text-sm text-rose-700"></p>
+      <button type="button" id="retry"
+              class="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50">
+        Try again
+      </button>
+    </div>
+
+    <div id="panel-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
+      <p class="text-sm text-slate-500">Nothing to bill.</p>
+      <p class="mt-1 text-xs text-slate-400">Only active products can go on a bill.</p>
+    </div>
+
+    <div id="panel-grid" class="hidden">
+
+      <!-- Search -->
+      <div class="relative mb-3">
+        <svg class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400"
+             fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+        </svg>
+        <input type="search" id="product-search" placeholder="Search by name or size"
+               autocomplete="off"
+               class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+
+      <!-- Category tabs -->
+      {% comment %}
+        Off the Category table, not a fixed list: categories are operator-
+        managed here, so a hardcoded tab would be wrong the first time one was
+        added or renamed. Tabs match on the id for the same reason.
+      {% endcomment %}
+      <div class="mb-4 flex flex-wrap gap-1.5" id="category-tabs">
+        <button type="button" data-category="" aria-pressed="true"
+                class="js-cat rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+          All
+        </button>
+        {% for category in categories %}
+          <button type="button" data-category="{{ category.pk }}" aria-pressed="false"
+                  class="js-cat rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">
+            {{ category.name }}
+          </button>
+        {% endfor %}
+      </div>
+
+      <div id="product-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+
+      <p id="grid-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500"></p>
+    </div>
+  </div>
+
+  <!-- ---------------------------- panel ---------------------------- -->
+  <div class="lg:col-span-1">
+    <div class="sticky top-20 rounded-xl border border-slate-200 bg-white shadow-sm">
+
+      <div class="border-b border-slate-200 px-4 py-3">
+        <h3 class="text-sm font-semibold text-slate-900">
+          Bill Items
+          <span id="item-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
+        </h3>
+        <p id="summary-customer" class="mt-1 truncate text-xs text-slate-500"></p>
+      </div>
+
+      <div id="bill-rows" class="max-h-[22rem] divide-y divide-slate-100 overflow-y-auto"></div>
+
+      <p id="bill-empty" class="px-4 py-10 text-center text-sm text-slate-400">
+        Click a product to add it.
+      </p>
+
+      <p id="invalid-note" class="mx-4 mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+      <!-- Adjustments -->
+      <div class="space-y-3 border-t border-slate-200 px-4 py-3">
+        <div class="flex items-center justify-between text-sm">
+          <span class="text-slate-500">Subtotal</span>
+          <span id="subtotal-cell" class="font-semibold text-slate-900">0.00</span>
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <label for="delivery-charge" class="text-sm text-slate-500">Delivery</label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" id="delivery-charge"
+                 placeholder="0.00"
+                 class="w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <label for="discount-amount" class="text-sm text-slate-500">Discount</label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" id="discount-amount"
+                 placeholder="0.00"
+                 class="w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+
+        {# Shown only once a discount is entered: money off a bill is the one figure on it nothing else explains, and the save step refuses it unexplained. #}
+        <div id="discount-reason-row" class="hidden">
+          <label for="discount-reason" class="mb-1 block text-xs font-medium text-slate-600">
+            Discount reason <span class="text-rose-500">*</span>
+          </label>
+          <input type="text" id="discount-reason" maxlength="255" placeholder="Why?"
+                 class="block w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+          <p id="discount-error" class="mt-1 hidden text-xs text-rose-600"></p>
+        </div>
+      </div>
+
+      <!-- Totals -->
+      <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
+        <div class="flex items-baseline justify-between">
+          <span class="text-sm font-semibold text-slate-900">Grand total</span>
+          <span id="grand-total" class="text-xl font-semibold text-slate-900">0.00</span>
+        </div>
+
+        <dl class="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-xs">
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-500">Current balance</dt>
+            <dd id="summary-balance" class="font-medium"></dd>
+          </div>
+          <div class="flex items-center justify-between">
+            <dt class="font-medium text-slate-700">Amount to collect</dt>
+            <dd id="summary-collect" class="font-semibold text-slate-900">0.00</dd>
+          </div>
+        </dl>
+        <p id="summary-collect-note" class="mt-1.5 text-[11px] text-slate-500"></p>
+
+        <p id="summary-changed" class="mt-3 hidden rounded-lg bg-indigo-50 px-3 py-2 text-[11px] text-indigo-700"></p>
+
+        <button type="button" id="to-payment" disabled
+                class="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
                        transition hover:bg-slate-800 disabled:opacity-50">
-          Add Selected to Bill
+          Continue to payment
+        </button>
+        <p id="to-payment-note" class="mt-1.5 text-center text-xs text-slate-400"></p>
+
+        <button type="button" id="start-over"
+                class="mt-1 w-full rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-900">
+          Start over
         </button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ============================ STEP 2 ============================ -->
-<div id="step-2" class="hidden grid gap-5 lg:grid-cols-3">
-
-  <!-- Items -->
-  <div class="lg:col-span-2">
-    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-slate-200 text-sm">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
-              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
-              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Qty</th>
-              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Unit Price</th>
-              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Line Total</th>
-              <th class="w-12 px-4 py-2.5"><span class="sr-only">Remove</span></th>
-            </tr>
-          </thead>
-
-          <tbody id="bill-rows" class="divide-y divide-slate-100"></tbody>
-
-          <tbody id="bill-empty" class="hidden">
-            <tr>
-              <td colspan="6" class="px-4 py-12 text-center">
-                <p class="text-sm text-slate-500">No items on this bill.</p>
-                <button type="button" id="add-more-empty"
-                        class="mt-2 text-sm font-medium text-slate-900 hover:underline">
-                  Add products
-                </button>
-              </td>
-            </tr>
-          </tbody>
-
-          <tfoot class="border-t-2 border-slate-200 bg-slate-50">
-            <tr>
-              <td colspan="4" class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Subtotal
-              </td>
-              <td id="subtotal-cell" class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold text-slate-900">
-                0.00
-              </td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>
-
-    <p id="invalid-note" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
-
-    <div class="mt-4 flex flex-wrap items-center gap-2">
-      <button type="button" id="add-more"
-              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2
-                     text-sm font-medium text-slate-700 hover:bg-slate-50">
-        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-        </svg>
-        Add More Products
-      </button>
-
-      <button type="button" id="start-over"
-              class="rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
-        Start over
-      </button>
-    </div>
-  </div>
-
-  <!-- Summary -->
-  <div class="lg:col-span-1">
-    <div class="sticky top-20 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 class="text-sm font-semibold text-slate-900">Bill Summary</h3>
-
-      <p id="summary-customer" class="mt-3 truncate text-base font-semibold text-slate-900"></p>
-      <p class="text-xs text-slate-500">
-        Current balance:
-        <span id="summary-balance" class="font-medium"></span>
-      </p>
-
-      <dl class="mt-4 space-y-2 border-t border-slate-200 pt-4 text-sm">
-        <div class="flex items-center justify-between">
-          <dt class="text-slate-500">Bill subtotal</dt>
-          <dd id="summary-subtotal" class="font-medium text-slate-900">0.00</dd>
-        </div>
-
-        {# Only one of these two is ever relevant, so the other stays hidden rather than showing a confusing 0.00. #}
-        <div id="summary-owed-row" class="hidden items-center justify-between">
-          <dt class="text-slate-500">Customer owes</dt>
-          <dd id="summary-owed" class="font-medium text-rose-600">0.00</dd>
-        </div>
-
-        <div id="summary-credit-row" class="hidden items-center justify-between">
-          <dt class="text-slate-500">In credit</dt>
-          <dd id="summary-credit" class="font-medium text-emerald-600">0.00</dd>
-        </div>
-      </dl>
-
-      <div class="mt-4 border-t border-slate-200 pt-4">
-        <div class="flex items-baseline justify-between">
-          <p class="text-sm font-semibold text-slate-900">Amount to collect</p>
-          <p id="summary-collect" class="text-xl font-semibold text-slate-900">0.00</p>
-        </div>
-        <p id="summary-collect-note" class="mt-1 text-xs text-slate-500"></p>
-      </div>
-
-      <p id="summary-changed" class="mt-4 hidden rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700"></p>
-
-      <button type="button" id="to-payment" disabled
-              class="mt-4 w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
-                     transition hover:bg-slate-800 disabled:opacity-50">
-        Continue to payment
-      </button>
-      <p id="to-payment-note" class="mt-1.5 text-center text-xs text-slate-400"></p>
-    </div>
-  </div>
-</div>
-
-<!-- ============================ STEP 3 ============================ -->
-<div id="step-3" class="hidden grid gap-5 lg:grid-cols-3">
+<!-- ============================ PAYMENT ============================ -->
+<div id="step-pay" class="hidden grid gap-5 lg:grid-cols-3">
 
   <div class="lg:col-span-2">
     <!-- Type selector -->
@@ -433,50 +474,3 @@ spanning lines, it isn't stripped and renders onto the page as text.
   </div>
 </div>
 
-<!-- ====================== Add products modal ====================== -->
-<div id="add-modal"
-     class="fixed inset-0 z-50 hidden items-start justify-center bg-slate-900/60 p-4 pt-16 backdrop-blur-sm"
-     role="dialog" aria-modal="true" aria-labelledby="add-modal-title">
-  <div class="flex max-h-[75vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-xl">
-    <div class="border-b border-slate-200 p-5">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h3 id="add-modal-title" class="text-base font-semibold text-slate-900">Add products</h3>
-          <p class="mt-0.5 text-xs text-slate-500">Products already on the bill aren't listed.</p>
-        </div>
-        <button type="button" id="add-modal-close" aria-label="Close"
-                class="text-slate-400 hover:text-slate-900">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
-        </button>
-      </div>
-
-      <div class="relative mt-4">
-        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
-          </svg>
-        </span>
-        <input type="search" id="add-modal-search" placeholder="Search by name…"
-               class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
-                      placeholder:text-slate-400 shadow-sm
-                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-      </div>
-    </div>
-
-    <div class="min-h-0 flex-1 overflow-y-auto">
-      <table class="min-w-full divide-y divide-slate-200 text-sm">
-        <tbody id="add-modal-rows" class="divide-y divide-slate-100"></tbody>
-      </table>
-      <p id="add-modal-empty" class="hidden px-5 py-10 text-center text-sm text-slate-500"></p>
-    </div>
-
-    <div class="flex justify-end border-t border-slate-200 p-4">
-      <button type="button" id="add-modal-done"
-              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-        Done
-      </button>
-    </div>
-  </div>
-</div>

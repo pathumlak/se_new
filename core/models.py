@@ -58,6 +58,15 @@ class Customer(models.Model):
     is_supplier = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
+    # The single holding account every walk-in bill hangs off. Bill.customer is
+    # required, so a sale to someone with no account still needs a row to point
+    # at; who actually bought the goods is Bill.walk_in_name.
+    #
+    # A flag rather than a name lookup: the name is free text the operator can
+    # edit, and matching on it would mint a second holding account the first
+    # time someone renamed this one.
+    is_walk_in_account = models.BooleanField(default=False)
+
     class Meta:
         ordering = ["name"]
 

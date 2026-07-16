@@ -245,9 +245,11 @@
 <section>
   <h2 class="mb-3 text-base font-semibold text-slate-900">All Sales</h2>
 
-  {# Paged over the bills only. The cash and cheque tables above are the
-     breakdown of these same bills, and the summary cards are struck over the
-     whole range whatever page this is on. #}
+  {% comment %}
+    Paged over the bills only. The cash and cheque tables above are the
+    breakdown of these same bills, and the summary cards are struck over the
+    whole range whatever page this is on.
+  {% endcomment %}
   {% include 'partials/pagination.html' with page_obj=page_obj %}
 
   <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

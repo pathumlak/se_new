@@ -1,12 +1,17 @@
 {% comment %}
-Bill creation, steps 1 and 2. One page, no reloads:
+Bill creation, one page, no reloads:
 
-  step 1  pick a customer -> GET their prices -> tick products
-  step 2  set quantities and prices -> live line totals, subtotal and summary
+  header   who the bill is for (a customer, or a walk-in name) and its date
+  build    click cards to put products on the bill; price them in the panel
+  payment  settle the grand total
 
-Nothing here writes to the database. The payload the save step needs is built
-by collectBill(); prices the biller edited are flagged there so they can be
-written back to CustomerPrice on save.
+The panel is the bill. A card's highlight only reflects what the panel holds,
+so `lines` is the single source of truth and the cards are redrawn from it —
+never the other way round.
+
+Nothing here writes to the database, and none of this validation is evidence:
+the save step re-derives every figure server-side. Prices the biller edited are
+flagged in collectBill() so they can be written back to CustomerPrice on save.
 
 Spelled as a comment tag because the hash-style comment is single-line only:
 spanning lines, it isn't stripped and renders onto the page as text.
@@ -26,108 +31,106 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // On an edit the bill's own lines have already taken their stock, so the
     // endpoint is asked to hand it back before reporting what's available.
     const STOCK_QUERY = INITIAL ? '?bill={{ bill.pk|default:"" }}' : '';
+    const IS_SUPER_ADMIN = {{ is_super_admin|yesno:"true,false" }};
+    // The holding account every walk-in bill is priced against. It has no
+    // CustomerPrice rows of its own, so the endpoint quotes default prices for
+    // it — which is what a walk-in should be charged.
+    const WALK_IN_PRICE_ID = '{{ walk_in_customer_id }}';
 
     const MIN_QTY = 1;
 
-    const select = document.getElementById('customer');
+    function $(id) { return document.getElementById(id); }
 
-    // ---- step 1 ----
-    const step1     = document.getElementById('step-1');
-    const rowsBody  = document.getElementById('product-rows');
-    const selectAll = document.getElementById('select-all');
-    const addBtn    = document.getElementById('add-selected');
-    const countEl   = document.getElementById('selected-count');
-    const nounEl    = document.getElementById('selected-noun');
-    const errorText = document.getElementById('error-text');
+    // ---- header ----
+    const select     = $('customer');
+    const billDate   = $('bill-date');
+    const walkinName = $('walkin-name');
+    const modeRadios = Array.from(document.querySelectorAll('.js-mode'));
+    const modePanels = {
+      regular: $('mode-panel-regular'),
+      walk_in: $('mode-panel-walkin'),
+    };
+
+    // ---- cards ----
+    const grid       = $('product-grid');
+    const gridEmpty  = $('grid-empty');
+    const search     = $('product-search');
+    const catTabs    = $('category-tabs');
+    const errorText  = $('error-text');
 
     const panels = {
-      idle:    document.getElementById('panel-idle'),
-      loading: document.getElementById('panel-loading'),
-      error:   document.getElementById('panel-error'),
-      empty:   document.getElementById('panel-empty'),
-      table:   document.getElementById('panel-table'),
+      idle:    $('panel-idle'),
+      loading: $('panel-loading'),
+      error:   $('panel-error'),
+      empty:   $('panel-empty'),
+      grid:    $('panel-grid'),
     };
 
-    // ---- step 2 ----
-    const step2       = document.getElementById('step-2');
-    const billBody    = document.getElementById('bill-rows');
-    const billEmpty   = document.getElementById('bill-empty');
-    const subtotalEl  = document.getElementById('subtotal-cell');
-    const invalidNote = document.getElementById('invalid-note');
-    const rail1       = document.getElementById('rail-1');
-    const rail2       = document.getElementById('rail-2');
+    // ---- panel ----
+    const stepBuild   = $('step-build');
+    const billBody    = $('bill-rows');
+    const billEmpty   = $('bill-empty');
+    const itemCount   = $('item-count');
+    const subtotalEl  = $('subtotal-cell');
+    const grandEl     = $('grand-total');
+    const deliveryEl  = $('delivery-charge');
+    const discountEl  = $('discount-amount');
+    const reasonRow   = $('discount-reason-row');
+    const reasonEl    = $('discount-reason');
+    const discountErr = $('discount-error');
+    const invalidNote = $('invalid-note');
+    const railBuild   = $('rail-build');
+    const railPay     = $('rail-pay');
 
     const summary = {
-      customer:   document.getElementById('summary-customer'),
-      balance:    document.getElementById('summary-balance'),
-      subtotal:   document.getElementById('summary-subtotal'),
-      owedRow:    document.getElementById('summary-owed-row'),
-      owed:       document.getElementById('summary-owed'),
-      creditRow:  document.getElementById('summary-credit-row'),
-      credit:     document.getElementById('summary-credit'),
-      collect:    document.getElementById('summary-collect'),
-      collectNote: document.getElementById('summary-collect-note'),
-      changed:    document.getElementById('summary-changed'),
+      customer:    $('summary-customer'),
+      balance:     $('summary-balance'),
+      collect:     $('summary-collect'),
+      collectNote: $('summary-collect-note'),
+      changed:     $('summary-changed'),
     };
 
-    // ---- modal ----
-    const modal       = document.getElementById('add-modal');
-    const modalRows   = document.getElementById('add-modal-rows');
-    const modalSearch = document.getElementById('add-modal-search');
-    const modalEmpty  = document.getElementById('add-modal-empty');
-
-    // ---- step 3 ----
-    const IS_SUPER_ADMIN = {{ is_super_admin|yesno:"true,false" }};
-
-    const step3      = document.getElementById('step-3');
-    const rail3      = document.getElementById('rail-3');
-    const toPayment  = document.getElementById('to-payment');
-    const toPayNote  = document.getElementById('to-payment-note');
-    const saveBtn    = document.getElementById('save-bill');
-    const saveNote   = document.getElementById('save-note');
-    const payErrors  = document.getElementById('pay-errors');
+    // ---- payment ----
+    const stepPay   = $('step-pay');
+    const toPayment = $('to-payment');
+    const toPayNote = $('to-payment-note');
+    const saveBtn   = $('save-bill');
+    const saveNote  = $('save-note');
+    const payErrors = $('pay-errors');
 
     const pay = {
-      subtotal: document.getElementById('pay-subtotal'),
-      adjust:   document.getElementById('pay-adjust'),
-      target:   document.getElementById('pay-target'),
-      entered:  document.getElementById('pay-entered'),
-      balance:  document.getElementById('preview-balance'),
-      note:     document.getElementById('preview-note'),
-      later:    document.getElementById('paylater-message'),
-      credit:   document.getElementById('credit-warning'),
-      creditText: document.getElementById('credit-warning-text'),
-      override: document.getElementById('credit-override'),  // super admins only
+      subtotal: $('pay-subtotal'),
+      adjust:   $('pay-adjust'),
+      target:   $('pay-target'),
+      entered:  $('pay-entered'),
+      balance:  $('preview-balance'),
+      note:     $('preview-note'),
+      later:    $('paylater-message'),
+      credit:   $('credit-warning'),
+      creditText: $('credit-warning-text'),
+      override: $('credit-override'),  // super admins only
     };
 
     // Products as the server last described them for this customer.
     let loaded = [];
-    // productId -> {product, tr, qtyInput, priceInput, ...}. A Map keeps the
+    // productId -> {product, row, qtyInput, priceInput, ...}. A Map keeps the
     // rows in the order they were added.
     const lines = new Map();
+    // productId -> card element, so a card can be re-styled without a re-render.
+    const cards = new Map();
     let requestToken = 0;
-    let currentCustomer = '';
-    // Step 3 reads the items total, so recalc() publishes it here rather than
-    // the payment section re-deriving it from the DOM.
+    let currentKey = '';
+    let currentCategory = '';
+    // What the bill comes to: subtotal + delivery - discount. The payment step
+    // prices against this, not the subtotal — see _write_bill.
     let currentSubtotal = 0;
+    let currentTotal = 0;
 
     const MONEY = new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
     function money(n) { return MONEY.format(n); }
-    function $(id) { return document.getElementById(id); }
-
-    function currentOption() { return select.selectedOptions[0]; }
-
-    function dataNumber(key) {
-      const option = currentOption();
-      const value = option ? num(option.dataset[key]) : NaN;
-      return Number.isNaN(value) ? 0 : value;
-    }
-    // Negative means the customer owes us; positive means we owe them.
-    function balanceNow() { return dataNumber('balance'); }
-    function creditLimitNow() { return dataNumber('creditLimit'); }
 
     // Number('') is 0, which would read an empty box as a free product.
     function num(value) {
@@ -137,6 +140,13 @@ spanning lines, it isn't stripped and renders onto the page as text.
       return Number.isFinite(n) ? n : NaN;
     }
     function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+    // Blank reads as nothing rather than as an error: both boxes are optional.
+    function optionalMoney(el) {
+      const raw = el.value.trim();
+      if (raw === '') return 0;
+      const value = num(raw);
+      return Number.isNaN(value) || value < 0 ? NaN : round2(value);
+    }
 
     function show(name) {
       Object.keys(panels).forEach(function (key) {
@@ -144,85 +154,242 @@ spanning lines, it isn't stripped and renders onto the page as text.
       });
     }
 
-    // ================= step 1: product picking =================
+    // ================= who the bill is for =================
 
-    function checkboxes() { return Array.from(rowsBody.querySelectorAll('.js-pick')); }
-    function checked() {
-      return checkboxes().filter(function (box) { return box.checked; });
+    function mode() {
+      const picked = modeRadios.find(function (r) { return r.checked; });
+      return picked ? picked.value : 'regular';
+    }
+    function isWalkIn() { return mode() === 'walk_in'; }
+
+    function currentOption() { return select.selectedOptions[0]; }
+
+    /**
+     * Identifies who the products are being priced for. A walk-in always
+     * prices off the holding account, so every walk-in shares one key and the
+     * grid is not reloaded between them.
+     */
+    function customerKey() {
+      if (isWalkIn()) return 'walk_in';
+      return select.value ? 'c' + select.value : '';
     }
 
-    function refreshPicker() {
-      const picked = checked();
-      countEl.textContent = picked.length;
-      nounEl.textContent = picked.length === 1 ? 'product' : 'products';
-      addBtn.disabled = picked.length === 0;
-
-      const boxes = checkboxes();
-      selectAll.checked = boxes.length > 0 && picked.length === boxes.length;
-      // Partly ticked reads as neither on nor off.
-      selectAll.indeterminate = picked.length > 0 && picked.length < boxes.length;
+    /**
+     * Which customer's prices to fetch. A walk-in has no account of their own,
+     * so they are quoted the default price — which is what the endpoint returns
+     * for any customer with no CustomerPrice rows, and what the holding account
+     * has none of.
+     */
+    function priceCustomerId() {
+      if (isWalkIn()) return WALK_IN_PRICE_ID;
+      return select.value;
     }
 
-    function cell(row, text, className) {
-      const td = document.createElement('td');
-      td.className = className;
-      // textContent, never innerHTML: product names are operator-entered.
-      td.textContent = text;
-      row.appendChild(td);
-      return td;
+    function dataNumber(key) {
+      const option = currentOption();
+      const value = option ? num(option.dataset[key]) : NaN;
+      return Number.isNaN(value) ? 0 : value;
+    }
+    /**
+     * Negative means the customer owes us; positive means we owe them.
+     *
+     * A walk-in is always 0: the holding account is settled by every bill that
+     * touches it, because a walk-in cannot be put on account at all.
+     */
+    function balanceNow() { return isWalkIn() ? 0 : dataNumber('balance'); }
+    function creditLimitNow() { return isWalkIn() ? 0 : dataNumber('creditLimit'); }
+
+    function customerLabel() {
+      if (isWalkIn()) {
+        const name = walkinName.value.trim();
+        return name ? name + ' (walk-in)' : 'Walk-in customer';
+      }
+      const option = currentOption();
+      return option && option.dataset.name ? option.dataset.name : '';
     }
 
-    function priceBadge(hasCustom) {
+    function applyMode() {
+      const walk = isWalkIn();
+      modePanels.regular.classList.toggle('hidden', walk);
+      modePanels.walk_in.classList.toggle('hidden', !walk);
+
+      // A walk-in cannot be put on account: the holding account is shared, so
+      // a balance left on it would say what walk-ins owe in total and never
+      // which of them. The save step refuses it; this says so up front rather
+      // than letting the biller fill in a bill that cannot be saved.
+      const later = document.querySelector('.js-type[value="pay_later"]');
+      if (later) {
+        later.disabled = walk;
+        if (walk && later.checked) {
+          later.checked = false;
+          document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
+            panel.classList.add('hidden');
+          });
+        }
+        const card = later.closest('.js-type-card');
+        if (card) {
+          card.classList.toggle('opacity-40', walk);
+          card.classList.toggle('cursor-not-allowed', walk);
+          card.classList.toggle('cursor-pointer', !walk);
+          card.title = walk ? 'A walk-in sale has to be paid in full.' : '';
+        }
+      }
+    }
+
+    // ================= cards =================
+
+    function stockOf(product) {
+      const stock = num(product.qty);
+      return Number.isNaN(stock) ? 0 : stock;
+    }
+
+    function stockBadge(product) {
+      const stock = stockOf(product);
       const badge = document.createElement('span');
-      badge.className = 'rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ' +
-        (hasCustom
-          ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
-          : 'bg-slate-50 text-slate-500 ring-slate-200');
-      badge.textContent = hasCustom ? 'Custom' : 'Default';
+      badge.className = 'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ' +
+        (stock === 0
+          ? 'bg-rose-50 text-rose-700 ring-rose-200'
+          : stock > 10
+            ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+            : 'bg-amber-50 text-amber-700 ring-amber-200');
+      badge.textContent = stock === 0 ? 'Out of stock' : product.qty + ' in stock';
       return badge;
     }
 
-    function renderPicker(products) {
-      rowsBody.replaceChildren();
+    function buildCard(product) {
+      const sellable = stockOf(product) > 0;
 
-      products.forEach(function (product) {
-        const row = document.createElement('tr');
-        row.className = 'hover:bg-slate-50';
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.dataset.id = String(product.id);
+      card.disabled = !sellable;
+      card.setAttribute('aria-pressed', 'false');
 
-        const pick = document.createElement('td');
-        pick.className = 'px-5 py-3';
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.className = 'js-pick h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-1 focus:ring-slate-900';
-        box.value = String(product.id);
-        box.setAttribute('aria-label', 'Select ' + product.name);
-        pick.appendChild(box);
-        row.appendChild(pick);
+      // Tick overlay, drawn for every card and revealed by paintCard.
+      const tick = document.createElement('span');
+      tick.className = 'js-tick absolute -right-2 -top-2 hidden h-6 w-6 items-center justify-center ' +
+        'rounded-full bg-emerald-600 text-white shadow ring-2 ring-white';
+      tick.innerHTML = '<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="3" ' +
+        'viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>';
+      card.appendChild(tick);
 
-        cell(row, product.name, 'whitespace-nowrap px-5 py-3 font-medium text-slate-900');
-        cell(row, product.size || '—', 'whitespace-nowrap px-5 py-3 text-slate-600' + (product.size ? '' : ' text-slate-300'));
-        cell(row, product.qty, 'whitespace-nowrap px-5 py-3 text-right text-slate-900');
-        cell(row, product.unit_price, 'whitespace-nowrap px-5 py-3 text-right font-medium text-slate-900');
+      const head = document.createElement('div');
+      head.className = 'flex items-start justify-between gap-2';
 
-        const note = document.createElement('td');
-        note.className = 'whitespace-nowrap px-5 py-3';
-        note.appendChild(priceBadge(product.has_custom_price));
-        row.appendChild(note);
+      const names = document.createElement('div');
+      names.className = 'min-w-0';
+      const name = document.createElement('p');
+      // textContent, never innerHTML: product names are operator-entered.
+      name.className = 'truncate text-base font-bold text-slate-900';
+      name.textContent = product.name;
+      const size = document.createElement('p');
+      size.className = 'truncate text-xs ' + (product.size ? 'text-slate-500' : 'text-slate-300');
+      size.textContent = product.size || 'No size';
+      names.appendChild(name);
+      names.appendChild(size);
+      head.appendChild(names);
+      head.appendChild(stockBadge(product));
+      card.appendChild(head);
 
-        rowsBody.appendChild(row);
+      const price = document.createElement('p');
+      price.className = 'mt-3 text-lg font-semibold text-slate-900';
+      price.textContent = product.unit_price;
+      card.appendChild(price);
+
+      const label = document.createElement('p');
+      label.className = 'text-[10px] font-semibold uppercase tracking-wide ' +
+        (product.has_custom_price ? 'text-indigo-600' : 'text-slate-400');
+      label.textContent = product.has_custom_price ? 'Custom price' : 'Default price';
+      card.appendChild(label);
+
+      if (!sellable) {
+        const veil = document.createElement('span');
+        veil.className = 'absolute inset-0 flex items-center justify-center rounded-xl bg-white/60';
+        const tag = document.createElement('span');
+        tag.className = 'rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white';
+        tag.textContent = 'Out of Stock';
+        veil.appendChild(tag);
+        card.appendChild(veil);
+      }
+
+      cards.set(product.id, card);
+      paintCard(product.id);
+      return card;
+    }
+
+    /** A card only ever reflects the panel, so this reads `lines`. */
+    function paintCard(id) {
+      const card = cards.get(id);
+      if (!card) return;
+      const on = lines.has(id);
+      const dead = card.disabled;
+
+      // js-card stays in the list: the grid's one click listener finds cards by
+      // it, and this rewrites className wholesale on every repaint.
+      card.className = 'js-card relative rounded-xl border-2 p-4 text-left transition ' +
+        (dead
+          ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
+          : on
+            ? 'cursor-pointer border-emerald-500 bg-emerald-50/40 shadow-sm'
+            : 'cursor-pointer border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm');
+
+      card.setAttribute('aria-pressed', on ? 'true' : 'false');
+      const tick = card.querySelector('.js-tick');
+      if (tick) {
+        tick.classList.toggle('hidden', !on);
+        tick.classList.toggle('flex', on);
+      }
+    }
+
+    /** Search and category tabs both narrow the same grid. */
+    function visible() {
+      const term = search.value.trim().toLowerCase();
+      return loaded.filter(function (product) {
+        if (currentCategory && String(product.category_id) !== currentCategory) return false;
+        if (!term) return true;
+        const haystack = (product.name + ' ' + (product.size || '')).toLowerCase();
+        return haystack.indexOf(term) !== -1;
       });
+    }
 
-      refreshPicker();
+    function renderGrid() {
+      const rows = visible();
+      grid.replaceChildren();
+      cards.clear();
+
+      rows.forEach(function (product) { grid.appendChild(buildCard(product)); });
+
+      const none = rows.length === 0;
+      gridEmpty.classList.toggle('hidden', !none);
+      grid.classList.toggle('hidden', none);
+      if (none) {
+        gridEmpty.textContent = loaded.length === 0
+          ? 'Nothing to bill.'
+          : 'No products match that search.';
+      }
+    }
+
+    function toggleProduct(id) {
+      const product = loaded.find(function (p) { return p.id === id; });
+      if (!product || stockOf(product) <= 0) return;
+
+      if (lines.has(id)) {
+        removeLine(id);
+      } else {
+        addLine(product);
+      }
+      paintCard(id);
+      recalc();
     }
 
     function load(customerId) {
       // Each request carries a token; a slow earlier reply must not overwrite
-      // the table after the biller has moved to another customer.
+      // the grid after the biller has moved to another customer.
       const token = ++requestToken;
 
       loaded = [];
-      rowsBody.replaceChildren();
-      refreshPicker();
+      grid.replaceChildren();
+      cards.clear();
       show('loading');
 
       return fetch(URL_TEMPLATE.replace('999999999', customerId) + STOCK_QUERY, {
@@ -250,8 +417,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
             show('empty');
             return;
           }
-          renderPicker(loaded);
-          show('table');
+          renderGrid();
+          show('grid');
         })
         .catch(function (err) {
           if (token !== requestToken) return;
@@ -260,12 +427,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
         });
     }
 
-    // ================= step 2: bill items =================
-
-    function stockOf(product) {
-      const stock = num(product.qty);
-      return Number.isNaN(stock) ? 0 : stock;
-    }
+    // ================= bill items panel =================
 
     // Returns the line total, or null when the row can't produce one. Null is
     // deliberate: a bad row must not silently count as 0 in the subtotal.
@@ -283,13 +445,12 @@ spanning lines, it isn't stripped and renders onto the page as text.
       if (Number.isNaN(price)) priceError = 'Enter a price.';
       else if (price < 0) priceError = 'Price cannot be negative.';
 
-      line.qtyError.textContent = qtyError;
-      line.qtyError.classList.toggle('hidden', qtyError === '');
-      line.priceError.textContent = priceError;
-      line.priceError.classList.toggle('hidden', priceError === '');
+      const message = qtyError || priceError;
+      line.error.textContent = message;
+      line.error.classList.toggle('hidden', message === '');
 
-      const bad = qtyError !== '' || priceError !== '';
-      line.tr.classList.toggle('bg-rose-50', bad);
+      const bad = message !== '';
+      line.row.classList.toggle('bg-rose-50', bad);
 
       // A price that differs from what the server quoted gets written back to
       // CustomerPrice on save, so the biller is told it will stick.
@@ -324,17 +485,52 @@ spanning lines, it isn't stripped and renders onto the page as text.
       subtotalEl.textContent = money(subtotal);
 
       const hasLines = lines.size > 0;
+      itemCount.textContent = String(lines.size);
       billEmpty.classList.toggle('hidden', hasLines);
 
-      // Payment is priced off the items, so a bill with a broken row must not
-      // reach it.
-      const ready = hasLines && invalid === 0;
+      // ---- adjustments ----
+      const delivery = optionalMoney(deliveryEl);
+      const discount = optionalMoney(discountEl);
+      const badDelivery = Number.isNaN(delivery);
+      const badDiscount = Number.isNaN(discount);
+
+      // The reason only exists once there is a discount to explain.
+      const wantsReason = !badDiscount && discount > 0;
+      reasonRow.classList.toggle('hidden', !wantsReason);
+      const missingReason = wantsReason && reasonEl.value.trim() === '';
+
+      const goods = round2(subtotal + (badDelivery ? 0 : delivery));
+      const total = round2(goods - (badDiscount ? 0 : discount));
+      const overDiscounted = !badDiscount && discount > 0 && total < 0;
+
+      currentTotal = total < 0 ? 0 : total;
+      grandEl.textContent = money(currentTotal);
+
+      let adjustError = '';
+      if (badDelivery) adjustError = 'Delivery must be a positive number.';
+      else if (badDiscount) adjustError = 'Discount must be a positive number.';
+      else if (overDiscounted) adjustError = 'The discount is more than the bill.';
+      else if (missingReason) adjustError = 'Give a reason for the discount.';
+
+      discountErr.textContent = adjustError;
+      discountErr.classList.toggle('hidden', adjustError === '');
+      if (adjustError !== '') reasonRow.classList.remove('hidden');
+
+      // ---- readiness ----
+      const named = !isWalkIn() || walkinName.value.trim() !== '';
+      const chosen = isWalkIn() ? named : select.value !== '';
+      const ready = hasLines && invalid === 0 && adjustError === '' && chosen;
+
       toPayment.disabled = !ready;
-      toPayNote.textContent = !hasLines
-        ? 'Add at least one item.'
-        : invalid > 0
-          ? 'Fix the rows that need attention first.'
-          : '';
+      toPayNote.textContent = !chosen
+        ? (isWalkIn() ? 'Enter the walk-in name.' : 'Choose a customer.')
+        : !hasLines
+          ? 'Add at least one item.'
+          : invalid > 0
+            ? 'Fix the rows that need attention first.'
+            : adjustError !== ''
+              ? 'Fix the discount first.'
+              : '';
 
       if (invalid > 0) {
         invalidNote.textContent = invalid + (invalid === 1 ? ' row needs' : ' rows need') +
@@ -352,54 +548,157 @@ spanning lines, it isn't stripped and renders onto the page as text.
         summary.changed.classList.add('hidden');
       }
 
-      updateSummary(subtotal);
+      updateSummary();
       refreshPayment();
     }
 
-    function updateSummary(subtotal) {
-      const option = currentOption();
-      const name = option && option.dataset.name ? option.dataset.name : '';
+    function updateSummary() {
       const balance = balanceNow();
 
-      summary.customer.textContent = name;
+      summary.customer.textContent = customerLabel();
       summary.balance.textContent = money(balance);
       summary.balance.className = 'font-medium ' +
         (balance < 0 ? 'text-rose-600' : balance > 0 ? 'text-emerald-600' : 'text-slate-500');
 
-      summary.subtotal.textContent = money(subtotal);
-
-      // Negative balance is what they owe us; positive is what we owe them.
-      const owes = balance < 0;
-      summary.owedRow.classList.toggle('hidden', !owes);
-      summary.owedRow.classList.toggle('flex', owes);
-      if (owes) summary.owed.textContent = money(Math.abs(balance));
-
-      const inCredit = balance > 0;
-      summary.creditRow.classList.toggle('hidden', !inCredit);
-      summary.creditRow.classList.toggle('flex', inCredit);
-      if (inCredit) summary.credit.textContent = money(balance);
-
-      // subtotal + what they owe, or subtotal - what we owe them. Both are
-      // subtotal - balance, because the sign already says which way it runs.
-      const collect = round2(subtotal - balance);
+      // total + what they owe, or total - what we owe them. Both are
+      // total - balance, because the sign already says which way it runs.
+      const collect = collectTarget();
       summary.collect.textContent = money(collect);
-      summary.collect.className = 'text-xl font-semibold ' +
+      summary.collect.className = 'font-semibold ' +
         (collect < 0 ? 'text-emerald-600' : 'text-slate-900');
 
-      if (collect < 0) {
+      if (isWalkIn()) {
+        summary.collectNote.textContent = 'Walk-in — payable in full now.';
+      } else if (collect < 0) {
         summary.collectNote.textContent = 'Nothing to collect — ' + money(Math.abs(collect)) +
           ' credit would remain.';
-      } else if (owes) {
+      } else if (balance < 0) {
         summary.collectNote.textContent = 'This bill plus the ' + money(Math.abs(balance)) +
           ' already outstanding.';
-      } else if (inCredit) {
+      } else if (balance > 0) {
         summary.collectNote.textContent = 'This bill less the ' + money(balance) + ' in credit.';
       } else {
         summary.collectNote.textContent = 'This bill only.';
       }
     }
 
-    // ================= step 3: payment =================
+    function lineRow(product) {
+      const row = document.createElement('div');
+      row.className = 'px-4 py-3';
+
+      const head = document.createElement('div');
+      head.className = 'flex items-start justify-between gap-2';
+
+      const names = document.createElement('div');
+      names.className = 'min-w-0';
+      const name = document.createElement('p');
+      name.className = 'truncate text-sm font-medium text-slate-900';
+      name.textContent = product.name;
+      names.appendChild(name);
+      if (product.size) {
+        const size = document.createElement('p');
+        size.className = 'truncate text-xs text-slate-400';
+        size.textContent = product.size;
+        names.appendChild(size);
+      }
+      head.appendChild(names);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-400 hover:bg-rose-50 hover:text-rose-600';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Remove ' + product.name);
+      head.appendChild(remove);
+      row.appendChild(head);
+
+      return { row: row, remove: remove };
+    }
+
+    function numberInput(value, extra) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.value = value;
+      input.className = 'w-full rounded-lg border border-slate-300 px-2 py-1 text-right text-sm ' +
+        'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
+      Object.keys(extra).forEach(function (key) { input.setAttribute(key, extra[key]); });
+      return input;
+    }
+
+    function addLine(product) {
+      if (lines.has(product.id)) return;
+
+      const built = lineRow(product);
+      const row = built.row;
+
+      const fields = document.createElement('div');
+      fields.className = 'mt-2 grid grid-cols-3 items-center gap-2';
+
+      const qtyInput = numberInput('1', {
+        min: String(MIN_QTY),
+        max: product.qty,
+        // Stock carries 3 dp, so the step has to allow them or the browser
+        // rejects a perfectly sellable 2.5.
+        step: '0.001',
+        'aria-label': 'Quantity for ' + product.name,
+      });
+      const priceInput = numberInput(product.unit_price, {
+        min: '0',
+        step: '0.01',
+        'aria-label': 'Unit price for ' + product.name,
+      });
+
+      const totalCell = document.createElement('p');
+      totalCell.className = 'text-right text-sm font-semibold text-slate-900';
+      totalCell.textContent = '0.00';
+
+      fields.appendChild(qtyInput);
+      fields.appendChild(priceInput);
+      fields.appendChild(totalCell);
+      row.appendChild(fields);
+
+      const error = document.createElement('p');
+      error.className = 'mt-1 hidden text-right text-xs text-rose-600';
+      row.appendChild(error);
+
+      const changedBadge = document.createElement('span');
+      changedBadge.className = 'mt-1 hidden rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold ' +
+        'text-amber-700 ring-1 ring-inset ring-amber-200';
+      changedBadge.textContent = 'Price updated';
+      const badgeWrap = document.createElement('div');
+      badgeWrap.className = 'flex justify-end';
+      badgeWrap.appendChild(changedBadge);
+      row.appendChild(badgeWrap);
+
+      lines.set(product.id, {
+        product: product,
+        row: row,
+        qtyInput: qtyInput,
+        priceInput: priceInput,
+        error: error,
+        totalCell: totalCell,
+        changedBadge: changedBadge,
+        changed: false,
+      });
+      billBody.appendChild(row);
+
+      // 'input' fires on keyup, paste and the spinner arrows alike.
+      qtyInput.addEventListener('input', recalc);
+      priceInput.addEventListener('input', recalc);
+      built.remove.addEventListener('click', function () {
+        removeLine(product.id);
+        paintCard(product.id);
+        recalc();
+      });
+    }
+
+    function removeLine(id) {
+      const line = lines.get(id);
+      if (!line) return;
+      line.row.remove();
+      lines.delete(id);
+    }
+
+    // ================= payment =================
 
     function selectedType() {
       const picked = document.querySelector('.js-type:checked');
@@ -411,9 +710,12 @@ spanning lines, it isn't stripped and renders onto the page as text.
      * they already owe, or this bill less any credit they hold. A negative
      * balance is debt and a positive one is credit, so both cases are the one
      * subtraction.
+     *
+     * Priced off the grand total, not the subtotal: delivery is collected and
+     * a discount is not.
      */
     function collectTarget() {
-      return round2(currentSubtotal - balanceNow());
+      return round2(currentTotal - balanceNow());
     }
 
     function readMoney(el, label, errors, optional) {
@@ -498,13 +800,17 @@ spanning lines, it isn't stripped and renders onto the page as text.
         }
       } else if (type === 'pay_later') {
         paid = 0;
+        if (isWalkIn()) {
+          errors.push('A walk-in sale has to be paid in full — there is no account to put it on.');
+          blocked = true;
+        }
       } else {
         errors.push('Choose a payment type.');
         paid = 0;
       }
 
       const settled = Number.isNaN(paid) ? 0 : paid;
-      const after = round2(balance - currentSubtotal + settled);
+      const after = round2(balance - currentTotal + settled);
 
       if (type && type !== 'pay_later' && !Number.isNaN(paid)) {
         if (target <= 0) {
@@ -521,7 +827,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
       // Only Pay Later can leave money outstanding; every other type is held
       // to the full amount above, so it always lands the balance on zero.
-      if (type === 'pay_later') {
+      if (type === 'pay_later' && !isWalkIn()) {
         const owed = after < 0 ? Math.abs(after) : 0;
         const limit = creditLimitNow();
         if (owed > limit) {
@@ -539,6 +845,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
           pay.credit.classList.add('hidden');
           if (pay.override) pay.override.checked = false;
         }
+      } else {
+        pay.credit.classList.add('hidden');
       }
 
       return {
@@ -555,8 +863,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
       const balance = balanceNow();
       const result = validatePayment();
 
-      pay.subtotal.textContent = money(currentSubtotal);
-      // What the balance does to the bill: debt adds, credit comes off.
+      pay.subtotal.textContent = money(currentTotal);
       pay.adjust.textContent = money(round2(-balance));
       pay.target.textContent = money(result.target);
       pay.entered.textContent = money(result.paid);
@@ -570,7 +877,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
           ? 'We will owe them ' + money(result.after) + '.'
           : 'Settled in full.';
 
-      pay.later.textContent = 'Full amount of ' + money(currentSubtotal) +
+      pay.later.textContent = 'Full amount of ' + money(currentTotal) +
         ' will be added to customer outstanding balance.';
 
       payErrors.replaceChildren();
@@ -643,125 +950,23 @@ spanning lines, it isn't stripped and renders onto the page as text.
       return payload;
     }
 
-    function enterStep3() {
-      step2.classList.add('hidden');
-      step2.classList.remove('grid');
-      step3.classList.remove('hidden');
-      step3.classList.add('grid');
-      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
-      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+    function enterPayment() {
+      stepBuild.classList.add('hidden');
+      stepBuild.classList.remove('grid');
+      stepPay.classList.remove('hidden');
+      stepPay.classList.add('grid');
+      railBuild.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      railPay.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
       refreshPayment();
     }
 
     function backToItems() {
-      step3.classList.add('hidden');
-      step3.classList.remove('grid');
-      step2.classList.remove('hidden');
-      step2.classList.add('grid');
-      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
-      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
-    }
-
-    function numberInput(value, extra) {
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.value = value;
-      input.className = 'w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm ' +
-        'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
-      Object.keys(extra).forEach(function (key) { input.setAttribute(key, extra[key]); });
-      return input;
-    }
-
-    function errorText_(row) {
-      const p = document.createElement('p');
-      p.className = 'mt-1 hidden text-right text-xs text-rose-600';
-      row.appendChild(p);
-      return p;
-    }
-
-    function addLine(product) {
-      if (lines.has(product.id)) return;
-
-      const tr = document.createElement('tr');
-
-      cell(tr, product.name, 'whitespace-nowrap px-4 py-3 font-medium text-slate-900');
-      cell(tr, product.size || '—', 'whitespace-nowrap px-4 py-3 text-slate-600' + (product.size ? '' : ' text-slate-300'));
-
-      // Qty
-      const qtyTd = document.createElement('td');
-      qtyTd.className = 'px-4 py-3 text-right';
-      const qtyInput = numberInput('1', {
-        min: String(MIN_QTY),
-        max: product.qty,
-        // Stock carries 3 dp, so the step has to allow them or the browser
-        // rejects a perfectly sellable 2.5.
-        step: '0.001',
-        'aria-label': 'Quantity for ' + product.name,
-      });
-      qtyTd.appendChild(qtyInput);
-      const qtyError = errorText_(qtyTd);
-      const stockHint = document.createElement('p');
-      stockHint.className = 'mt-1 text-right text-[10px] text-slate-400';
-      stockHint.textContent = product.qty + ' in stock';
-      qtyTd.appendChild(stockHint);
-      tr.appendChild(qtyTd);
-
-      // Unit price
-      const priceTd = document.createElement('td');
-      priceTd.className = 'px-4 py-3 text-right';
-      const priceInput = numberInput(product.unit_price, {
-        min: '0',
-        step: '0.01',
-        'aria-label': 'Unit price for ' + product.name,
-      });
-      priceTd.appendChild(priceInput);
-      const priceError = errorText_(priceTd);
-
-      const changedBadge = document.createElement('span');
-      changedBadge.className = 'mt-1 hidden rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold ' +
-        'text-amber-700 ring-1 ring-inset ring-amber-200';
-      changedBadge.textContent = 'Price updated';
-      const badgeWrap = document.createElement('div');
-      badgeWrap.className = 'flex justify-end';
-      badgeWrap.appendChild(changedBadge);
-      priceTd.appendChild(badgeWrap);
-      tr.appendChild(priceTd);
-
-      const totalCell = cell(tr, '0.00', 'whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900');
-
-      // Remove
-      const removeTd = document.createElement('td');
-      removeTd.className = 'px-4 py-3 text-right';
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50';
-      remove.textContent = 'Remove';
-      remove.setAttribute('aria-label', 'Remove ' + product.name);
-      removeTd.appendChild(remove);
-      tr.appendChild(removeTd);
-
-      const line = {
-        product: product,
-        tr: tr,
-        qtyInput: qtyInput,
-        priceInput: priceInput,
-        qtyError: qtyError,
-        priceError: priceError,
-        totalCell: totalCell,
-        changedBadge: changedBadge,
-        changed: false,
-      };
-      lines.set(product.id, line);
-      billBody.appendChild(tr);
-
-      // 'input' fires on keyup, paste and the spinner arrows alike.
-      qtyInput.addEventListener('input', recalc);
-      priceInput.addEventListener('input', recalc);
-      remove.addEventListener('click', function () {
-        lines.delete(product.id);
-        tr.remove();
-        recalc();
-      });
+      stepPay.classList.add('hidden');
+      stepPay.classList.remove('grid');
+      stepBuild.classList.remove('hidden');
+      stepBuild.classList.add('grid');
+      railBuild.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+      railPay.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
     }
 
     /**
@@ -778,33 +983,31 @@ spanning lines, it isn't stripped and renders onto the page as text.
           price_changed: line.changed,
         });
       });
-      return { customer_id: select.value, lines: out, payment: paymentPayload() };
+      return {
+        customer_id: select.value,
+        is_walk_in: isWalkIn(),
+        walk_in_name: walkinName.value.trim(),
+        bill_date: billDate.value,
+        delivery_charge: deliveryEl.value.trim(),
+        discount_amount: discountEl.value.trim(),
+        discount_reason: reasonEl.value.trim(),
+        lines: out,
+        payment: paymentPayload(),
+      };
     }
-    // The save step (not built yet) reads the bill through this.
     document.addEventListener('bill:collect', function (e) {
       if (e.detail && typeof e.detail.reply === 'function') e.detail.reply(collectBill());
     });
 
-    function enterStep2() {
-      step1.classList.add('hidden');
-      step2.classList.remove('hidden');
-      step2.classList.add('grid');
-      rail1.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
-      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
-      recalc();
-    }
-
-    function resetToStep1() {
+    function resetBill() {
       lines.clear();
       billBody.replaceChildren();
-      step2.classList.add('hidden');
-      step2.classList.remove('grid');
-      step3.classList.add('hidden');
-      step3.classList.remove('grid');
-      step1.classList.remove('hidden');
-      rail1.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
-      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
-      rail3.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      cards.forEach(function (_card, id) { paintCard(id); });
+      backToItems();
+
+      deliveryEl.value = '';
+      discountEl.value = '';
+      reasonEl.value = '';
 
       // The payment belongs to the bill that was just abandoned.
       const picked = document.querySelector('.js-type:checked');
@@ -812,158 +1015,114 @@ spanning lines, it isn't stripped and renders onto the page as text.
       document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
         panel.classList.add('hidden');
       });
-      step3.querySelectorAll('input[type="number"], input[type="text"]').forEach(function (el) {
+      stepPay.querySelectorAll('input[type="number"], input[type="text"]').forEach(function (el) {
         el.value = '';
       });
       if (pay.override) pay.override.checked = false;
 
-      checkboxes().forEach(function (box) { box.checked = false; });
-      refreshPicker();
       recalc();
-    }
-
-    // ================= modal =================
-
-    function available() {
-      return loaded.filter(function (product) { return !lines.has(product.id); });
-    }
-
-    function renderModal() {
-      const term = modalSearch.value.trim().toLowerCase();
-      const rows = available().filter(function (product) {
-        return product.name.toLowerCase().indexOf(term) !== -1;
-      });
-
-      modalRows.replaceChildren();
-
-      if (rows.length === 0) {
-        modalEmpty.textContent = available().length === 0
-          ? 'Every product is already on the bill.'
-          : 'No products match that search.';
-        modalEmpty.classList.remove('hidden');
-        return;
-      }
-      modalEmpty.classList.add('hidden');
-
-      rows.forEach(function (product) {
-        const tr = document.createElement('tr');
-        tr.className = 'hover:bg-slate-50';
-
-        const nameTd = document.createElement('td');
-        nameTd.className = 'px-5 py-3';
-        const name = document.createElement('p');
-        name.className = 'font-medium text-slate-900';
-        name.textContent = product.name;
-        const meta = document.createElement('p');
-        meta.className = 'text-xs text-slate-500';
-        meta.textContent = (product.size ? product.size + ' · ' : '') +
-          product.qty + ' in stock · ' + product.unit_price +
-          (product.has_custom_price ? ' (custom)' : ' (default)');
-        nameTd.appendChild(name);
-        nameTd.appendChild(meta);
-        tr.appendChild(nameTd);
-
-        const actionTd = document.createElement('td');
-        actionTd.className = 'w-24 px-5 py-3 text-right';
-        const add = document.createElement('button');
-        add.type = 'button';
-        add.className = 'rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50';
-        add.textContent = 'Add';
-        add.addEventListener('click', function () {
-          addLine(product);
-          recalc();
-          renderModal();  // it is on the bill now, so drop it from the list
-        });
-        actionTd.appendChild(add);
-        tr.appendChild(actionTd);
-
-        modalRows.appendChild(tr);
-      });
-    }
-
-    function openModal() {
-      renderModal();
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-      modalSearch.focus();
-    }
-    function closeModal() {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-      modalSearch.value = '';
     }
 
     // ================= wiring =================
 
-    select.addEventListener('change', function () {
-      const id = select.value;
+    /**
+     * Reload the grid when who the bill is for changes. The bill belongs to a
+     * customer, prices and all, so it cannot follow them to a different one.
+     */
+    function onWhoChanged() {
+      const key = customerKey();
+      if (key === currentKey) return;
 
-      // The bill belongs to a customer, prices and all, so it cannot follow
-      // them to a different one.
-      if (lines.size > 0 && id !== currentCustomer) {
-        const ok = window.confirm('Changing the customer clears the ' + lines.size +
-          ' item' + (lines.size === 1 ? '' : 's') + ' on this bill. Continue?');
-        if (!ok) {
-          select.value = currentCustomer;
-          return;
-        }
+      if (lines.size > 0) {
+        const ok = window.confirm('Changing who this bill is for clears the ' + lines.size +
+          ' item' + (lines.size === 1 ? '' : 's') + ' on it. Continue?');
+        if (!ok) return false;
       }
 
-      resetToStep1();
-      currentCustomer = id;
+      resetBill();
+      currentKey = key;
 
+      const id = priceCustomerId();
       if (!id) {
         requestToken++;  // abandon any reply still in flight
         loaded = [];
+        cards.clear();
         show('idle');
-        return;
+        recalc();
+        return true;
       }
-      load(id);
+      load(id).then(recalc);
+      return true;
+    }
+
+    select.addEventListener('change', function () {
+      const before = currentKey;
+      if (onWhoChanged() === false) {
+        // Put the dropdown back: the biller kept the bill they had.
+        select.value = before.indexOf('c') === 0 ? before.slice(1) : '';
+      }
     });
 
-    document.getElementById('retry').addEventListener('click', function () {
-      if (select.value) load(select.value);
-    });
-
-    selectAll.addEventListener('change', function () {
-      checkboxes().forEach(function (box) { box.checked = selectAll.checked; });
-      refreshPicker();
-    });
-
-    rowsBody.addEventListener('change', function (e) {
-      if (e.target.classList.contains('js-pick')) refreshPicker();
-    });
-
-    addBtn.addEventListener('click', function () {
-      const picked = checked().map(function (box) { return box.value; });
-      loaded.forEach(function (product) {
-        if (picked.indexOf(String(product.id)) !== -1) addLine(product);
+    modeRadios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        const wasWalkIn = currentKey === 'walk_in';
+        if (onWhoChanged() === false) {
+          // Put the toggle back: the biller kept the bill they had.
+          const back = document.querySelector('.js-mode[value="' + (wasWalkIn ? 'walk_in' : 'regular') + '"]');
+          if (back) back.checked = true;
+          return;
+        }
+        applyMode();
+        recalc();
       });
-      if (lines.size === 0) return;
-      enterStep2();
     });
 
-    document.getElementById('add-more').addEventListener('click', openModal);
-    document.getElementById('add-more-empty').addEventListener('click', openModal);
-    document.getElementById('add-modal-close').addEventListener('click', closeModal);
-    document.getElementById('add-modal-done').addEventListener('click', closeModal);
-    modalSearch.addEventListener('input', renderModal);
-    modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    // The name is part of who the bill is for, but it does not change prices,
+    // so it only refreshes the summary rather than reloading the grid.
+    walkinName.addEventListener('input', recalc);
+
+    $('retry').addEventListener('click', function () {
+      const id = priceCustomerId();
+      if (id) load(id).then(recalc);
     });
 
-    document.getElementById('start-over').addEventListener('click', function () {
+    grid.addEventListener('click', function (e) {
+      const card = e.target.closest('.js-card');
+      if (!card || card.disabled) return;
+      toggleProduct(Number(card.dataset.id));
+    });
+
+    search.addEventListener('input', renderGrid);
+
+    catTabs.addEventListener('click', function (e) {
+      const tab = e.target.closest('.js-cat');
+      if (!tab) return;
+      currentCategory = tab.dataset.category || '';
+
+      Array.from(catTabs.querySelectorAll('.js-cat')).forEach(function (button) {
+        const on = (button.dataset.category || '') === currentCategory;
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        button.className = 'js-cat rounded-full px-3 py-1.5 text-xs font-semibold ' +
+          (on ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
+      });
+      renderGrid();
+    });
+
+    // One listener for the panel's own boxes; every one of them feeds recalc.
+    deliveryEl.addEventListener('input', recalc);
+    discountEl.addEventListener('input', recalc);
+    reasonEl.addEventListener('input', recalc);
+
+    $('start-over').addEventListener('click', function () {
       if (lines.size > 0 && !window.confirm('Clear this bill and start over?')) return;
-      resetToStep1();
+      resetBill();
     });
 
-    // ---- step 3 ----
     toPayment.addEventListener('click', function () {
       if (toPayment.disabled) return;
-      enterStep3();
+      enterPayment();
     });
-    document.getElementById('back-to-items').addEventListener('click', backToItems);
+    $('back-to-items').addEventListener('click', backToItems);
 
     document.querySelectorAll('.js-type').forEach(function (radio) {
       radio.addEventListener('change', onTypeChange);
@@ -971,8 +1130,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
     // One listener for the whole section: every amount, date and dropdown in
     // there feeds the same validation pass.
-    step3.addEventListener('input', refreshPayment);
-    step3.addEventListener('change', function (e) {
+    stepPay.addEventListener('input', refreshPayment);
+    stepPay.addEventListener('change', function (e) {
       if (!e.target.classList.contains('js-type')) refreshPayment();
     });
 
@@ -1072,6 +1231,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
         const row = lines.get(product.id);
         row.qtyInput.value = line.qty;
         row.priceInput.value = line.unit_price;
+        paintCard(product.id);
       });
 
       if (missing.length > 0) {
@@ -1085,17 +1245,33 @@ spanning lines, it isn't stripped and renders onto the page as text.
       }
 
       hydratePayment(INITIAL.payment);
-      if (lines.size > 0) enterStep2();
       recalc();
     }
 
-    refreshPicker();
+    applyMode();
     recalc();
 
     if (INITIAL) {
+      if (INITIAL.is_walk_in) {
+        const walk = document.querySelector('.js-mode[value="walk_in"]');
+        if (walk) walk.checked = true;
+        walkinName.value = INITIAL.walk_in_name || '';
+        applyMode();
+      }
       select.value = String(INITIAL.customer_id);
-      currentCustomer = select.value;
-      load(select.value).then(function () {
+      setValue('bill-date', INITIAL.bill_date);
+      // Zeroes are stored, but an empty box reads better than a 0.00 the biller
+      // has to clear before typing.
+      if (INITIAL.delivery_charge && Number(INITIAL.delivery_charge) !== 0) {
+        deliveryEl.value = INITIAL.delivery_charge;
+      }
+      if (INITIAL.discount_amount && Number(INITIAL.discount_amount) !== 0) {
+        discountEl.value = INITIAL.discount_amount;
+        reasonEl.value = INITIAL.discount_reason || '';
+      }
+
+      currentKey = customerKey();
+      load(priceCustomerId()).then(function () {
         if (loaded.length > 0 || (INITIAL.lines || []).length > 0) hydrate();
       });
     }
