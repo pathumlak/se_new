@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard · Senovka ERP{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+  <h2 class="text-lg font-semibold text-slate-900">Welcome, {{ user.get_username }}</h2>
+  <p class="mt-2 text-sm text-slate-600">
+    The Senovka ERP scaffold is up and running. Add modules to the sidebar as you build them out.
+  </p>
+</div>
+{% endblock %}
