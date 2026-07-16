@@ -1,0 +1,243 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senovka Sales Report</title>
+  {% comment %}
+  Standalone on purpose: no base.html, no sidebar, and no Tailwind CDN.
+  WeasyPrint renders this with no network and no JavaScript, so every style has
+  to be inline here. It doubles as the browser print view when WeasyPrint's GTK
+  libraries aren't installed, which is why it stands up on its own.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif;
+        font-size: 8pt;
+        color: #64748b;
+      }
+    }
+
+    body {
+      font-family: "Helvetica", "Arial", sans-serif;
+      font-size: 8.5pt;
+      color: #0f172a;
+      margin: 0;
+    }
+
+    h1 { font-size: 15pt; margin: 0; }
+    h2 { font-size: 10pt; margin: 14pt 0 4pt; }
+
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 6pt; margin-bottom: 10pt; }
+    .muted { color: #64748b; font-size: 8pt; margin: 2pt 0 0; }
+
+    .cards { display: table; width: 100%; border-spacing: 4pt 0; margin-bottom: 6pt; }
+    .card {
+      display: table-cell;
+      width: 25%;
+      border: 0.75pt solid #cbd5e1;
+      border-radius: 3pt;
+      padding: 6pt 8pt;
+    }
+    .card-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; }
+    .card-value { font-size: 13pt; font-weight: bold; margin-top: 2pt; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 0.3pt;
+      color: #64748b;
+      background: #f1f5f9;
+      padding: 4pt 5pt;
+      border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 4pt 5pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    .b { font-weight: bold; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; font-weight: bold; background: #f8fafc; }
+
+    .red { color: #be123c; }
+    .green { color: #047857; }
+    .grey { color: #94a3b8; }
+    .empty { text-align: center; color: #64748b; padding: 10pt; font-style: italic; }
+    .note { margin-top: 10pt; font-size: 7.5pt; color: #64748b; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Senovka Plastics — Sales Report</h1>
+  <p class="muted">
+    {% if from_date or to_date %}
+      {% if from_date %}{{ from_date|date:"j M Y" }}{% else %}Start{% endif %}
+      –
+      {% if to_date %}{{ to_date|date:"j M Y" }}{% else %}{{ generated_at|date:"j M Y" }}{% endif %}
+    {% else %}
+      All sales
+    {% endif %}
+    {% if selected_customer %}
+      {% for customer in customers %}{% if customer.pk == selected_customer %} · {{ customer.name }}{% endif %}{% endfor %}
+    {% endif %}
+    {% if payment_type %}
+      {% for value, label in payment_types %}{% if value == payment_type %} · {{ label }}{% endif %}{% endfor %}
+    {% endif %}
+    · Generated {{ generated_at|date:"j M Y, g:i a" }}
+  </p>
+</div>
+
+<!-- Summary -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total Sales</div>
+    <div class="card-value">{{ total_sales|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Cash Received</div>
+    <div class="card-value green">{{ total_cash|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Cheque Received</div>
+    <div class="card-value">{{ total_cheque|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Outstanding</div>
+    <div class="card-value {% if total_outstanding > 0 %}red{% else %}grey{% endif %}">
+      {{ total_outstanding|floatformat:2|intcomma }}
+    </div>
+  </div>
+</div>
+
+<!-- 1. Cash sales -->
+<h2>Cash Sales</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th><th>Bill No</th><th>Customer</th><th class="r">Amount</th><th>To Account</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in cash_rows %}
+      <tr>
+        <td>{{ row.bill.bill_date|date:"j M Y" }}</td>
+        <td>#{{ row.bill_id }}</td>
+        <td>{{ row.bill.customer.name }}</td>
+        <td class="r">{{ row.amount|floatformat:2|intcomma }}</td>
+        <td>{% if row.account %}{{ row.get_account_display }} Acc{% else %}Physical{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="empty">No cash taken in this period.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if cash_rows %}
+    <tfoot>
+      {% for label, amount in account_totals %}
+        <tr>
+          <td colspan="3" class="r">{{ label }}</td>
+          <td class="r">{{ amount|floatformat:2|intcomma }}</td>
+          <td></td>
+        </tr>
+      {% endfor %}
+      <tr>
+        <td colspan="3" class="r">Total cash</td>
+        <td class="r green">{{ total_cash|floatformat:2|intcomma }}</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<!-- 2. Cheque sales -->
+<h2>Cheque Sales</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th><th>Bill No</th><th>Customer</th><th>Cheque No</th>
+      <th>Bank</th><th class="r">Amount</th><th>Maturity</th><th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cheque in cheque_rows %}
+      <tr>
+        <td>{{ cheque.payment.bill.bill_date|date:"j M Y" }}</td>
+        <td>#{{ cheque.payment.bill_id }}</td>
+        <td>{{ cheque.customer.name }}</td>
+        <td>{{ cheque.cheque_no }}</td>
+        <td>{{ cheque.bank_name }}</td>
+        <td class="r">{{ cheque.amount|floatformat:2|intcomma }}</td>
+        <td>{{ cheque.maturity_date|date:"j M Y" }}</td>
+        <td>{{ cheque.get_status_display }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="empty">No cheques taken in this period.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if cheque_rows %}
+    <tfoot>
+      <tr>
+        <td colspan="5" class="r">Total cheque</td>
+        <td class="r">{{ total_cheque|floatformat:2|intcomma }}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<!-- All sales -->
+<h2>All Sales</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th><th>Bill No</th><th>Customer</th><th class="r">Subtotal</th>
+      <th>Payment Type</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for bill in bills %}
+      <tr>
+        <td>{{ bill.bill_date|date:"j M Y" }}</td>
+        <td>#{{ bill.pk }}</td>
+        <td>{{ bill.customer.name }}</td>
+        <td class="r">{{ bill.subtotal|floatformat:2|intcomma }}</td>
+        <td>{{ bill.get_payment_type_display }}</td>
+        <td class="r">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
+        <td class="r {% if bill.outstanding > 0 %}red{% else %}grey{% endif %}">
+          {{ bill.outstanding|floatformat:2|intcomma }}
+        </td>
+        <td>{{ bill.get_status_display }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="empty">No sales in this period.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if bills %}
+    <tfoot>
+      <tr>
+        <td colspan="3" class="r">Totals</td>
+        <td class="r">{{ total_sales|floatformat:2|intcomma }}</td>
+        <td></td>
+        <td></td>
+        <td class="r {% if total_outstanding > 0 %}red{% else %}grey{% endif %}">
+          {{ total_outstanding|floatformat:2|intcomma }}
+        </td>
+        <td></td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<p class="note">
+  Cancelled bills are left out. Cash and cheque totals count what was taken
+  against these bills, which can exceed the sales figure when a payment also
+  cleared an earlier debt.
+</p>
+
+</body>
+</html>

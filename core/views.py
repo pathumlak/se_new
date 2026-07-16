@@ -18,8 +18,9 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce, Greatest
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -2400,14 +2401,21 @@ def _save_production(payload):
 
 @transaction.atomic
 def _update_production(entry, qty):
-    """Correct one entry, moving the shelf by the difference."""
-    diff = qty - entry.qty_produced
-    _move_stock(entry.product, diff)
+    """Correct one entry, moving the shelf by the difference.
+
+    The stored quantity is re-read rather than taken off `entry`: a bound
+    ModelForm writes the submitted value onto its instance while validating,
+    so by now entry.qty_produced is already the new figure and the difference
+    against it would always be zero.
+    """
+    stored = ProductionEntry.objects.select_related("product").get(pk=entry.pk)
+    diff = qty - stored.qty_produced
+    _move_stock(stored.product, diff)
 
     entry.qty_produced = qty
     # stock_before stays: it is what this entry found, and no correction now
     # changes what was on the shelf then. What it left behind does change.
-    entry.stock_after = entry.stock_before + qty
+    entry.stock_after = stored.stock_before + qty
     entry.save(update_fields=["qty_produced", "stock_after"])
     return entry
 
@@ -2467,6 +2475,9 @@ def production_edit(request, pk):
         except BillError as exc:
             form.add_error("qty_produced", str(exc))
         else:
+            # The stock moved by an F() expression, so the product in memory
+            # still holds the figure from before.
+            entry.product.refresh_from_db()
             messages.success(
                 request,
                 f"{entry.product} production on {entry.production_date:%d %b %Y} "
@@ -2557,6 +2568,137 @@ def ledger_index(request):
     return render(request, "core/placeholder.html", {"section": "Customer Ledger"})
 
 
+# -------------------------------------------------------------- sales report
+# Read-only. Every figure is derived from bills and their payments, so nothing
+# here writes and nothing here should ever disagree with the bill it came from.
+
+
+def _sales_report_context(request):
+    """Everything both the page and the PDF report, from one set of filters."""
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    customer_id = request.GET.get("customer_id", "").strip()
+    selected_customer = int(customer_id) if customer_id.isdigit() else None
+
+    payment_type = request.GET.get("payment_type", "").strip()
+    if payment_type not in {value for value, _ in Bill.PaymentType.choices}:
+        payment_type = ""
+
+    # A cancelled bill is not a sale. Leaving them in would overstate every
+    # card on the page.
+    bills = Bill.objects.select_related("customer").exclude(
+        status=Bill.Status.CANCELLED
+    )
+    if from_date:
+        bills = bills.filter(bill_date__gte=from_date)
+    if to_date:
+        bills = bills.filter(bill_date__lte=to_date)
+    if selected_customer:
+        bills = bills.filter(customer_id=selected_customer)
+    if payment_type:
+        bills = bills.filter(payment_type=payment_type)
+
+    bills = bills.annotate(
+        # paid_amount can run past total_amount when a payment also clears old
+        # debt, and a bill can't owe less than nothing.
+        outstanding=Greatest(
+            F("total_amount") - F("paid_amount"), Value(ZERO), output_field=MONEY
+        )
+    ).order_by("bill_date", "id")
+
+    bills = list(bills)
+    bill_ids = [bill.pk for bill in bills]
+
+    totals = Bill.objects.filter(pk__in=bill_ids).aggregate(
+        sales=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY),
+    )
+    total_outstanding = sum((bill.outstanding for bill in bills), ZERO)
+
+    # Payments are counted through their bill, so the same date range and the
+    # same filters apply to both without asking twice.
+    payments = Payment.objects.filter(bill_id__in=bill_ids).select_related(
+        "bill", "bill__customer"
+    )
+
+    cash_rows = list(
+        payments.filter(method=Payment.Method.CASH).order_by("bill__bill_date", "id")
+    )
+    cheque_rows = list(
+        Cheque.objects.filter(payment__bill_id__in=bill_ids)
+        .select_related("payment", "payment__bill", "customer")
+        .order_by("payment__bill__bill_date", "id")
+    )
+
+    total_cash = sum((row.amount for row in cash_rows), ZERO)
+    total_cheque = sum((row.amount for row in cheque_rows), ZERO)
+
+    # Cash either stayed in the drawer or was banked; Payment.account says
+    # which, and blank means it stayed.
+    account_labels = dict(Payment.Account.choices)
+    by_account = {"": ZERO}
+    for value, _ in Payment.Account.choices:
+        by_account[value] = ZERO
+    for row in cash_rows:
+        by_account[row.account] = by_account.get(row.account, ZERO) + row.amount
+
+    account_totals = [("Physical", by_account.get("", ZERO))]
+    for value, label in Payment.Account.choices:
+        account_totals.append((f"{label} Acc", by_account.get(value, ZERO)))
+
+    return {
+        "bills": bills,
+        "cash_rows": cash_rows,
+        "cheque_rows": cheque_rows,
+        "account_labels": account_labels,
+        "account_totals": account_totals,
+        "total_sales": totals["sales"],
+        "total_cash": total_cash,
+        "total_cheque": total_cheque,
+        "total_outstanding": total_outstanding,
+        "from_date": from_date,
+        "to_date": to_date,
+        "selected_customer": selected_customer,
+        "payment_type": payment_type,
+        "customers": Customer.objects.filter(is_supplier=False),
+        "payment_types": Bill.PaymentType.choices,
+        "is_filtered": bool(
+            from_date or to_date or selected_customer or payment_type
+        ),
+        "generated_at": timezone.localtime(),
+    }
+
+
 @login_required
 def sales_report(request):
-    return render(request, "core/placeholder.html", {"section": "Sales Report"})
+    context = _sales_report_context(request)
+    # The PDF link carries the same filters, so it reports what is on screen.
+    context["query"] = request.GET.urlencode()
+    return render(request, "core/sales_report.html", context)
+
+
+@login_required
+def sales_report_pdf(request):
+    context = _sales_report_context(request)
+    html = render_to_string("core/sales_report_pdf.html", context, request=request)
+
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError):
+        # OSError, not just ImportError: `pip install weasyprint` succeeds on
+        # Windows, then importing it raises OSError because the GTK libraries
+        # it binds to aren't there. Rather than 500, hand back the very
+        # document the PDF is rendered from and let the browser print it.
+        messages.warning(
+            request,
+            "WeasyPrint can't run here, so this is the print view rather than a "
+            "PDF download — use your browser's Print to PDF. To get real PDFs, "
+            "install WeasyPrint's GTK libraries on the server.",
+        )
+        return HttpResponse(html)
+
+    pdf = HTML(string=html, base_url=request.build_absolute_uri()).write_pdf()
+    response = HttpResponse(pdf, content_type="application/pdf")
+    stamp = timezone.localdate().isoformat()
+    response["Content-Disposition"] = f'inline; filename="senovka-sales-{stamp}.pdf"'
+    return response

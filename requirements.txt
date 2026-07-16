@@ -1,3 +1,10 @@
 Django>=5.0
 django-crispy-forms>=2.1
 crispy-tailwind>=1.0
+
+# Sales report PDF export. The wheel installs anywhere, but importing it needs
+# native GTK/Pango libraries that pip does not carry:
+#   Debian/Ubuntu  apt install libpango-1.0-0 libpangoft2-1.0-0
+#   Windows        install the GTK3 runtime, or skip it — the report falls back
+#                  to a print-friendly page and the browser's Print to PDF.
+weasyprint>=60

@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.management import call_command
 from django.db import connection
+from django.template.loader import render_to_string
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -4691,6 +4692,291 @@ class ProductionListTests(UserFactoryMixin, TestCase):
         response = self.client.get(reverse("core:production_list"))
         self.assertEqual(list(response.context["days"]), [])
         self.assertContains(response, "No production recorded yet.")
+
+
+class SalesReportTests(UserFactoryMixin, TestCase):
+    """Figures are hand-computed, so the report is checked against known
+    answers rather than a re-run of its own aggregation.
+
+    Nimal, 1 Jun: 1,000 bill, 1,000 cash kept in the drawer.
+    Nimal, 5 Jun: 2,000 bill, 800 cash banked to Senovka + 1,200 cheque.
+    Kamal, 9 Jun: 3,000 bill, pay later — nothing paid.
+    Cancelled:    9,999, which must not reach a single figure.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(name="Nimal")
+        cls.kamal = Customer.objects.create(name="Kamal Traders")
+
+        def bill(customer, day, total, paid, kind, status):
+            return Bill.objects.create(
+                customer=customer, bill_date=date(2026, 6, day),
+                subtotal=Decimal(total), total_amount=Decimal(total),
+                paid_amount=Decimal(paid),
+                balance_change=Decimal(paid) - Decimal(total),
+                payment_type=kind, status=status,
+            )
+
+        def payment(on, method, amount, account=""):
+            return Payment.objects.create(
+                bill=on, method=method, amount=Decimal(amount),
+                account=account, paid_at=timezone.now(),
+            )
+
+        cls.jun1 = bill(cls.nimal, 1, "1000.00", "1000.00",
+                        Bill.PaymentType.FULL_CASH, Bill.Status.PAID)
+        payment(cls.jun1, Payment.Method.CASH, "1000.00")
+
+        cls.jun5 = bill(cls.nimal, 5, "2000.00", "2000.00",
+                        Bill.PaymentType.PARTIAL, Bill.Status.PAID)
+        payment(cls.jun5, Payment.Method.CASH, "800.00", account="senovka")
+        cheque_payment = payment(cls.jun5, Payment.Method.CHEQUE, "1200.00")
+        cls.cheque = Cheque.objects.create(
+            payment=cheque_payment, customer=cls.nimal, cheque_no="C-1001",
+            bank_name="BOC", amount=Decimal("1200.00"),
+            received_date=date(2026, 6, 5), maturity_date=date(2026, 7, 5),
+        )
+
+        cls.jun9 = bill(cls.kamal, 9, "3000.00", "0.00",
+                        Bill.PaymentType.PAY_LATER, Bill.Status.UNPAID)
+
+        cls.cancelled = bill(cls.nimal, 5, "9999.00", "9999.00",
+                             Bill.PaymentType.FULL_CASH, Bill.Status.CANCELLED)
+        payment(cls.cancelled, Payment.Method.CASH, "9999.00")
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def report(self, **params):
+        response = self.client.get(reverse("core:sales_report"), params)
+        self.response = response
+        return response.context
+
+    # ---- summary ----
+    def test_the_cards_add_up(self):
+        ctx = self.report()
+        # 1,000 + 2,000 + 3,000
+        self.assertEqual(ctx["total_sales"], Decimal("6000.00"))
+        # 1,000 + 800
+        self.assertEqual(ctx["total_cash"], Decimal("1800.00"))
+        self.assertEqual(ctx["total_cheque"], Decimal("1200.00"))
+        # Only the pay-later bill still owes.
+        self.assertEqual(ctx["total_outstanding"], Decimal("3000.00"))
+
+    def test_a_cancelled_bill_reaches_no_figure_at_all(self):
+        """It isn't a sale, and its payment isn't money taken."""
+        ctx = self.report()
+        self.assertNotIn(self.cancelled.pk, [b.pk for b in ctx["bills"]])
+        self.assertNotIn(Decimal("9999.00"), [r.amount for r in ctx["cash_rows"]])
+        self.assertEqual(ctx["total_sales"], Decimal("6000.00"))
+        self.assertEqual(ctx["total_cash"], Decimal("1800.00"))
+
+    def test_outstanding_floors_at_zero_per_bill(self):
+        """A payment that also cleared old debt can exceed its bill; that bill
+        doesn't then owe a negative amount."""
+        over = Bill.objects.create(
+            customer=self.kamal, bill_date=date(2026, 6, 12),
+            subtotal=Decimal("500.00"), total_amount=Decimal("500.00"),
+            paid_amount=Decimal("4000.00"),
+            balance_change=Decimal("3500.00"),
+            payment_type=Bill.PaymentType.FULL_CASH, status=Bill.Status.PAID,
+        )
+        rows = {b.pk: b for b in self.report()["bills"]}
+        self.assertEqual(rows[over.pk].outstanding, Decimal("0.00"))
+        # 3,000 from the pay-later bill only.
+        self.assertEqual(self.response.context["total_outstanding"], Decimal("3000.00"))
+
+    # ---- cash section ----
+    def test_cash_rows_carry_their_destination(self):
+        rows = {r.amount: r for r in self.report()["cash_rows"]}
+        self.assertEqual(rows[Decimal("1000.00")].account, "")
+        self.assertEqual(rows[Decimal("800.00")].account, "senovka")
+
+    def test_cash_subtotals_split_by_account(self):
+        totals = dict(self.report()["account_totals"])
+        self.assertEqual(totals["Physical"], Decimal("1000.00"))
+        self.assertEqual(totals["Senovka Acc"], Decimal("800.00"))
+        self.assertEqual(totals["Dinusha Acc"], Decimal("0.00"))
+
+    def test_an_account_with_nothing_in_it_still_shows(self):
+        """A zero subtotal is an answer; a missing row is a question."""
+        labels = [label for label, _ in self.report()["account_totals"]]
+        self.assertEqual(labels, ["Physical", "Senovka Acc", "Dinusha Acc"])
+
+    def test_the_account_subtotals_sum_to_the_cash_card(self):
+        ctx = self.report()
+        self.assertEqual(
+            sum(amount for _, amount in ctx["account_totals"]), ctx["total_cash"]
+        )
+
+    # ---- cheque section ----
+    def test_cheque_rows_carry_the_cheque_details(self):
+        rows = self.report()["cheque_rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].cheque_no, "C-1001")
+        self.assertEqual(rows[0].bank_name, "BOC")
+        self.assertEqual(rows[0].maturity_date, date(2026, 7, 5))
+        self.assertEqual(rows[0].status, Cheque.Status.PENDING)
+        self.assertEqual(rows[0].payment.bill_id, self.jun5.pk)
+
+    # ---- filters ----
+    def test_filter_by_date_range(self):
+        ctx = self.report(from_date="2026-06-05", to_date="2026-06-09")
+        self.assertEqual({b.pk for b in ctx["bills"]}, {self.jun5.pk, self.jun9.pk})
+        self.assertEqual(ctx["total_sales"], Decimal("5000.00"))
+        # The 1 Jun cash falls outside, so it drops out of the card too.
+        self.assertEqual(ctx["total_cash"], Decimal("800.00"))
+
+    def test_filter_by_customer(self):
+        ctx = self.report(customer_id=self.kamal.pk)
+        self.assertEqual({b.pk for b in ctx["bills"]}, {self.jun9.pk})
+        self.assertEqual(ctx["total_sales"], Decimal("3000.00"))
+        self.assertEqual(ctx["total_cash"], Decimal("0.00"))
+        self.assertEqual(ctx["total_outstanding"], Decimal("3000.00"))
+
+    def test_filter_by_payment_type(self):
+        ctx = self.report(payment_type="pay_later")
+        self.assertEqual({b.pk for b in ctx["bills"]}, {self.jun9.pk})
+        self.assertEqual(ctx["cheque_rows"], [])
+
+    def test_filters_reach_the_payment_sections_too(self):
+        """The cash and cheque tables are the same bills seen sideways, so a
+        filter that moves one has to move the others."""
+        ctx = self.report(customer_id=self.nimal.pk, payment_type="partial")
+        self.assertEqual({b.pk for b in ctx["bills"]}, {self.jun5.pk})
+        self.assertEqual([r.amount for r in ctx["cash_rows"]], [Decimal("800.00")])
+        self.assertEqual(len(ctx["cheque_rows"]), 1)
+
+    def test_filters_combine(self):
+        ctx = self.report(from_date="2026-06-01", to_date="2026-06-05",
+                          customer_id=self.nimal.pk)
+        self.assertEqual({b.pk for b in ctx["bills"]}, {self.jun1.pk, self.jun5.pk})
+        self.assertEqual(ctx["total_sales"], Decimal("3000.00"))
+
+    def test_unknown_filter_values_are_ignored_not_500s(self):
+        ctx = self.report(customer_id="zzz", payment_type="zzz", from_date="nonsense")
+        self.assertEqual(len(ctx["bills"]), 3)
+        self.assertFalse(ctx["is_filtered"])
+
+    def test_an_empty_period_reports_zeroes_not_none(self):
+        ctx = self.report(from_date="2027-01-01", to_date="2027-01-31")
+        self.assertEqual(ctx["bills"], [])
+        self.assertEqual(ctx["total_sales"], Decimal("0"))
+        self.assertEqual(ctx["total_cash"], Decimal("0"))
+        self.assertEqual(ctx["total_cheque"], Decimal("0"))
+        self.assertEqual(ctx["total_outstanding"], Decimal("0"))
+        self.assertContains(self.response, "No sales in this period.")
+
+    # ---- the page ----
+    def test_the_page_renders_all_three_tables(self):
+        self.report()
+        self.assertContains(self.response, "Cash Sales")
+        self.assertContains(self.response, "Cheque Sales")
+        self.assertContains(self.response, "All Sales")
+        self.assertContains(self.response, "C-1001")
+        self.assertContains(self.response, "6,000.00")
+
+    def test_the_pdf_link_carries_the_current_filters(self):
+        self.report(customer_id=self.nimal.pk, payment_type="partial")
+        self.assertContains(self.response, reverse("core:sales_report_pdf"))
+        self.assertContains(self.response, f"customer_id={self.nimal.pk}")
+
+    def test_report_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:sales_report"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
+class SalesReportPdfTests(UserFactoryMixin, TestCase):
+    """The export. WeasyPrint may or may not be able to run here, so the test
+    covers both answers rather than assume one."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(name="Nimal")
+        cls.bill = Bill.objects.create(
+            customer=cls.nimal, bill_date=date(2026, 6, 1),
+            subtotal=Decimal("1000.00"), total_amount=Decimal("1000.00"),
+            paid_amount=Decimal("1000.00"), balance_change=Decimal("0.00"),
+            payment_type=Bill.PaymentType.FULL_CASH, status=Bill.Status.PAID,
+        )
+        Payment.objects.create(
+            bill=cls.bill, method=Payment.Method.CASH,
+            amount=Decimal("1000.00"), paid_at=timezone.now(),
+        )
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def weasyprint_works(self):
+        try:
+            import weasyprint  # noqa: F401
+        except (ImportError, OSError):
+            return False
+        return True
+
+    def test_export_answers_a_pdf_or_a_printable_page_never_a_500(self):
+        response = self.client.get(reverse("core:sales_report_pdf"))
+        self.assertEqual(response.status_code, 200)
+
+        if self.weasyprint_works():
+            self.assertEqual(response["Content-Type"], "application/pdf")
+            self.assertTrue(response.content.startswith(b"%PDF"))
+            self.assertIn("senovka-sales-", response["Content-Disposition"])
+        else:
+            # pip installs WeasyPrint fine on Windows, then importing it raises
+            # OSError for the missing GTK libraries. The fallback hands back the
+            # same document for the browser to print.
+            self.assertEqual(response["Content-Type"], "text/html; charset=utf-8")
+            self.assertContains(response, "Senovka Plastics")
+
+    def test_the_pdf_template_stands_on_its_own(self):
+        """WeasyPrint fetches nothing and runs no JavaScript, so the document
+        cannot lean on the CDN or the app chrome."""
+        html = render_to_string(
+            "core/sales_report_pdf.html", _sales_report_context_for(self.client)
+        )
+        self.assertNotIn("cdn.tailwindcss.com", html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn('id="sidebar"', html)
+        self.assertIn("@page", html)
+
+    def test_the_pdf_reports_the_same_figures_as_the_page(self):
+        page = self.client.get(reverse("core:sales_report")).context
+        pdf = self.client.get(reverse("core:sales_report_pdf"))
+        # Whichever branch answered, the totals came from one function.
+        self.assertEqual(page["total_sales"], Decimal("1000.00"))
+        self.assertEqual(pdf.status_code, 200)
+
+    def test_the_pdf_respects_the_filters(self):
+        response = self.client.get(
+            reverse("core:sales_report_pdf"), {"from_date": "2027-01-01"}
+        )
+        self.assertEqual(response.status_code, 200)
+        if not self.weasyprint_works():
+            self.assertContains(response, "No sales in this period.")
+
+    def test_export_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:sales_report_pdf"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
+def _sales_report_context_for(client):
+    """The report context, as the view builds it, for template-only checks."""
+    response = client.get(reverse("core:sales_report"))
+    return {
+        key: response.context[key]
+        for key in (
+            "bills", "cash_rows", "cheque_rows", "account_totals",
+            "total_sales", "total_cash", "total_cheque", "total_outstanding",
+            "from_date", "to_date", "selected_customer", "payment_type",
+            "customers", "payment_types", "generated_at",
+        )
+    }
 
 
 class ContextProcessorTests(UserFactoryMixin, TestCase):

@@ -93,4 +93,6 @@ urlpatterns = [
     # Section index only. The ledger itself is per-customer, above.
     path("ledger/", views.ledger_index, name="ledger_index"),
     path("reports/sales/", views.sales_report, name="sales_report"),
+    # Same filters as the page above; renders the print template to PDF.
+    path("reports/sales/pdf/", views.sales_report_pdf, name="sales_report_pdf"),
 ]
