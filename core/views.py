@@ -2,8 +2,10 @@ import json
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import (
     Case,
@@ -64,6 +66,22 @@ CHEQUE_WARNING_DAYS = 3
 
 MONEY = DecimalField(max_digits=12, decimal_places=2)
 ZERO = Decimal("0.00")
+
+
+def _paginate(request, object_list, per_page=None):
+    """One page of object_list, read off ?page=.
+
+    get_page rather than page: ?page= arrives from bookmarks and hand-edited
+    URLs as well as from the pager, so a missing, unparsable or out-of-range
+    number lands on the nearest real page instead of raising.
+
+    Takes a queryset or a list. A queryset is sliced in SQL and only the page
+    is fetched; a list has already been built, so pass one only where the rows
+    are computed in Python — a running balance has to see every earlier row,
+    and cannot be worked out a page at a time.
+    """
+    paginator = Paginator(object_list, per_page or settings.PAGINATE_BY)
+    return paginator.get_page(request.GET.get("page"))
 
 
 def _is_super_admin(user):
@@ -176,19 +194,25 @@ def dashboard(request):
 def category_list(request):
     query = request.GET.get("q", "").strip()
 
-    categories = Category.objects.annotate(product_count=Count("products"))
+    # order_by repeats Category.Meta.ordering, which the annotate() below would
+    # otherwise drop — see _bills_with_counts.
+    categories = Category.objects.annotate(product_count=Count("products")).order_by(
+        "name"
+    )
     if query:
         categories = categories.filter(
             Q(name__icontains=query) | Q(description__icontains=query)
         )
 
+    page_obj = _paginate(request, categories)
+
     return render(
         request,
         "core/category_list.html",
         {
-            "categories": categories,
+            "page_obj": page_obj,
+            "categories": page_obj.object_list,
             "query": query,
-            "total_count": Category.objects.count(),
         },
     )
 
@@ -258,8 +282,12 @@ def product_list(request):
     query = request.GET.get("q", "").strip()
     category_id = request.GET.get("category", "").strip()
 
-    products = Product.objects.select_related("category").annotate(
-        custom_price_count=Count("customer_prices")
+    # order_by repeats Product.Meta.ordering, which the annotate() below would
+    # otherwise drop — see _bills_with_counts.
+    products = (
+        Product.objects.select_related("category")
+        .annotate(custom_price_count=Count("customer_prices"))
+        .order_by("name", "size")
     )
     if query:
         products = products.filter(name__icontains=query)
@@ -270,16 +298,18 @@ def product_list(request):
         selected_category = int(category_id)
         products = products.filter(category_id=selected_category)
 
+    page_obj = _paginate(request, products)
+
     return render(
         request,
         "core/product_list.html",
         {
-            "products": products,
+            "page_obj": page_obj,
+            "products": page_obj.object_list,
             "categories": Category.objects.all(),
             "query": query,
             "selected_category": selected_category,
             "is_filtered": bool(query or selected_category),
-            "total_count": Product.objects.count(),
         },
     )
 
@@ -571,6 +601,9 @@ def _customers():
         .annotate(
             history_count=F("bill_count") + F("supplier_bill_count") + F("cheque_count")
         )
+        # Repeats Customer.Meta.ordering because the annotate()s above group,
+        # and a grouped query loses Meta.ordering — see _bills_with_counts.
+        .order_by("name")
     )
 
 
@@ -612,16 +645,18 @@ def customer_list(request):
     if status:
         customers = customers.filter(is_active=status == "active")
 
+    page_obj = _paginate(request, customers)
+
     return render(
         request,
         "core/customer_list.html",
         {
-            "customers": customers,
+            "page_obj": page_obj,
+            "customers": page_obj.object_list,
             "query": query,
             "kind": kind,
             "status": status,
             "is_filtered": bool(query or kind or status),
-            "total_count": Customer.objects.count(),
         },
     )
 
@@ -779,12 +814,21 @@ def customer_ledger(request, pk):
     to_date = _parse_date(request.GET.get("to_date"))
     rows = _ledger_rows(customer, from_date, to_date)
 
+    # _ledger_rows stays whole and the totals below are taken over all of it:
+    # the running balance in each row is the sum of every row before it, and
+    # the closing balance is the last row's. Only the display is paged.
+    #
+    # The PDF calls _ledger_rows itself and never sees this — a printed ledger
+    # is the whole account, not page 1 of it.
+    page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
+
     return render(
         request,
         "core/customer_ledger.html",
         {
             "customer": customer,
-            "rows": rows,
+            "page_obj": page_obj,
+            "rows": page_obj.object_list,
             "from_date": from_date,
             "to_date": to_date,
             "is_filtered": bool(from_date or to_date),
@@ -1404,11 +1448,21 @@ def bill_detail(request, pk):
 
 def _bills_with_counts():
     """Bills carrying what the delete modal has to describe."""
-    return Bill.objects.select_related("customer").annotate(
-        # distinct=True: without it these joins multiply each other's rows.
-        item_count=Count("items", distinct=True),
-        payment_count=Count("payments", distinct=True),
-        drawer_count=Count("cash_drawer_entries", distinct=True),
+    return (
+        Bill.objects.select_related("customer")
+        .annotate(
+            # distinct=True: without it these joins multiply each other's rows.
+            item_count=Count("items", distinct=True),
+            payment_count=Count("payments", distinct=True),
+            drawer_count=Count("cash_drawer_entries", distinct=True),
+        )
+        # Spelled out even though it only repeats Bill.Meta.ordering: annotate()
+        # groups, and Django drops Meta.ordering from a grouped query, leaving
+        # no ORDER BY at all. Unordered is merely untidy when the whole list is
+        # on one screen, but it is wrong once it is paginated — LIMIT/OFFSET
+        # over an unordered read may hand the same bill to two pages and never
+        # show another.
+        .order_by("-bill_date", "-id")
     )
 
 
@@ -1593,15 +1647,21 @@ def bill_list(request):
     if status:
         bills = bills.filter(status=status)
 
-    bills = list(bills)
-    for bill in bills:
+    # Paginate before the per-row work below: _reversal_summary queries per
+    # bill, so priced over the whole filtered set it would cost a page's worth
+    # of queries for every bill the operator cannot see.
+    page_obj = _paginate(request, bills)
+    for bill in page_obj:
         bill.reverses = json.dumps(_reversal_summary(bill))
 
     return render(
         request,
         "core/bill_list.html",
         {
-            "bills": bills,
+            "page_obj": page_obj,
+            # The page's rows. The template iterates this, so it never has to
+            # know whether it was handed a page or a plain list.
+            "bills": page_obj.object_list,
             "customers": Customer.objects.filter(is_supplier=False),
             "from_date": from_date,
             "to_date": to_date,
@@ -1613,7 +1673,6 @@ def bill_list(request):
             "is_filtered": bool(
                 from_date or to_date or selected_customer or payment_type or status
             ),
-            "total_count": Bill.objects.count(),
         },
     )
 
@@ -1820,8 +1879,15 @@ def cheque_list(request):
     if to_date:
         cheques = cheques.filter(maturity_date__lte=to_date)
 
-    cheques = list(cheques)
-    for cheque in cheques:
+    # Counted off the filtered set rather than the page: this banner warns the
+    # operator what is waiting on them across the whole filter, and a count
+    # that only saw page 1 would quietly under-report it.
+    due_count = cheques.filter(
+        status=Cheque.Status.PENDING, maturity_date__lte=horizon
+    ).count()
+
+    page_obj = _paginate(request, cheques)
+    for cheque in page_obj:
         # Maturing on us and still not banked: the row the operator is meant
         # to act on today. Anything already overdue counts too.
         cheque.is_due_soon = (
@@ -1832,7 +1898,8 @@ def cheque_list(request):
         request,
         "core/cheque_list.html",
         {
-            "cheques": cheques,
+            "page_obj": page_obj,
+            "cheques": page_obj.object_list,
             "customers": Customer.objects.filter(cheques__isnull=False).distinct(),
             "status": status,
             "selected_customer": selected_customer,
@@ -1840,8 +1907,7 @@ def cheque_list(request):
             "to_date": to_date,
             "statuses": Cheque.Status.choices,
             "is_filtered": bool(status or selected_customer or from_date or to_date),
-            "total_count": Cheque.objects.count(),
-            "due_count": sum(1 for cheque in cheques if cheque.is_due_soon),
+            "due_count": due_count,
             "warning_days": CHEQUE_WARNING_DAYS,
             "today": today,
         },
@@ -1923,6 +1989,13 @@ def cash_drawer(request):
             }
         )
 
+    # The rows are paginated, the arithmetic above is not. Every row's running
+    # balance depends on every row before it, and opening/closing/totals
+    # describe the whole filtered range — so the sums are taken over all of it
+    # and only the display is cut into pages. Slicing the queryset instead
+    # would restart the running balance at each page and make the column lie.
+    page_obj = _paginate(request, rows)
+
     return render(
         request,
         "core/cash_drawer.html",
@@ -1932,7 +2005,8 @@ def cash_drawer(request):
             "balance": balance,
             "senovka_banked": _account_banked(CashTransfer.Account.SENOVKA),
             "dinusha_banked": _account_banked(CashTransfer.Account.DINUSHA),
-            "rows": rows,
+            "page_obj": page_obj,
+            "rows": page_obj.object_list,
             "opening": opening,
             "closing": running,
             "total_in": total_in,
@@ -1940,7 +2014,6 @@ def cash_drawer(request):
             "from_date": from_date,
             "to_date": to_date,
             "is_filtered": bool(from_date or to_date),
-            "total_count": CashDrawer.objects.count(),
             "kind_choices": CashDrawerOutForm.KIND_CHOICES,
         },
     )
@@ -2269,8 +2342,12 @@ def supplier_bill_list(request):
     if status not in {value for value, _ in SupplierBill.Status.choices}:
         status = ""
 
-    bills = SupplierBill.objects.select_related("supplier").annotate(
-        item_count=Count("items")
+    # order_by repeats SupplierBill.Meta.ordering, which the annotate() below
+    # would otherwise drop — see _bills_with_counts.
+    bills = (
+        SupplierBill.objects.select_related("supplier")
+        .annotate(item_count=Count("items"))
+        .order_by("-bill_date", "-id")
     )
     if from_date:
         bills = bills.filter(bill_date__gte=from_date)
@@ -2281,11 +2358,14 @@ def supplier_bill_list(request):
     if status:
         bills = bills.filter(status=status)
 
+    page_obj = _paginate(request, bills)
+
     return render(
         request,
         "core/supplier_bill_list.html",
         {
-            "bills": bills,
+            "page_obj": page_obj,
+            "bills": page_obj.object_list,
             "suppliers": Customer.objects.filter(is_supplier=True),
             "from_date": from_date,
             "to_date": to_date,
@@ -2295,7 +2375,6 @@ def supplier_bill_list(request):
             "is_filtered": bool(
                 from_date or to_date or selected_supplier or status
             ),
-            "total_count": SupplierBill.objects.count(),
         },
     )
 
@@ -2548,18 +2627,23 @@ def production_list(request):
     for day in days:
         day["product_count"] = len(day["entries"])
 
+    # Paginated by day, not by entry: a day is one row here — the entries sit
+    # inside it, behind the expander — and its product_count and total_qty
+    # describe the whole day. Splitting one across a page boundary would leave
+    # both halves reporting a total that was never produced.
+    page_obj = _paginate(request, days)
+
     return render(
         request,
         "core/production_list.html",
         {
-            "days": days,
+            "page_obj": page_obj,
+            "days": page_obj.object_list,
             "products": Product.objects.filter(production_entries__isnull=False).distinct(),
             "from_date": from_date,
             "to_date": to_date,
             "selected_product": selected_product,
             "is_filtered": bool(from_date or to_date or selected_product),
-            "entry_count": sum(day["product_count"] for day in days),
-            "total_count": ProductionEntry.objects.count(),
         },
     )
 
@@ -2705,6 +2789,14 @@ def sales_report(request):
     context = _sales_report_context(request)
     # The PDF link carries the same filters, so it reports what is on screen.
     context["query"] = request.GET.urlencode()
+
+    # Paged here and not in _sales_report_context, which sales_report_pdf also
+    # calls: the totals on this page are struck over every bill in the range,
+    # and the PDF is the whole report. Paging the shared builder would cut both
+    # down to 50 bills.
+    page_obj = _paginate(request, context["bills"], settings.PAGINATE_BY_REPORTS)
+    context["page_obj"] = page_obj
+    context["bills"] = page_obj.object_list
     return render(request, "core/sales_report.html", context)
 
 
@@ -2872,6 +2964,12 @@ def _outstanding_context(request):
 def outstanding_report(request):
     context = _outstanding_context(request)
     context["query"] = request.GET.urlencode()
+
+    # As with the sales report: paged on the page only, never in the builder
+    # the PDF shares, and the totals stay struck over every customer in scope.
+    page_obj = _paginate(request, context["customers"], settings.PAGINATE_BY_REPORTS)
+    context["page_obj"] = page_obj
+    context["customers"] = page_obj.object_list
     return render(request, "core/outstanding_report.html", context)
 
 

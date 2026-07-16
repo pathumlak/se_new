@@ -1,0 +1,63 @@
+{% load pagination %}
+
+{% if page_obj.paginator.count %}
+  
+
+  <div class="no-print mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+    <p class="text-sm text-slate-500">
+      Showing <span class="font-medium text-slate-700">{{ page_obj.start_index }}</span>
+      to <span class="font-medium text-slate-700">{{ page_obj.end_index }}</span>
+      of <span class="font-medium text-slate-700">{{ page_obj.paginator.count }}</span>
+      result{{ page_obj.paginator.count|pluralize }}
+    </p>
+
+    {# One page of results needs a count, not a pager. #}
+    {% if page_obj.paginator.num_pages > 1 %}
+      <nav aria-label="Pagination" class="flex items-center gap-1">
+
+        {% if page_obj.has_previous %}
+          <a href="{% querystring page=page_obj.previous_page_number %}"
+             class="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Previous
+          </a>
+        {% else %}
+          <span aria-disabled="true"
+                class="cursor-default rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-300">
+            Previous
+          </span>
+        {% endif %}
+
+        {% for num in page_obj|elided_page_range %}
+          {% if num == page_obj.paginator.ELLIPSIS %}
+            <span class="px-1.5 py-1.5 text-xs text-slate-400">{{ num }}</span>
+          {% elif num == page_obj.number %}
+            <span aria-current="page"
+                  class="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+              {{ num }}
+            </span>
+          {% else %}
+            <a href="{% querystring page=num %}"
+               class="rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+              {{ num }}
+            </a>
+          {% endif %}
+        {% endfor %}
+
+        {% if page_obj.has_next %}
+          <a href="{% querystring page=page_obj.next_page_number %}"
+             class="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Next
+          </a>
+        {% else %}
+          <span aria-disabled="true"
+                class="cursor-default rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-300">
+            Next
+          </span>
+        {% endif %}
+
+      </nav>
+    {% endif %}
+
+  </div>
+{% endif %}

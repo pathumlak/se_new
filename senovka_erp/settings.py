@@ -80,7 +80,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+
+TIME_ZONE = "Asia/Colombo"
+
 USE_I18N = True
 USE_TZ = True
 
@@ -107,3 +109,12 @@ LOGOUT_REDIRECT_URL = "login"  # -> /login/
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "tailwind"
 CRISPY_TEMPLATE_PACK = "tailwind"
+
+
+# --- Pagination -----------------------------------------------------------
+# Rows per page on the list pages.
+PAGINATE_BY = 25
+
+# Ledgers and reports are read as a run of figures rather than scanned for one
+# row, so they take fewer, longer pages.
+PAGINATE_BY_REPORTS = 50

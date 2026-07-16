@@ -42,12 +42,7 @@
   </a>
 </div>
 
-{% if query %}
-  <p class="mb-3 text-sm text-slate-500">
-    {{ categories|length }} result{{ categories|length|pluralize }} for “{{ query }}”
-    <span class="text-slate-400">of {{ total_count }} categories</span>
-  </p>
-{% endif %}
+{% include 'partials/pagination.html' with page_obj=page_obj %}
 
 <!-- Table -->
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

@@ -58,12 +58,8 @@
   </a>
 </div>
 
-{% if is_filtered %}
-  <p class="mb-3 text-sm text-slate-500">
-    {{ entry_count }} entr{{ entry_count|pluralize:"y,ies" }} across {{ days|length }} day{{ days|length|pluralize }}
-    <span class="text-slate-400">of {{ total_count }} entries</span>
-  </p>
-{% endif %}
+{# "results" here are days: one row per day, entries nested inside it. #}
+{% include 'partials/pagination.html' with page_obj=page_obj %}
 
 <!-- Days -->
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

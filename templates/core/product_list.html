@@ -56,12 +56,7 @@
   </a>
 </div>
 
-{% if is_filtered %}
-  <p class="mb-3 text-sm text-slate-500">
-    {{ products|length }} result{{ products|length|pluralize }}
-    <span class="text-slate-400">of {{ total_count }} products</span>
-  </p>
-{% endif %}
+{% include 'partials/pagination.html' with page_obj=page_obj %}
 
 <!-- Table -->
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
