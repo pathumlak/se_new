@@ -8,11 +8,13 @@ from django.db import transaction
 from django.db.models import (
     Case,
     Count,
+    OuterRef,
     DecimalField,
     ExpressionWrapper,
     F,
     ProtectedError,
     Q,
+    Subquery,
     Sum,
     Value,
     When,
@@ -25,6 +27,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.formats import date_format
+from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_POST
 
 from .decorators import super_admin_required
@@ -2677,18 +2680,22 @@ def sales_report(request):
     return render(request, "core/sales_report.html", context)
 
 
-@login_required
-def sales_report_pdf(request):
-    context = _sales_report_context(request)
-    html = render_to_string("core/sales_report_pdf.html", context, request=request)
+def _pdf_response(request, template, context, filename):
+    """Render a print template to PDF, or to itself when that isn't possible.
+
+    Shared by every report. The templates are written to stand up unaided —
+    WeasyPrint fetches nothing and runs no JavaScript — which is what lets the
+    fallback hand the very same document to the browser to print.
+    """
+    html = render_to_string(template, context, request=request)
 
     try:
         from weasyprint import HTML
     except (ImportError, OSError):
         # OSError, not just ImportError: `pip install weasyprint` succeeds on
-        # Windows, then importing it raises OSError because the GTK libraries
-        # it binds to aren't there. Rather than 500, hand back the very
-        # document the PDF is rendered from and let the browser print it.
+        # Windows and then importing it fails, because the GTK libraries it
+        # binds to are not something pip can deliver. Rather than 500, say so
+        # and hand back the document.
         messages.warning(
             request,
             "WeasyPrint can't run here, so this is the print view rather than a "
@@ -2699,6 +2706,153 @@ def sales_report_pdf(request):
 
     pdf = HTML(string=html, base_url=request.build_absolute_uri()).write_pdf()
     response = HttpResponse(pdf, content_type="application/pdf")
-    stamp = timezone.localdate().isoformat()
-    response["Content-Disposition"] = f'inline; filename="senovka-sales-{stamp}.pdf"'
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
     return response
+
+
+@login_required
+def sales_report_pdf(request):
+    stamp = timezone.localdate().isoformat()
+    return _pdf_response(
+        request,
+        "core/sales_report_pdf.html",
+        _sales_report_context(request),
+        f"senovka-sales-{stamp}.pdf",
+    )
+
+
+# ------------------------------------------------------------- ledger report
+
+
+@login_required
+def customer_ledger_pdf(request, pk):
+    """The per-customer ledger as a document, off the same rows as the page."""
+    customer = get_object_or_404(_customers(), pk=pk)
+
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+    rows = _ledger_rows(customer, from_date, to_date)
+
+    context = {
+        "customer": customer,
+        "rows": rows,
+        "from_date": from_date,
+        "to_date": to_date,
+        "is_filtered": bool(from_date or to_date),
+        "total_sale": sum((row["sale"] or ZERO for row in rows), ZERO),
+        "total_credit": sum((row["credit"] or ZERO for row in rows), ZERO),
+        "closing_balance": rows[-1]["balance"] if rows else ZERO,
+        # What the closing balance is *as of*: the end of the range asked for,
+        # or today when the range runs to now.
+        "as_of": to_date or timezone.localdate(),
+        "generated_at": timezone.localtime(),
+    }
+
+    # slugify: a customer name is free text, and a raw one in a filename header
+    # is at best broken and at worst a way to inject a header.
+    stamp = timezone.localdate().isoformat()
+    filename = f"ledger_{slugify(customer.name) or customer.pk}_{stamp}.pdf"
+    return _pdf_response(request, "core/ledger_pdf.html", context, filename)
+
+
+# -------------------------------------------------------- outstanding report
+
+
+def _outstanding_context(request):
+    """Every customer's account at a glance, worst debt first."""
+    scope = request.GET.get("scope", "owing")
+    if scope not in {"owing", "all"}:
+        scope = "owing"
+
+    # Subqueries, not Sum() over joins: totalling bills and payments in one
+    # query would count each bill once per payment on it. These each aggregate
+    # on their own and hand back a single figure.
+    live_bills = Bill.objects.filter(customer=OuterRef("pk")).exclude(
+        status=Bill.Status.CANCELLED
+    )
+    billed = (
+        live_bills.values("customer").annotate(total=Sum("total_amount")).values("total")
+    )
+    received = (
+        Payment.objects.filter(bill__customer=OuterRef("pk"))
+        .exclude(bill__status=Bill.Status.CANCELLED)
+        # Money that never arrived isn't received. Same rule as the ledger, so
+        # the two reports can't tell different stories.
+        .exclude(cheques__status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD])
+        .values("bill__customer")
+        .annotate(total=Sum("amount"))
+        .values("total")
+    )
+    last_bill = live_bills.order_by("-bill_date").values("bill_date")[:1]
+    last_payment = (
+        Payment.objects.filter(bill__customer=OuterRef("pk"))
+        .exclude(bill__status=Bill.Status.CANCELLED)
+        .order_by("-paid_at")
+        .values("paid_at")[:1]
+    )
+
+    customers = (
+        Customer.objects.annotate(
+            owed=Case(
+                When(balance__lt=0, then=Value(0) - F("balance")),
+                default=Value(ZERO),
+                output_field=MONEY,
+            )
+        )
+        .annotate(
+            available_credit=Greatest(
+                F("credit_limit") - F("owed"), Value(ZERO), output_field=MONEY
+            ),
+            total_billed=Coalesce(Subquery(billed), ZERO, output_field=MONEY),
+            total_received=Coalesce(Subquery(received), ZERO, output_field=MONEY),
+            last_bill_date=Subquery(last_bill),
+            last_payment_at=Subquery(last_payment),
+        )
+    )
+
+    if scope == "owing":
+        customers = customers.filter(balance__lt=0)
+
+    # Worst debt first. Name breaks the ties so the order never wobbles.
+    customers = list(customers.order_by("-owed", "name"))
+
+    for customer in customers:
+        # The last time anything happened on the account, whichever side it was.
+        dates = [
+            stamp
+            for stamp in (
+                customer.last_bill_date,
+                timezone.localtime(customer.last_payment_at).date()
+                if customer.last_payment_at
+                else None,
+            )
+            if stamp
+        ]
+        customer.last_transaction = max(dates) if dates else None
+
+    return {
+        "customers": customers,
+        "scope": scope,
+        "total_owed": sum((c.owed for c in customers), ZERO),
+        "total_billed": sum((c.total_billed for c in customers), ZERO),
+        "total_received": sum((c.total_received for c in customers), ZERO),
+        "generated_at": timezone.localtime(),
+    }
+
+
+@login_required
+def outstanding_report(request):
+    context = _outstanding_context(request)
+    context["query"] = request.GET.urlencode()
+    return render(request, "core/outstanding_report.html", context)
+
+
+@login_required
+def outstanding_report_pdf(request):
+    stamp = timezone.localdate().isoformat()
+    return _pdf_response(
+        request,
+        "core/outstanding_pdf.html",
+        _outstanding_context(request),
+        f"senovka-outstanding-{stamp}.pdf",
+    )

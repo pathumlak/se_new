@@ -4979,6 +4979,405 @@ def _sales_report_context_for(client):
     }
 
 
+class LedgerPdfTests(UserFactoryMixin, TestCase):
+    """The ledger as a document. Same rows as the page, so the two can't tell
+    the customer different stories."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.nimal = Customer.objects.create(
+            name="Nimal Stores", phone="077 123 4567", address="12 Galle Road",
+            credit_limit=Decimal("10000.00"), balance=Decimal("-600.00"),
+        )
+        cat = Category.objects.create(name="Pipes")
+        Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("50.000")
+        )
+
+        def bill(day, total):
+            return Bill.objects.create(
+                customer=cls.nimal, bill_date=date(2026, 6, day),
+                total_amount=Decimal(total),
+                payment_type=Bill.PaymentType.PAY_LATER,
+            )
+
+        cls.june1 = bill(1, "1000.00")
+        cls.june3 = bill(3, "500.00")
+        Payment.objects.create(
+            bill=cls.june3, method=Payment.Method.CASH, amount=Decimal("200.00"),
+            paid_at=timezone.make_aware(datetime(2026, 6, 3, 14, 30)),
+        )
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def url(self, **params):
+        base = reverse("core:customer_ledger_pdf", args=[self.nimal.pk])
+        return f"{base}?{urlencode(params)}" if params else base
+
+    def weasyprint_works(self):
+        try:
+            import weasyprint  # noqa: F401
+        except (ImportError, OSError):
+            return False
+        return True
+
+    def test_export_answers_a_pdf_or_a_printable_page_never_a_500(self):
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+
+        if self.weasyprint_works():
+            self.assertEqual(response["Content-Type"], "application/pdf")
+            self.assertTrue(response.content.startswith(b"%PDF"))
+        else:
+            # pip installs WeasyPrint on Windows and then importing it raises
+            # OSError for the missing GTK libraries; the fallback hands back the
+            # same document for the browser to print.
+            self.assertEqual(response["Content-Type"], "text/html; charset=utf-8")
+            self.assertContains(response, "Nimal Stores")
+
+    def test_the_filename_carries_the_customer_and_the_date(self):
+        response = self.client.get(self.url())
+        stamp = timezone.localdate().isoformat()
+        self.assertIn(
+            f'filename="ledger_nimal-stores_{stamp}.pdf"',
+            response["Content-Disposition"],
+        )
+
+    def test_a_name_that_would_break_the_header_is_slugified(self):
+        """A customer name is free text; a raw one in a header is at best
+        broken and at worst a way to inject a header."""
+        awkward = Customer.objects.create(name='Bad "Name"; drop\r\nHeader')
+        response = self.client.get(
+            reverse("core:customer_ledger_pdf", args=[awkward.pk])
+        )
+        disposition = response["Content-Disposition"]
+        self.assertNotIn("\n", disposition)
+        self.assertNotIn('"Name"', disposition)
+        self.assertIn("ledger_bad-name-drop-header_", disposition)
+
+    def test_the_document_stands_on_its_own(self):
+        """WeasyPrint fetches nothing and runs no JavaScript, so it can't lean
+        on the CDN or the app chrome."""
+        html = render_to_string("core/ledger_pdf.html", self.context())
+        self.assertNotIn("cdn.tailwindcss.com", html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn('id="sidebar"', html)
+        self.assertIn("@page", html)
+
+    def context(self, **params):
+        """The context the view builds, for template-only checks."""
+        request = self.client.get(self.url(**params)).wsgi_request
+        customer = views._customers().get(pk=self.nimal.pk)
+        rows = views._ledger_rows(
+            customer,
+            views._parse_date(params.get("from_date")),
+            views._parse_date(params.get("to_date")),
+        )
+        return {
+            "customer": customer,
+            "rows": rows,
+            "from_date": views._parse_date(params.get("from_date")),
+            "to_date": views._parse_date(params.get("to_date")),
+            "is_filtered": bool(params),
+            "total_sale": sum((r["sale"] or Decimal("0") for r in rows), Decimal("0")),
+            "total_credit": sum((r["credit"] or Decimal("0") for r in rows), Decimal("0")),
+            "closing_balance": rows[-1]["balance"] if rows else Decimal("0"),
+            "as_of": timezone.localdate(),
+            "generated_at": timezone.localtime(),
+        }
+
+    def test_the_document_carries_the_header_and_summary(self):
+        html = render_to_string("core/ledger_pdf.html", self.context())
+        self.assertIn("Senovka Plastics", html)
+        self.assertIn("Nimal Stores", html)
+        self.assertIn("12 Galle Road", html)
+        self.assertIn("077 123 4567", html)
+        self.assertIn("Credit Limit", html)
+        self.assertIn("Current Balance", html)
+        self.assertIn("Available Credit", html)
+        self.assertIn("10,000.00", html)   # credit limit
+        self.assertIn("9,400.00", html)    # available: 10000 - 600 owed
+
+    def test_the_running_balance_matches_the_page(self):
+        """1,000 sale, 500 sale, 200 cash: 1,000 -> 1,500 -> 1,300."""
+        context = self.context()
+        self.assertEqual(
+            [r["balance"] for r in context["rows"]],
+            [Decimal("1000.00"), Decimal("1500.00"), Decimal("1300.00")],
+        )
+        self.assertEqual(context["closing_balance"], Decimal("1300.00"))
+
+        page = self.client.get(
+            reverse("core:customer_ledger", args=[self.nimal.pk])
+        ).context
+        self.assertEqual(
+            [r["balance"] for r in page["rows"]],
+            [r["balance"] for r in context["rows"]],
+        )
+
+    def test_the_footer_states_the_closing_balance(self):
+        html = render_to_string("core/ledger_pdf.html", self.context())
+        self.assertIn("Closing Balance as of", html)
+        self.assertIn("1,300.00", html)
+
+    def test_the_range_reaches_the_document(self):
+        response = self.client.get(self.url(from_date="2026-06-03"))
+        if not self.weasyprint_works():
+            self.assertContains(response, "3 Jun 2026")
+            self.assertNotContains(response, "1 Jun 2026")
+
+    def test_export_requires_login(self):
+        self.client.logout()
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+    def test_export_of_a_missing_customer_404s(self):
+        self.assertEqual(
+            self.client.get(reverse("core:customer_ledger_pdf", args=[9999])).status_code,
+            404,
+        )
+
+
+class OutstandingReportTests(UserFactoryMixin, TestCase):
+    """Figures are hand-computed.
+
+    Big Debtor:   billed 12,000, received 2,000  -> owes 10,000
+    Small Debtor: billed  1,000, received     0  -> owes  1,000
+    Settled:      billed  5,000, received 5,000  -> square
+    In Credit:    we owe them 2,000
+    Never:        no activity at all
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cat = Category.objects.create(name="Pipes")
+        Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("99.000")
+        )
+
+        def account(name, balance, limit="20000.00", **kwargs):
+            return Customer.objects.create(
+                name=name, balance=Decimal(balance),
+                credit_limit=Decimal(limit), **kwargs
+            )
+
+        cls.big = account("Big Debtor", "-10000.00", phone="077 111")
+        cls.small = account("Small Debtor", "-1000.00")
+        cls.settled = account("Settled Co", "0.00")
+        cls.credit = account("In Credit", "2000.00")
+        cls.never = account("Never Traded", "0.00")
+
+        def bill(customer, day, total, paid, status=Bill.Status.UNPAID):
+            return Bill.objects.create(
+                customer=customer, bill_date=date(2026, 6, day),
+                subtotal=Decimal(total), total_amount=Decimal(total),
+                paid_amount=Decimal(paid),
+                balance_change=Decimal(paid) - Decimal(total),
+                payment_type=Bill.PaymentType.PARTIAL, status=status,
+            )
+
+        big_bill = bill(cls.big, 1, "12000.00", "2000.00")
+        Payment.objects.create(
+            bill=big_bill, method=Payment.Method.CASH, amount=Decimal("2000.00"),
+            paid_at=timezone.make_aware(datetime(2026, 6, 4, 9, 0)),
+        )
+        bill(cls.small, 2, "1000.00", "0.00")
+        settled_bill = bill(cls.settled, 3, "5000.00", "5000.00", Bill.Status.PAID)
+        Payment.objects.create(
+            bill=settled_bill, method=Payment.Method.CASH, amount=Decimal("5000.00"),
+            paid_at=timezone.make_aware(datetime(2026, 6, 3, 9, 0)),
+        )
+
+        # Must not reach a single figure.
+        cancelled = bill(cls.big, 7, "9999.00", "9999.00", Bill.Status.CANCELLED)
+        Payment.objects.create(
+            bill=cancelled, method=Payment.Method.CASH, amount=Decimal("9999.00"),
+            paid_at=timezone.make_aware(datetime(2026, 6, 7, 9, 0)),
+        )
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def rows(self, **params):
+        response = self.client.get(reverse("core:outstanding_report"), params)
+        self.response = response
+        return {c.name: c for c in response.context["customers"]}
+
+    # ---- scope ----
+    def test_the_default_is_only_those_who_owe(self):
+        rows = self.rows()
+        self.assertEqual(set(rows), {"Big Debtor", "Small Debtor"})
+        self.assertEqual(self.response.context["scope"], "owing")
+
+    def test_all_customers_can_be_shown(self):
+        rows = self.rows(scope="all")
+        self.assertEqual(
+            set(rows),
+            {"Big Debtor", "Small Debtor", "Settled Co", "In Credit", "Never Traded"},
+        )
+
+    def test_an_unknown_scope_falls_back_to_owing(self):
+        rows = self.rows(scope="zzz")
+        self.assertEqual(set(rows), {"Big Debtor", "Small Debtor"})
+
+    # ---- ordering ----
+    def test_sorted_by_the_largest_debt_first(self):
+        response = self.client.get(reverse("core:outstanding_report"), {"scope": "all"})
+        names = [c.name for c in response.context["customers"]]
+        self.assertEqual(names[:2], ["Big Debtor", "Small Debtor"])
+        # Everyone who owes nothing sits at 0 and falls in behind, by name.
+        self.assertEqual(names[2:], ["In Credit", "Never Traded", "Settled Co"])
+
+    # ---- the figures ----
+    def test_billed_and_received_are_totalled_per_customer(self):
+        rows = self.rows()
+        self.assertEqual(rows["Big Debtor"].total_billed, Decimal("12000.00"))
+        self.assertEqual(rows["Big Debtor"].total_received, Decimal("2000.00"))
+        self.assertEqual(rows["Small Debtor"].total_billed, Decimal("1000.00"))
+        self.assertEqual(rows["Small Debtor"].total_received, Decimal("0.00"))
+
+    def test_a_cancelled_bill_reaches_no_figure(self):
+        rows = self.rows()
+        # 12,000 not 21,999, and 2,000 not 11,999.
+        self.assertEqual(rows["Big Debtor"].total_billed, Decimal("12000.00"))
+        self.assertEqual(rows["Big Debtor"].total_received, Decimal("2000.00"))
+
+    def test_totals_are_not_inflated_by_the_join(self):
+        """Summing bills and payments in one query would count each bill once
+        per payment on it. A second payment must not double the billed figure."""
+        extra = Bill.objects.get(customer=self.big, bill_date=date(2026, 6, 1))
+        for _ in range(3):
+            Payment.objects.create(
+                bill=extra, method=Payment.Method.CASH, amount=Decimal("1.00"),
+                paid_at=timezone.now(),
+            )
+        rows = self.rows()
+        self.assertEqual(rows["Big Debtor"].total_billed, Decimal("12000.00"))
+        self.assertEqual(rows["Big Debtor"].total_received, Decimal("2003.00"))
+
+    def test_a_bounced_cheque_is_not_received(self):
+        """Same rule as the ledger, so the two reports agree."""
+        bill = Bill.objects.get(customer=self.small)
+        payment = Payment.objects.create(
+            bill=bill, method=Payment.Method.CHEQUE, amount=Decimal("400.00"),
+            paid_at=timezone.now(),
+        )
+        Cheque.objects.create(
+            payment=payment, customer=self.small, cheque_no="C-1", bank_name="BOC",
+            amount=Decimal("400.00"), received_date=date(2026, 6, 2),
+            maturity_date=date(2026, 7, 2), status=Cheque.Status.BOUNCED,
+        )
+        self.assertEqual(self.rows()["Small Debtor"].total_received, Decimal("0.00"))
+
+    def test_credit_figures_come_through(self):
+        rows = self.rows()
+        big = rows["Big Debtor"]
+        self.assertEqual(big.owed, Decimal("10000.00"))
+        self.assertEqual(big.credit_limit, Decimal("20000.00"))
+        self.assertEqual(big.available_credit, Decimal("10000.00"))
+
+    def test_a_customer_in_credit_has_their_whole_limit(self):
+        rows = self.rows(scope="all")
+        self.assertEqual(rows["In Credit"].owed, Decimal("0.00"))
+        self.assertEqual(rows["In Credit"].available_credit, Decimal("20000.00"))
+
+    def test_last_transaction_is_the_later_of_a_bill_or_a_payment(self):
+        """Billed 1 Jun, paid 4 Jun: the account was last touched on the 4th."""
+        self.assertEqual(self.rows()["Big Debtor"].last_transaction, date(2026, 6, 4))
+
+    def test_last_transaction_falls_back_to_the_bill(self):
+        self.assertEqual(self.rows()["Small Debtor"].last_transaction, date(2026, 6, 2))
+
+    def test_a_customer_who_never_traded_has_no_last_transaction(self):
+        self.assertIsNone(self.rows(scope="all")["Never Traded"].last_transaction)
+
+    def test_the_summary_totals_the_rows(self):
+        self.rows()
+        ctx = self.response.context
+        self.assertEqual(ctx["total_owed"], Decimal("11000.00"))
+        self.assertEqual(ctx["total_billed"], Decimal("13000.00"))
+        self.assertEqual(ctx["total_received"], Decimal("2000.00"))
+
+    # ---- the page ----
+    def test_the_page_renders_every_column(self):
+        self.rows()
+        for heading in (
+            "Customer", "Phone", "Total Billed", "Total Received",
+            "Current Balance", "Credit Limit", "Available Credit", "Last Transaction",
+        ):
+            with self.subTest(heading=heading):
+                self.assertContains(self.response, heading)
+        self.assertContains(self.response, "077 111")
+
+    def test_the_page_links_to_each_ledger(self):
+        self.rows()
+        self.assertContains(self.response, reverse("core:customer_ledger", args=[self.big.pk]))
+        self.assertContains(self.response, reverse("core:customer_ledger_pdf", args=[self.big.pk]))
+
+    def test_the_pdf_link_carries_the_scope(self):
+        self.rows(scope="all")
+        self.assertContains(self.response, reverse("core:outstanding_report_pdf"))
+        self.assertContains(self.response, "scope=all")
+
+    def test_a_manager_sees_the_same_as_a_super_admin(self):
+        """Explicitly the same report for both roles."""
+        manager_rows = set(self.rows(scope="all"))
+        self.client.force_login(self.make_admin())
+        admin_rows = set(self.rows(scope="all"))
+        self.assertEqual(manager_rows, admin_rows)
+
+    def test_the_report_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:outstanding_report"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+    # ---- the export ----
+    def test_export_answers_a_pdf_or_a_printable_page_never_a_500(self):
+        response = self.client.get(reverse("core:outstanding_report_pdf"))
+        self.assertEqual(response.status_code, 200)
+        try:
+            import weasyprint  # noqa: F401
+        except (ImportError, OSError):
+            self.assertEqual(response["Content-Type"], "text/html; charset=utf-8")
+            self.assertContains(response, "Big Debtor")
+        else:
+            self.assertEqual(response["Content-Type"], "application/pdf")
+            self.assertTrue(response.content.startswith(b"%PDF"))
+            self.assertIn("senovka-outstanding-", response["Content-Disposition"])
+
+    def test_the_export_respects_the_scope(self):
+        response = self.client.get(reverse("core:outstanding_report_pdf"), {"scope": "all"})
+        self.assertEqual(response.status_code, 200)
+        try:
+            import weasyprint  # noqa: F401
+        except (ImportError, OSError):
+            self.assertContains(response, "Never Traded")
+
+    def test_the_export_document_stands_on_its_own(self):
+        html = render_to_string(
+            "core/outstanding_pdf.html",
+            {
+                "customers": [], "scope": "owing",
+                "total_owed": Decimal("0"), "total_billed": Decimal("0"),
+                "total_received": Decimal("0"),
+                "generated_at": timezone.localtime(),
+            },
+        )
+        self.assertNotIn("cdn.tailwindcss.com", html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn('id="sidebar"', html)
+        self.assertIn("@page", html)
+
+    def test_export_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:outstanding_report_pdf"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+
 class ContextProcessorTests(UserFactoryMixin, TestCase):
     def test_current_role_exposed_for_manager(self):
         self.client.force_login(self.make_manager())

@@ -95,4 +95,15 @@ urlpatterns = [
     path("reports/sales/", views.sales_report, name="sales_report"),
     # Same filters as the page above; renders the print template to PDF.
     path("reports/sales/pdf/", views.sales_report_pdf, name="sales_report_pdf"),
+    path(
+        "reports/ledger/<int:pk>/pdf/",
+        views.customer_ledger_pdf,
+        name="customer_ledger_pdf",
+    ),
+    path("reports/outstanding/", views.outstanding_report, name="outstanding_report"),
+    path(
+        "reports/outstanding/pdf/",
+        views.outstanding_report_pdf,
+        name="outstanding_report_pdf",
+    ),
 ]

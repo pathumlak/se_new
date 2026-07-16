@@ -1,0 +1,154 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senovka Outstanding Report</title>
+  {% comment %}
+  Standalone on purpose: no base.html, no sidebar, no Tailwind CDN. WeasyPrint
+  renders this with no network and no JavaScript, so every style is inline. It
+  doubles as the browser print view when WeasyPrint's GTK libraries aren't
+  installed, which is why it has to stand up on its own.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+      @bottom-left {
+        content: "Senovka Plastics — outstanding report";
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+    }
+
+    body { font-family: "Helvetica", "Arial", sans-serif; font-size: 8.5pt; color: #0f172a; margin: 0; }
+    h1 { font-size: 15pt; margin: 0; }
+
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 6pt; margin-bottom: 8pt; }
+    .muted { color: #64748b; font-size: 8pt; margin: 2pt 0 0; }
+
+    .cards { display: table; width: 100%; border-spacing: 5pt 0; margin-bottom: 8pt; }
+    .card {
+      display: table-cell; width: 33.33%;
+      border: 0.75pt solid #cbd5e1; border-radius: 3pt; padding: 6pt 8pt;
+    }
+    .card-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; }
+    .card-value { font-size: 13pt; font-weight: bold; margin-top: 2pt; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3pt;
+      color: #64748b; background: #f1f5f9; padding: 4pt 5pt; border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 4pt 5pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; font-weight: bold; background: #f8fafc; }
+
+    .red { color: #be123c; }
+    .green { color: #047857; }
+    .grey { color: #94a3b8; }
+    .tag { font-size: 6.5pt; color: #4338ca; text-transform: uppercase; letter-spacing: 0.3pt; }
+    .empty { text-align: center; color: #64748b; padding: 12pt; font-style: italic; }
+    .note { margin-top: 8pt; font-size: 7.5pt; color: #64748b; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Senovka Plastics — Outstanding Report</h1>
+  <p class="muted">
+    {% if scope == 'owing' %}Customers who owe us{% else %}All customers{% endif %}
+    · Sorted by largest debt first
+    · Generated {{ generated_at|date:"j M Y, g:i a" }}
+  </p>
+</div>
+
+<!-- Summary -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total Outstanding</div>
+    <div class="card-value {% if total_owed > 0 %}red{% else %}grey{% endif %}">
+      {{ total_owed|floatformat:2|intcomma }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Billed</div>
+    <div class="card-value">{{ total_billed|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Received</div>
+    <div class="card-value green">{{ total_received|floatformat:2|intcomma }}</div>
+  </div>
+</div>
+
+<!-- Table -->
+<table>
+  <thead>
+    <tr>
+      <th>Customer</th>
+      <th>Phone</th>
+      <th class="r">Total Billed</th>
+      <th class="r">Total Received</th>
+      <th class="r">Current Balance</th>
+      <th class="r">Credit Limit</th>
+      <th class="r">Available Credit</th>
+      <th>Last Transaction</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for customer in customers %}
+      <tr>
+        <td>
+          {{ customer.name }}
+          {% if customer.is_supplier %}<span class="tag">supplier</span>{% endif %}
+          {% if not customer.is_active %}<span class="tag">inactive</span>{% endif %}
+        </td>
+        <td>{% if customer.phone %}{{ customer.phone }}{% else %}—{% endif %}</td>
+        <td class="r">{{ customer.total_billed|floatformat:2|intcomma }}</td>
+        <td class="r">{{ customer.total_received|floatformat:2|intcomma }}</td>
+        <td class="r {% if customer.balance < 0 %}red{% elif customer.balance > 0 %}green{% else %}grey{% endif %}">
+          {{ customer.balance|floatformat:2|intcomma }}
+        </td>
+        <td class="r">{{ customer.credit_limit|floatformat:2|intcomma }}</td>
+        <td class="r {% if customer.credit_limit > 0 and customer.available_credit <= 0 %}red{% endif %}">
+          {{ customer.available_credit|floatformat:2|intcomma }}
+        </td>
+        <td>{% if customer.last_transaction %}{{ customer.last_transaction|date:"j M Y" }}{% else %}Never{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr>
+        <td colspan="8" class="empty">
+          {% if scope == 'owing' %}Nobody owes anything.{% else %}No customers yet.{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+  {% if customers %}
+    <tfoot>
+      <tr>
+        <td colspan="2" class="r">Totals</td>
+        <td class="r">{{ total_billed|floatformat:2|intcomma }}</td>
+        <td class="r green">{{ total_received|floatformat:2|intcomma }}</td>
+        <td class="r {% if total_owed > 0 %}red{% else %}grey{% endif %}">
+          {{ total_owed|floatformat:2|intcomma }} owed
+        </td>
+        <td colspan="3"></td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<p class="note">
+  A negative balance is money owed to us; a positive one is money we owe. Cancelled
+  bills are excluded, and a cheque that bounced or is being held doesn't count as
+  received. Total Received can exceed Total Billed when a payment also cleared an
+  earlier debt.
+</p>
+
+</body>
+</html>

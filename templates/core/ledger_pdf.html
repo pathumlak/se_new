@@ -1,0 +1,177 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ledger — {{ customer.name }}</title>
+  {% comment %}
+  Standalone on purpose: no base.html, no sidebar, no Tailwind CDN. WeasyPrint
+  renders this with no network and no JavaScript, so every style is inline. It
+  doubles as the browser print view when WeasyPrint's GTK libraries aren't
+  installed, which is why it has to stand up on its own.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+      @bottom-left {
+        content: "Senovka Plastics — ledger for {{ customer.name }}";
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+    }
+
+    body { font-family: "Helvetica", "Arial", sans-serif; font-size: 9pt; color: #0f172a; margin: 0; }
+    h1 { font-size: 15pt; margin: 0; }
+    h2 { font-size: 11pt; margin: 0 0 2pt; }
+
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 6pt; margin-bottom: 8pt; }
+    .muted { color: #64748b; font-size: 8pt; margin: 2pt 0 0; }
+
+    .party { margin-bottom: 8pt; }
+    .party p { margin: 1pt 0; font-size: 8.5pt; }
+
+    .summary { display: table; width: 100%; border-spacing: 5pt 0; margin-bottom: 10pt; }
+    .box {
+      display: table-cell; width: 33.33%;
+      border: 0.75pt solid #cbd5e1; border-radius: 3pt; padding: 6pt 8pt;
+    }
+    .box-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; }
+    .box-value { font-size: 13pt; font-weight: bold; margin-top: 2pt; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3pt;
+      color: #64748b; background: #f1f5f9; padding: 4pt 5pt; border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 4pt 5pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; font-weight: bold; background: #f8fafc; }
+
+    .red { color: #be123c; }
+    .green { color: #047857; }
+    .grey { color: #94a3b8; }
+    .empty { text-align: center; color: #64748b; padding: 12pt; font-style: italic; }
+
+    .closing {
+      margin-top: 10pt; border: 1pt solid #0f172a; border-radius: 3pt;
+      padding: 7pt 9pt; display: table; width: 100%;
+    }
+    .closing-label { display: table-cell; font-size: 9pt; font-weight: bold; }
+    .closing-value { display: table-cell; text-align: right; font-size: 13pt; font-weight: bold; }
+    .note { margin-top: 8pt; font-size: 7.5pt; color: #64748b; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Senovka Plastics</h1>
+  <p class="muted">Customer Ledger · Generated {{ generated_at|date:"j M Y, g:i a" }}</p>
+</div>
+
+<div class="party">
+  <h2>{{ customer.name }}</h2>
+  {% if customer.address %}<p>{{ customer.address|linebreaksbr }}</p>{% endif %}
+  {% if customer.phone %}<p>{{ customer.phone }}</p>{% endif %}
+  <p class="muted">
+    {% if from_date or to_date %}
+      Period:
+      {% if from_date %}{{ from_date|date:"j M Y" }}{% else %}Start{% endif %}
+      –
+      {% if to_date %}{{ to_date|date:"j M Y" }}{% else %}{{ generated_at|date:"j M Y" }}{% endif %}
+    {% else %}
+      Period: all activity
+    {% endif %}
+  </p>
+</div>
+
+<!-- Summary -->
+<div class="summary">
+  <div class="box">
+    <div class="box-label">Credit Limit</div>
+    <div class="box-value">{{ customer.credit_limit|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="box">
+    <div class="box-label">Current Balance</div>
+    <div class="box-value {% if customer.balance < 0 %}red{% elif customer.balance > 0 %}green{% else %}grey{% endif %}">
+      {{ customer.balance|floatformat:2|intcomma }}
+    </div>
+  </div>
+  <div class="box">
+    <div class="box-label">Available Credit</div>
+    <div class="box-value {% if customer.credit_limit > 0 and customer.available_credit <= 0 %}red{% endif %}">
+      {{ customer.available_credit|floatformat:2|intcomma }}
+    </div>
+  </div>
+</div>
+
+{% if from_date %}
+  <p class="note" style="margin-bottom: 6pt;">
+    The running balance below starts at 0 on the first row. Activity before
+    {{ from_date|date:"j M Y" }} is not carried in.
+  </p>
+{% endif %}
+
+<!-- Ledger -->
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Description</th>
+      <th class="r">Sale</th>
+      <th class="r">Che/Cash</th>
+      <th class="r">Balance</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+      <tr>
+        <td>{{ row.date|date:"j M Y" }}</td>
+        <td>{{ row.description }}</td>
+        <td class="r">{% if row.sale is not None %}{{ row.sale|floatformat:2|intcomma }}{% endif %}</td>
+        <td class="r">{% if row.credit is not None %}{{ row.credit|floatformat:2|intcomma }}{% endif %}</td>
+        <td class="r {% if row.balance > 0 %}red{% elif row.balance < 0 %}green{% else %}grey{% endif %}">
+          {{ row.balance|floatformat:2|intcomma }}
+        </td>
+      </tr>
+    {% empty %}
+      <tr>
+        <td colspan="5" class="empty">
+          {% if is_filtered %}No activity in this period.{% else %}No activity yet.{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+  {% if rows %}
+    <tfoot>
+      <tr>
+        <td colspan="2" class="r">Totals</td>
+        <td class="r">{{ total_sale|floatformat:2|intcomma }}</td>
+        <td class="r">{{ total_credit|floatformat:2|intcomma }}</td>
+        <td class="r">{{ closing_balance|floatformat:2|intcomma }}</td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<!-- Footer -->
+<div class="closing">
+  <div class="closing-label">Closing Balance as of {{ as_of|date:"j M Y" }}</div>
+  <div class="closing-value {% if closing_balance > 0 %}red{% elif closing_balance < 0 %}green{% else %}grey{% endif %}">
+    {{ closing_balance|floatformat:2|intcomma }}
+  </div>
+</div>
+
+<p class="note">
+  Balance runs positive when the customer owes us: each sale adds, each cheque,
+  cash payment or purchase subtracts. Cancelled bills, and cheques that bounced
+  or are being held, are left out.
+</p>
+
+</body>
+</html>

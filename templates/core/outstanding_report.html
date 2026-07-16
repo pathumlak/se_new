@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Outstanding · Senovka Plastics{% endblock %}
+{% block header %}Outstanding Report{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <form method="get" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+    <div>
+      <label for="scope" class="mb-1.5 block text-xs font-medium text-slate-600">Show</label>
+      <select id="scope" name="scope"
+              class="w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="owing" {% if scope == 'owing' %}selected{% endif %}>Only customers who owe us</option>
+        <option value="all" {% if scope == 'all' %}selected{% endif %}>All customers</option>
+      </select>
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+  </form>
+
+  {# Carries the current scope, so the PDF is what's on screen. #}
+  <a href="{% url 'core:outstanding_report_pdf' %}{% if query %}?{{ query }}{% endif %}" target="_blank"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z"/>
+    </svg>
+    Export PDF
+  </a>
+</div>
+
+<!-- Summary -->
+<div class="mb-5 grid gap-4 sm:grid-cols-3">
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Outstanding</p>
+    <p class="mt-1 text-2xl font-semibold {% if total_owed > 0 %}text-rose-600{% else %}text-slate-400{% endif %}">
+      Rs {{ total_owed|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-1 text-xs text-slate-400">
+      Across {{ customers|length }} customer{{ customers|length|pluralize }}
+    </p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Billed</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">Rs {{ total_billed|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Received</p>
+    <p class="mt-1 text-2xl font-semibold text-emerald-600">Rs {{ total_received|floatformat:2|intcomma }}</p>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total Billed</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total Received</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Current Balance</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Credit Limit</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Available Credit</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Last Transaction</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Ledger</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for customer in customers %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:customer_detail' customer.pk %}" class="font-medium text-slate-900 hover:underline">
+                {{ customer.name }}
+              </a>
+              {% if customer.is_supplier %}
+                <span class="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                  Supplier
+                </span>
+              {% endif %}
+              {% if not customer.is_active %}
+                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Inactive
+                </span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if customer.phone %}{{ customer.phone }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ customer.total_billed|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ customer.total_received|floatformat:2|intcomma }}</td>
+
+            {# Negative means they owe us, positive means we owe them. #}
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if customer.balance < 0 %}text-rose-600
+                       {% elif customer.balance > 0 %}text-emerald-600
+                       {% else %}text-slate-400{% endif %}">
+              {{ customer.balance|floatformat:2|intcomma }}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ customer.credit_limit|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if customer.credit_limit > 0 and customer.available_credit <= 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {{ customer.available_credit|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if customer.last_transaction %}
+                {{ customer.last_transaction|date:"j M Y" }}
+              {% else %}
+                <span class="text-slate-300">Never</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <a href="{% url 'core:customer_ledger' customer.pk %}"
+                 class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                View
+              </a>
+              <a href="{% url 'core:customer_ledger_pdf' customer.pk %}" target="_blank"
+                 class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                PDF
+              </a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="9" class="px-4 py-12 text-center">
+              {% if scope == 'owing' %}
+                <p class="text-sm text-slate-500">Nobody owes anything.</p>
+                <a href="?scope=all" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Show all customers
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No customers yet.</p>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      {% if customers %}
+        <tfoot class="border-t-2 border-slate-200 bg-slate-50">
+          <tr>
+            <td colspan="2" class="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Totals</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">{{ total_billed|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-emerald-600">{{ total_received|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold {% if total_owed > 0 %}text-rose-600{% else %}text-slate-400{% endif %}">
+              {{ total_owed|floatformat:2|intcomma }} owed
+            </td>
+            <td colspan="4"></td>
+          </tr>
+        </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+
+<p class="mt-4 text-xs text-slate-400">
+  Sorted by the largest debt first. Cancelled bills are excluded, and a cheque
+  that bounced or is being held doesn't count as received. Total Received can
+  exceed Total Billed when a payment also cleared an earlier debt.
+</p>
+
+{% endblock %}
