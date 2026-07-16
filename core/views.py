@@ -28,11 +28,14 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .decorators import super_admin_required
 from .forms import (
+    CashDrawerOutForm,
     CategoryForm,
     ChequeForm,
     CustomerForm,
     CustomerPriceForm,
     ProductForm,
+    ProductQuickForm,
+    SupplierQuickForm,
 )
 from .models import (
     Bill,
@@ -46,6 +49,7 @@ from .models import (
     Payment,
     Product,
     SupplierBill,
+    SupplierBillItem,
     User,
 )
 
@@ -76,9 +80,15 @@ def _warning_signature(today, cheques):
     return f"{today.isoformat()}:{ids}"
 
 
-def _cash_drawer_balance():
-    """Net cash on hand: 'in' adds, 'out' and 'transfer' both remove."""
-    return CashDrawer.objects.aggregate(
+def _cash_drawer_balance(queryset=None):
+    """Net cash on hand: 'in' adds, 'out' and 'transfer' both remove.
+
+    Takes a queryset so the same rule can price a slice of the log — the
+    opening balance of a date range is this over everything before it.
+    """
+    if queryset is None:
+        queryset = CashDrawer.objects.all()
+    return queryset.aggregate(
         total=Coalesce(
             Sum(
                 Case(
@@ -1832,14 +1842,456 @@ def cheque_list(request):
     )
 
 
+# -------------------------------------------------------------- cash drawer
+# Money comes in only by saving a bill; this page is where it leaves.
+
+
+def _account_banked(account):
+    """What bill payments have put into one account.
+
+    Read off CashTransfer, which is the only place an account is recorded.
+    Manual transfers on this page are CashDrawer rows with no account column,
+    so they lower the drawer without ever reaching this figure.
+    """
+    return CashTransfer.objects.filter(to_account=account).aggregate(
+        total=Coalesce(Sum("amount"), ZERO, output_field=MONEY)
+    )["total"]
+
+
 @login_required
 def cash_drawer(request):
-    return render(request, "core/placeholder.html", {"section": "Cash Drawer"})
+    balance = _cash_drawer_balance()
+
+    form = CashDrawerOutForm(
+        request.POST or None,
+        drawer_balance=balance,
+        initial={"txn_date": timezone.localdate()},
+    )
+    if request.method == "POST":
+        if form.is_valid():
+            entry = form.save()
+            messages.success(
+                request,
+                f"{entry.reason} — {entry.amount:,.2f} out of the drawer. "
+                f"{_cash_drawer_balance():,.2f} left.",
+            )
+            return redirect("core:cash_drawer")
+        messages.error(request, "That entry couldn't be saved — see the form.")
+
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    entries = CashDrawer.objects.select_related("bill", "bill__customer")
+    if from_date:
+        entries = entries.filter(txn_date__gte=from_date)
+    if to_date:
+        entries = entries.filter(txn_date__lte=to_date)
+
+    # Oldest first: a running balance read newest-first counts backwards.
+    entries = entries.order_by("txn_date", "id")
+
+    # Everything before the range still happened, so the running column starts
+    # where the drawer actually stood — not at zero.
+    opening = (
+        _cash_drawer_balance(CashDrawer.objects.filter(txn_date__lt=from_date))
+        if from_date
+        else ZERO
+    )
+
+    rows = []
+    running = opening
+    total_in = ZERO
+    total_out = ZERO
+    for entry in entries:
+        is_in = entry.txn_type == CashDrawer.TxnType.IN
+        running += entry.amount if is_in else -entry.amount
+        if is_in:
+            total_in += entry.amount
+        else:
+            total_out += entry.amount
+        rows.append(
+            {
+                "entry": entry,
+                "is_in": is_in,
+                "running": running,
+            }
+        )
+
+    return render(
+        request,
+        "core/cash_drawer.html",
+        {
+            "form": form,
+            # The drawer as it stands now, whatever the filter shows.
+            "balance": balance,
+            "senovka_banked": _account_banked(CashTransfer.Account.SENOVKA),
+            "dinusha_banked": _account_banked(CashTransfer.Account.DINUSHA),
+            "rows": rows,
+            "opening": opening,
+            "closing": running,
+            "total_in": total_in,
+            "total_out": total_out,
+            "from_date": from_date,
+            "to_date": to_date,
+            "is_filtered": bool(from_date or to_date),
+            "total_count": CashDrawer.objects.count(),
+            "kind_choices": CashDrawerOutForm.KIND_CHOICES,
+        },
+    )
+
+
+# ----------------------------------------------------------- supplier bills
+# The mirror of a sales bill: stock comes in and the balance moves the other
+# way. A positive balance is what we owe them.
+
+
+class SupplierBillError(BillError):
+    """A reason to roll the save back, worded for the operator.
+
+    Subclasses BillError because the two paths share their parsing helpers —
+    _decimal raises BillError, and a supplier bill has to catch that as readily
+    as its own complaints rather than let it escape as a 500.
+    """
+
+
+def _supplier_products():
+    """Everything a supplier bill may receive, for the line dropdown."""
+    return [
+        {
+            "id": product.pk,
+            "name": product.name,
+            "size": product.size,
+            "label": str(product),
+            "default_price": f"{product.default_price:.2f}",
+        }
+        for product in Product.objects.filter(is_active=True).order_by("name", "size")
+    ]
+
+
+def _read_supplier_lines(payload):
+    raw_lines = payload.get("lines")
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise SupplierBillError("Add at least one product line.")
+
+    products = {
+        product.pk: product
+        for product in Product.objects.filter(
+            pk__in=[raw.get("product_id") for raw in raw_lines if isinstance(raw, dict)]
+        )
+    }
+
+    items = []
+    seen = set()
+    for raw in raw_lines:
+        if not isinstance(raw, dict):
+            raise SupplierBillError(MALFORMED)
+
+        product = products.get(raw.get("product_id"))
+        if product is None:
+            raise SupplierBillError("A product on this bill no longer exists.")
+        if product.pk in seen:
+            raise SupplierBillError(f"{product} is on the bill twice.")
+        seen.add(product.pk)
+
+        qty = _decimal(raw.get("qty"), "Quantity", 3)
+        if qty <= ZERO:
+            raise SupplierBillError(f"Quantity for {product} must be above 0.")
+        unit_price = _decimal(raw.get("unit_price"), "Unit price", 2)
+
+        # Recomputed: a line total off the browser is a number someone typed.
+        line_total = (qty * unit_price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        items.append(
+            {
+                "product": product,
+                "qty": qty,
+                "unit_price": unit_price,
+                "line_total": line_total,
+            }
+        )
+    return items
+
+
+def _reverse_supplier_bill(bill):
+    """Undo a supplier bill: stock back out, and the debt to them cancelled.
+
+    Guarded, because received stock may already have been sold on. Taking it
+    back out regardless would leave a product holding a negative quantity, and
+    that product then vanishes from every sales screen.
+    """
+    for item in bill.items.all():
+        moved = Product.objects.filter(
+            pk=item.product_id, qty__gte=item.qty
+        ).update(qty=F("qty") - item.qty)
+        if not moved:
+            product = Product.objects.get(pk=item.product_id)
+            raise SupplierBillError(
+                f"Can't reverse {product}: {item.qty:.3f} was received but only "
+                f"{product.qty:.3f} is left, so some of it has been sold on."
+            )
+
+    Customer.objects.filter(pk=bill.supplier_id).update(
+        balance=F("balance") - bill.total_amount
+    )
+    bill.items.all().delete()
+
+
+def _write_supplier_bill(bill, payload):
+    supplier = Customer.objects.filter(
+        pk=payload.get("supplier_id"), is_supplier=True
+    ).first()
+    if supplier is None:
+        raise SupplierBillError("Choose a supplier.")
+
+    items = _read_supplier_lines(payload)
+    total = sum((item["line_total"] for item in items), ZERO)
+
+    # 1. header. An edit keeps the date the goods actually arrived.
+    bill.supplier = supplier
+    if bill.pk is None:
+        bill.bill_date = timezone.localdate()
+    bill.total_amount = total
+    # Paying suppliers isn't built yet, so nothing has been paid on it.
+    bill.paid_amount = ZERO
+    bill.status = SupplierBill.Status.UNPAID
+    bill.notes = str(payload.get("notes") or "").strip()
+    bill.save()
+
+    # 2. lines, and the stock they bring in
+    for item in items:
+        SupplierBillItem.objects.create(
+            supplier_bill=bill,
+            product=item["product"],
+            qty=item["qty"],
+            unit_price=item["unit_price"],
+            line_total=item["line_total"],
+        )
+        Product.objects.filter(pk=item["product"].pk).update(qty=F("qty") + item["qty"])
+
+    # 3. we owe them the lot. Positive is credit in their favour, so the sign
+    # runs opposite to a sales bill. F() so a concurrent move is adjusted, not
+    # overwritten.
+    Customer.objects.filter(pk=supplier.pk).update(balance=F("balance") + total)
+
+    return bill
+
+
+@transaction.atomic
+def _save_supplier_bill(payload):
+    return _write_supplier_bill(SupplierBill(), payload)
+
+
+@transaction.atomic
+def _update_supplier_bill(bill, payload):
+    _reverse_supplier_bill(bill)
+    return _write_supplier_bill(bill, payload)
+
+
+def _supplier_bill_payload(request):
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+@require_POST
+@login_required
+def supplier_quick_create(request):
+    """Create a supplier without leaving the bill form."""
+    form = SupplierQuickForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+    supplier = form.save()
+    return JsonResponse(
+        {"success": True, "supplier": {"id": supplier.pk, "name": supplier.name}}
+    )
+
+
+@require_POST
+@login_required
+def product_quick_create(request):
+    """Create a product without leaving the bill form."""
+    form = ProductQuickForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+    product = form.save()
+    return JsonResponse(
+        {
+            "success": True,
+            "product": {
+                "id": product.pk,
+                "name": product.name,
+                "size": product.size,
+                "label": str(product),
+                "default_price": f"{product.default_price:.2f}",
+            },
+        }
+    )
+
+
+def _supplier_bill_form_context(request, bill=None):
+    return {
+        "bill": bill,
+        "suppliers": Customer.objects.filter(is_supplier=True),
+        "products_json": _supplier_products(),
+        "categories": Category.objects.all(),
+        "product_form": ProductQuickForm(),
+        "supplier_form": SupplierQuickForm(),
+        "is_edit": bill is not None,
+        "save_url": (
+            reverse("core:supplier_bill_edit", args=[bill.pk])
+            if bill
+            else reverse("core:supplier_bill_create")
+        ),
+        "initial": (
+            {
+                "supplier_id": bill.supplier_id,
+                "lines": [
+                    {
+                        "product_id": item.product_id,
+                        "qty": f"{item.qty:.3f}".rstrip("0").rstrip("."),
+                        "unit_price": f"{item.unit_price:.2f}",
+                    }
+                    for item in bill.items.all()
+                ],
+                "notes": bill.notes,
+            }
+            if bill
+            else None
+        ),
+    }
+
+
+@login_required
+def supplier_bill_create(request):
+    if request.method == "POST":
+        payload = _supplier_bill_payload(request)
+        if payload is None:
+            return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+        try:
+            bill = _save_supplier_bill(payload)
+        except BillError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        messages.success(
+            request, f"Supplier bill #{bill.pk} for {bill.supplier.name} was saved."
+        )
+        return JsonResponse(
+            {
+                "success": True,
+                "redirect": reverse("core:supplier_bill_detail", args=[bill.pk]),
+            }
+        )
+
+    return render(
+        request, "core/supplier_bill_create.html", _supplier_bill_form_context(request)
+    )
+
+
+@login_required
+def supplier_bill_edit(request, pk):
+    bill = get_object_or_404(SupplierBill.objects.select_related("supplier"), pk=pk)
+
+    if request.method == "POST":
+        payload = _supplier_bill_payload(request)
+        if payload is None:
+            return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+        try:
+            bill = _update_supplier_bill(bill, payload)
+        except BillError as exc:
+            # Atomic, so the reversal it began is undone with it.
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        messages.success(request, f"Supplier bill #{bill.pk} was updated.")
+        return JsonResponse(
+            {
+                "success": True,
+                "redirect": reverse("core:supplier_bill_detail", args=[bill.pk]),
+            }
+        )
+
+    return render(
+        request, "core/supplier_bill_edit.html", _supplier_bill_form_context(request, bill)
+    )
+
+
+@require_POST
+@super_admin_required
+def supplier_bill_delete(request, pk):
+    bill = get_object_or_404(SupplierBill.objects.select_related("supplier"), pk=pk)
+    label = f"Supplier bill #{bill.pk}"
+    supplier = bill.supplier.name
+
+    try:
+        with transaction.atomic():
+            _reverse_supplier_bill(bill)
+            bill.delete()
+    except BillError as exc:
+        messages.error(request, f"Cannot delete {label} — {exc}")
+        return redirect("core:supplier_bill_detail", pk=pk)
+
+    messages.success(request, f"{label} for {supplier} was deleted and reversed.")
+    return redirect("core:supplier_bill_list")
+
+
+@login_required
+def supplier_bill_detail(request, pk):
+    bill = get_object_or_404(
+        SupplierBill.objects.select_related("supplier").annotate(
+            item_count=Count("items")
+        ),
+        pk=pk,
+    )
+    return render(
+        request,
+        "core/supplier_bill_detail.html",
+        {"bill": bill, "items": bill.items.select_related("product")},
+    )
 
 
 @login_required
 def supplier_bill_list(request):
-    return render(request, "core/placeholder.html", {"section": "Supplier Bills"})
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    supplier_id = request.GET.get("supplier", "").strip()
+    selected_supplier = int(supplier_id) if supplier_id.isdigit() else None
+
+    status = request.GET.get("status", "").strip()
+    if status not in {value for value, _ in SupplierBill.Status.choices}:
+        status = ""
+
+    bills = SupplierBill.objects.select_related("supplier").annotate(
+        item_count=Count("items")
+    )
+    if from_date:
+        bills = bills.filter(bill_date__gte=from_date)
+    if to_date:
+        bills = bills.filter(bill_date__lte=to_date)
+    if selected_supplier:
+        bills = bills.filter(supplier_id=selected_supplier)
+    if status:
+        bills = bills.filter(status=status)
+
+    return render(
+        request,
+        "core/supplier_bill_list.html",
+        {
+            "bills": bills,
+            "suppliers": Customer.objects.filter(is_supplier=True),
+            "from_date": from_date,
+            "to_date": to_date,
+            "selected_supplier": selected_supplier,
+            "status": status,
+            "statuses": SupplierBill.Status.choices,
+            "is_filtered": bool(
+                from_date or to_date or selected_supplier or status
+            ),
+            "total_count": SupplierBill.objects.count(),
+        },
+    )
 
 
 @login_required

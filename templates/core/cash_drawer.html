@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Cash Drawer · Senovka Plastics{% endblock %}
+{% block header %}Cash Drawer{% endblock %}
+
+{% block content %}
+
+<!-- Balance -->
+<div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:flex-1">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Drawer Balance</p>
+    <p class="mt-1 text-4xl font-semibold {% if balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+      Rs {{ balance|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-1 text-xs text-slate-500">
+      Cash taken in on bills, less what has been withdrawn or moved out.
+    </p>
+  </div>
+
+  <button type="button" id="open-form"
+          class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2.5
+                 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    Record Transfer / Withdrawal
+  </button>
+</div>
+
+<!-- Breakdown -->
+<div class="mb-5 grid gap-4 sm:grid-cols-3">
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Physical Cash in Drawer</p>
+    <p class="mt-1 text-2xl font-semibold {% if balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+      {{ balance|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-1 text-xs text-slate-500">Notes and coins on hand.</p>
+  </div>
+
+  {% comment %}
+  These two are read from CashTransfer, which is written only when a bill's
+  cash is banked. CashDrawer has no account column, so a transfer recorded on
+  this page lowers the drawer without landing here. The sub-labels say so
+  rather than let the figures read as "everything ever sent to this account".
+  {% endcomment %}
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Transferred to Senovka Acc</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
+    <p class="mt-1 text-xs text-slate-500">Banked from bill payments only.</p>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Transferred to Dinusha Acc</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ dinusha_banked|floatformat:2|intcomma }}</p>
+    <p class="mt-1 text-xs text-slate-500">Banked from bill payments only.</p>
+  </div>
+</div>
+
+<p class="mb-5 rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
+  The two account totals cover cash banked as part of a bill payment. A transfer
+  recorded on this page comes off the drawer and is named in the log below, but
+  isn't counted in those totals — the drawer has nowhere to record which account
+  it went to.
+</p>
+
+<!-- Date range -->
+<form method="get" class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end">
+  <div>
+    <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">To</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div class="flex gap-2">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Filter
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:cash_drawer' %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Log -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">In (+)</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Out (−)</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Running Balance</th>
+        </tr>
+      </thead>
+
+      <tbody class="divide-y divide-slate-100">
+        {% if is_filtered and rows %}
+          {# The drawer didn't start at zero on this date, so neither does the column. #}
+          <tr class="bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
+              {% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}
+            </td>
+            <td class="px-4 py-2 text-xs font-medium text-slate-500" colspan="3">
+              Opening balance — everything before this range
+            </td>
+            <td class="whitespace-nowrap px-4 py-2 text-right text-xs font-semibold text-slate-500">
+              {{ opening|floatformat:2|intcomma }}
+            </td>
+          </tr>
+        {% endif %}
+
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ row.entry.txn_date|date:"j M Y" }}</td>
+
+            <td class="px-4 py-3 text-slate-900">
+              {% if row.entry.bill_id %}
+                {# Bill-linked: point at the bill rather than repeat its reason. #}
+                <a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="font-medium text-slate-900 hover:underline">
+                  Bill #{{ row.entry.bill_id }}
+                </a>
+                {% if row.entry.bill.customer_id %}
+                  <span class="text-slate-500">· {{ row.entry.bill.customer.name }}</span>
+                {% endif %}
+                {% if row.entry.reason %}
+                  <span class="block text-xs text-slate-400">{{ row.entry.reason }}</span>
+                {% endif %}
+              {% elif row.entry.reason %}
+                {{ row.entry.reason }}
+              {% else %}
+                <span class="text-slate-400">{{ row.entry.get_txn_type_display }}</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-emerald-600">
+              {% if row.is_in %}{{ row.entry.amount|floatformat:2|intcomma }}{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-rose-600">
+              {% if not row.is_in %}{{ row.entry.amount|floatformat:2|intcomma }}{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if row.running < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {{ row.running|floatformat:2|intcomma }}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="px-4 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No drawer activity in this date range.</p>
+                <a href="{% url 'core:cash_drawer' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear dates
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">Nothing in the drawer log yet.</p>
+                <p class="mt-1 text-xs text-slate-400">Cash comes in when a bill is paid with it.</p>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      {% if rows %}
+        <tfoot class="border-t-2 border-slate-200 bg-slate-50">
+          <tr>
+            <td colspan="2" class="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Totals{% if is_filtered %} <span class="font-normal normal-case text-slate-400">(range shown)</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-emerald-600">
+              {{ total_in|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-rose-600">
+              {{ total_out|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold
+                       {% if closing < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {{ closing|floatformat:2|intcomma }}
+            </td>
+          </tr>
+        </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+
+<!-- ====================== Record out modal ====================== -->
+<div id="out-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="out-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 id="out-modal-title" class="text-base font-semibold text-slate-900">
+            Record transfer or withdrawal
+          </h3>
+          <p class="mt-0.5 text-xs text-slate-500">
+            Cash leaving the drawer. {{ balance|floatformat:2|intcomma }} is in it now.
+          </p>
+        </div>
+        <button type="button" id="out-modal-close" aria-label="Close"
+                class="text-slate-400 hover:text-slate-900">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if form.non_field_errors %}
+        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {{ form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div class="mt-5 space-y-4">
+        <div>
+          <label for="{{ form.txn_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.txn_date.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.txn_date }}
+          {% for error in form.txn_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ form.kind.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.kind.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.kind }}
+          {% for error in form.kind.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ form.amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.amount.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.amount }}
+          {% for error in form.amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.reason.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
+          </label>
+          {{ form.reason }}
+          <p class="mt-1.5 text-xs text-slate-400">Appears in the log next to the type.</p>
+          {% for error in form.reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" id="out-modal-cancel"
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          Record
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const modal = document.getElementById('out-modal');
+    if (!modal) return;
+
+    const open = document.getElementById('open-form');
+    const close = document.getElementById('out-modal-close');
+    const cancel = document.getElementById('out-modal-cancel');
+
+    function show() {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      const first = modal.querySelector('input, select');
+      if (first) first.focus();
+    }
+    function hide() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      open.focus();
+    }
+
+    open.addEventListener('click', show);
+    close.addEventListener('click', hide);
+    cancel.addEventListener('click', hide);
+    modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) hide();
+    });
+
+    // A rejected entry comes back as a fresh page with the errors on the form,
+    // so reopen it rather than hide what the operator typed.
+    if (modal.querySelector('.text-rose-600')) show();
+  })();
+</script>
+{% endblock %}

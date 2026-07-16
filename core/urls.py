@@ -61,6 +61,30 @@ urlpatterns = [
     path("cheques/<int:pk>/delete/", views.cheque_delete, name="cheque_delete"),
     path("cash-drawer/", views.cash_drawer, name="cash_drawer"),
     path("supplier-bills/", views.supplier_bill_list, name="supplier_bill_list"),
+    # GET renders the form; POST saves it.
+    path(
+        "supplier-bills/create/",
+        views.supplier_bill_create,
+        name="supplier_bill_create",
+    ),
+    path(
+        "supplier-bills/<int:pk>/",
+        views.supplier_bill_detail,
+        name="supplier_bill_detail",
+    ),
+    path(
+        "supplier-bills/<int:pk>/edit/",
+        views.supplier_bill_edit,
+        name="supplier_bill_edit",
+    ),
+    path(
+        "supplier-bills/<int:pk>/delete/",
+        views.supplier_bill_delete,
+        name="supplier_bill_delete",
+    ),
+    # Inline creation from the supplier bill form.
+    path("api/supplier/create/", views.supplier_quick_create, name="supplier_quick_create"),
+    path("api/product/create/", views.product_quick_create, name="product_quick_create"),
     path("production/", views.production, name="production"),
     # Section index only. The ledger itself is per-customer, above.
     path("ledger/", views.ledger_index, name="ledger_index"),

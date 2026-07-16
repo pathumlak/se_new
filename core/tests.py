@@ -28,6 +28,7 @@ from core.models import (
     Payment,
     Product,
     SupplierBill,
+    SupplierBillItem,
 )
 
 User = get_user_model()
@@ -3538,6 +3539,768 @@ class NotifyChequesCommandTests(TestCase):
         _, code = self.run_command()
         self.assertEqual(code, 0)
         self.assertEqual(len(mail.outbox), 0)
+
+
+class CashDrawerPageTests(UserFactoryMixin, TestCase):
+    """Every figure below is hand-computed.
+
+    5,000 in, 1,200 out, 800 transferred => 3,000 in the drawer.
+    """
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+        self.today = timezone.localdate()
+
+        def entry(day, kind, amount, reason="", bill=None):
+            return CashDrawer.objects.create(
+                txn_date=date(2026, 6, day), txn_type=kind,
+                amount=Decimal(amount), reason=reason, bill=bill,
+            )
+
+        self.nimal = Customer.objects.create(name="Nimal")
+        self.bill = Bill.objects.create(
+            customer=self.nimal, bill_date=date(2026, 6, 1),
+            total_amount=Decimal("5000.00"),
+            payment_type=Bill.PaymentType.FULL_CASH,
+        )
+        self.in_entry = entry(1, CashDrawer.TxnType.IN, "5000.00",
+                              reason="Bill #%s cash" % self.bill.pk, bill=self.bill)
+        self.out_entry = entry(5, CashDrawer.TxnType.OUT, "1200.00",
+                               reason="Owner Withdrawal — school fees")
+        self.transfer_entry = entry(9, CashDrawer.TxnType.TRANSFER, "800.00",
+                                    reason="Bill cash to Senovka")
+
+    def page(self, **params):
+        response = self.client.get(reverse("core:cash_drawer"), params)
+        self.response = response
+        return response.context
+
+    # ---- balance ----
+    def test_balance_nets_in_against_out_and_transfer(self):
+        self.assertEqual(self.page()["balance"], Decimal("3000.00"))
+
+    def test_balance_ignores_the_date_filter(self):
+        """The drawer holds what it holds, whatever range is on screen."""
+        ctx = self.page(from_date="2026-06-09", to_date="2026-06-09")
+        self.assertEqual(ctx["balance"], Decimal("3000.00"))
+        self.assertEqual(len(ctx["rows"]), 1)
+
+    def test_account_totals_come_from_banked_bill_payments(self):
+        bill = Bill.objects.create(
+            customer=self.nimal, bill_date=self.today,
+            payment_type=Bill.PaymentType.FULL_CASH,
+        )
+        payment = Payment.objects.create(
+            bill=bill, method=Payment.Method.CASH,
+            amount=Decimal("800.00"), paid_at=timezone.now(),
+        )
+        CashTransfer.objects.create(
+            payment=payment, to_account=CashTransfer.Account.SENOVKA,
+            amount=Decimal("800.00"), transferred_at=timezone.now(),
+        )
+        CashTransfer.objects.create(
+            payment=payment, to_account=CashTransfer.Account.DINUSHA,
+            amount=Decimal("250.00"), transferred_at=timezone.now(),
+        )
+        ctx = self.page()
+        self.assertEqual(ctx["senovka_banked"], Decimal("800.00"))
+        self.assertEqual(ctx["dinusha_banked"], Decimal("250.00"))
+
+    def test_a_manual_transfer_does_not_reach_the_account_totals(self):
+        """The accepted trade-off of having no account column on CashDrawer.
+        The page says so in words rather than let the figure look wrong."""
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "senovka",
+            "amount": "500.00", "reason": "banked at BOC",
+        })
+        ctx = self.page()
+        self.assertEqual(ctx["senovka_banked"], Decimal("0.00"))
+        self.assertEqual(ctx["balance"], Decimal("2500.00"))
+        self.assertContains(self.response, "Banked from bill payments only.")
+
+    # ---- the log ----
+    def test_rows_run_oldest_first_with_a_cumulative_balance(self):
+        rows = self.page()["rows"]
+        self.assertEqual(
+            [(r["entry"].txn_date, r["is_in"], r["running"]) for r in rows],
+            [
+                (date(2026, 6, 1), True, Decimal("5000.00")),
+                (date(2026, 6, 5), False, Decimal("3800.00")),
+                (date(2026, 6, 9), False, Decimal("3000.00")),
+            ],
+        )
+
+    def test_the_last_running_balance_is_the_drawer_balance(self):
+        ctx = self.page()
+        self.assertEqual(ctx["closing"], ctx["balance"])
+
+    def test_totals_split_in_from_out(self):
+        ctx = self.page()
+        self.assertEqual(ctx["total_in"], Decimal("5000.00"))
+        # Withdrawal and transfer both leave the drawer.
+        self.assertEqual(ctx["total_out"], Decimal("2000.00"))
+
+    def test_a_filtered_range_carries_an_opening_balance(self):
+        """Starting the column at zero would report a drawer that never was."""
+        ctx = self.page(from_date="2026-06-05")
+        self.assertEqual(ctx["opening"], Decimal("5000.00"))
+        self.assertEqual([r["running"] for r in ctx["rows"]],
+                         [Decimal("3800.00"), Decimal("3000.00")])
+        self.assertEqual(ctx["closing"], ctx["balance"])
+        self.assertContains(self.response, "Opening balance")
+
+    def test_an_unfiltered_log_opens_at_zero(self):
+        self.assertEqual(self.page()["opening"], Decimal("0.00"))
+
+    def test_bill_linked_rows_point_at_the_bill(self):
+        self.page()
+        self.assertContains(
+            self.response, reverse("core:bill_detail", args=[self.bill.pk])
+        )
+        self.assertContains(self.response, "Nimal")
+
+    def test_manual_rows_show_their_reason(self):
+        self.page()
+        self.assertContains(self.response, "Owner Withdrawal — school fees")
+
+    def test_unparsable_dates_are_ignored_not_500s(self):
+        ctx = self.page(from_date="nonsense", to_date="2026-13-45")
+        self.assertEqual(len(ctx["rows"]), 3)
+        self.assertFalse(ctx["is_filtered"])
+
+    # ---- recording money out ----
+    def test_recording_a_withdrawal_takes_it_off_the_drawer(self):
+        response = self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "500.00", "reason": "petrol",
+        }, follow=True)
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+
+        entry = CashDrawer.objects.latest("id")
+        self.assertEqual(entry.txn_type, CashDrawer.TxnType.OUT)
+        self.assertEqual(entry.amount, Decimal("500.00"))
+        self.assertEqual(entry.txn_date, date(2026, 6, 10))
+        self.assertEqual(entry.reason, "Owner Withdrawal — petrol")
+        self.assertIsNone(entry.bill)
+        self.assertEqual(views._cash_drawer_balance(), Decimal("2500.00"))
+
+    def test_the_type_is_named_in_the_reason(self):
+        """The only place a manual transfer's destination can be recorded."""
+        for kind, expected in (
+            ("senovka", "Transfer to Senovka Account — banked"),
+            ("dinusha", "Transfer to Dinusha Account — banked"),
+        ):
+            with self.subTest(kind=kind):
+                self.client.post(reverse("core:cash_drawer"), {
+                    "txn_date": "2026-06-10", "kind": kind,
+                    "amount": "10.00", "reason": "banked",
+                })
+                self.assertEqual(CashDrawer.objects.latest("id").reason, expected)
+
+    def test_a_blank_reason_still_names_the_type(self):
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "10.00", "reason": "",
+        })
+        self.assertEqual(CashDrawer.objects.latest("id").reason, "Owner Withdrawal")
+
+    def test_the_message_says_what_is_left(self):
+        response = self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "500.00", "reason": "petrol",
+        }, follow=True)
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertIn(
+            "Owner Withdrawal — petrol — 500.00 out of the drawer. 2,500.00 left.",
+            msgs,
+        )
+
+    def test_more_cash_than_the_drawer_holds_is_refused(self):
+        """A drawer cannot hold minus two thousand rupees."""
+        response = self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "5000.00", "reason": "too much",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"], "amount", "Only 3,000.00 is in the drawer."
+        )
+        self.assertEqual(CashDrawer.objects.count(), 3)
+        self.assertEqual(views._cash_drawer_balance(), Decimal("3000.00"))
+
+    def test_taking_the_whole_drawer_is_allowed(self):
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "3000.00", "reason": "all of it",
+        })
+        self.assertEqual(views._cash_drawer_balance(), Decimal("0.00"))
+
+    def test_a_zero_amount_is_refused(self):
+        response = self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "0", "reason": "nothing",
+        })
+        self.assertFormError(
+            response.context["form"], "amount", "Amount must be above 0."
+        )
+        self.assertEqual(CashDrawer.objects.count(), 3)
+
+    def test_the_form_cannot_put_money_in(self):
+        """Cash arrives by saving a bill. Nothing here may type it in."""
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "100.00", "reason": "x", "txn_type": "in",
+        })
+        self.assertEqual(CashDrawer.objects.latest("id").txn_type, CashDrawer.TxnType.OUT)
+        self.assertEqual(views._cash_drawer_balance(), Decimal("2900.00"))
+
+    def test_the_form_cannot_attach_an_entry_to_a_bill(self):
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal",
+            "amount": "100.00", "reason": "x", "bill": self.bill.pk,
+        })
+        self.assertIsNone(CashDrawer.objects.latest("id").bill)
+
+    def test_the_date_defaults_to_today(self):
+        ctx = self.page()
+        self.assertEqual(ctx["form"].initial["txn_date"], self.today)
+
+    def test_page_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:cash_drawer"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+    def test_recording_requires_login(self):
+        self.client.logout()
+        self.client.post(reverse("core:cash_drawer"), {
+            "txn_date": "2026-06-10", "kind": "withdrawal", "amount": "10.00",
+        })
+        self.assertEqual(CashDrawer.objects.count(), 3)
+
+
+class CashDrawerBillIntegrationTests(UserFactoryMixin, TestCase):
+    """The page has to agree with what 5D writes when a bill is saved."""
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="Pipe", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.nimal = Customer.objects.create(
+            name="Nimal", balance=Decimal("0.00"), credit_limit=Decimal("50000.00")
+        )
+
+    def save_bill(self, account=""):
+        return self.client.post(
+            reverse("core:bill_save"),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "2000.00", "account": account},
+            }),
+            content_type="application/json",
+        )
+
+    def test_a_cash_bill_shows_up_as_money_in(self):
+        self.save_bill()
+        ctx = self.client.get(reverse("core:cash_drawer")).context
+        self.assertEqual(ctx["balance"], Decimal("2000.00"))
+        self.assertEqual(len(ctx["rows"]), 1)
+        self.assertTrue(ctx["rows"][0]["is_in"])
+
+    def test_a_banked_cash_bill_nets_to_nothing_and_shows_both_legs(self):
+        """In then straight out: the drawer is level and the log says why."""
+        self.save_bill(account="senovka")
+        ctx = self.client.get(reverse("core:cash_drawer")).context
+
+        self.assertEqual(ctx["balance"], Decimal("0.00"))
+        self.assertEqual([r["is_in"] for r in ctx["rows"]], [True, False])
+        self.assertEqual([r["running"] for r in ctx["rows"]],
+                         [Decimal("2000.00"), Decimal("0.00")])
+        # This one does reach the account total: a bill payment wrote a
+        # CashTransfer alongside it.
+        self.assertEqual(ctx["senovka_banked"], Decimal("2000.00"))
+
+    def test_deleting_the_bill_empties_the_drawer_again(self):
+        self.save_bill()
+        self.client.force_login(self.make_admin())
+        self.client.post(reverse("core:bill_delete", args=[Bill.objects.get().pk]))
+
+        ctx = self.client.get(reverse("core:cash_drawer")).context
+        self.assertEqual(ctx["balance"], Decimal("0.00"))
+        self.assertEqual(ctx["rows"], [])
+
+
+class SupplierBillTests(UserFactoryMixin, TestCase):
+    """A supplier bill is the mirror of a sales bill: stock comes in, and the
+    balance moves positive because we now owe them."""
+
+    def setUp(self):
+        self.client.force_login(self.make_admin())
+        cat = Category.objects.create(name="Pipes")
+        self.category = cat
+        self.pipe = Product.objects.create(
+            name="Pipe", size="50mm", category=cat,
+            default_price=Decimal("1000.00"), qty=Decimal("10.000"),
+        )
+        self.tank = Product.objects.create(
+            name="Tank", category=cat,
+            default_price=Decimal("500.00"), qty=Decimal("4.000"),
+        )
+        self.supplier = Customer.objects.create(
+            name="Lanka Polymers", is_supplier=True, balance=Decimal("0.00")
+        )
+        self.customer = Customer.objects.create(name="Nimal", is_supplier=False)
+
+    def payload(self, lines=None, supplier=None):
+        return {
+            "supplier_id": (supplier or self.supplier).pk,
+            "lines": lines if lines is not None else [
+                {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"}
+            ],
+        }
+
+    def save(self, payload=None):
+        return self.client.post(
+            reverse("core:supplier_bill_create"),
+            json.dumps(payload if payload is not None else self.payload()),
+            content_type="application/json",
+        )
+
+    def balance(self):
+        self.supplier.refresh_from_db()
+        return self.supplier.balance
+
+    # ---- saving ----
+    def test_saving_writes_the_bill_and_its_lines(self):
+        response = self.save()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+
+        bill = SupplierBill.objects.get()
+        self.assertEqual(bill.supplier, self.supplier)
+        self.assertEqual(bill.total_amount, Decimal("3000.00"))
+        self.assertEqual(bill.bill_date, timezone.localdate())
+        self.assertEqual(bill.status, SupplierBill.Status.UNPAID)
+
+        item = SupplierBillItem.objects.get()
+        self.assertEqual(item.qty, Decimal("5.000"))
+        self.assertEqual(item.unit_price, Decimal("600.00"))
+        self.assertEqual(item.line_total, Decimal("3000.00"))
+
+    def test_receiving_adds_to_stock(self):
+        self.save()
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("15.000"))
+
+    def test_the_supplier_balance_moves_positive(self):
+        """Positive is credit in their favour: we owe them for the delivery."""
+        self.save()
+        self.assertEqual(self.balance(), Decimal("3000.00"))
+
+    def test_a_second_bill_stacks_on_the_first(self):
+        self.save()
+        self.save()
+        self.assertEqual(self.balance(), Decimal("6000.00"))
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("20.000"))
+
+    def test_line_totals_are_recomputed_not_taken_from_the_browser(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00",
+             "line_total": "1.00"}
+        ]))
+        self.assertEqual(SupplierBillItem.objects.get().line_total, Decimal("3000.00"))
+        self.assertEqual(SupplierBill.objects.get().total_amount, Decimal("3000.00"))
+
+    def test_a_bill_can_carry_several_lines(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"},
+            {"product_id": self.tank.pk, "qty": "2", "unit_price": "300.00"},
+        ]))
+        self.assertEqual(SupplierBill.objects.get().total_amount, Decimal("3600.00"))
+        self.assertEqual(self.balance(), Decimal("3600.00"))
+        self.tank.refresh_from_db()
+        self.assertEqual(self.tank.qty, Decimal("6.000"))
+
+    # ---- validation ----
+    def test_a_non_supplier_cannot_be_billed_from(self):
+        response = self.save(self.payload(supplier=self.customer))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Choose a supplier.")
+        self.assertFalse(SupplierBill.objects.exists())
+
+    def test_an_empty_bill_is_refused(self):
+        response = self.save(self.payload(lines=[]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one product line", response.json()["error"])
+
+    def test_the_same_product_twice_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "600.00"},
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "600.00"},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("on the bill twice", response.json()["error"])
+
+    def test_a_zero_quantity_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "0", "unit_price": "600.00"}
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("must be above 0", response.json()["error"])
+
+    def test_a_refused_bill_writes_nothing(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"},
+            {"product_id": self.tank.pk, "qty": "-1", "unit_price": "300.00"},
+        ]))
+        self.assertFalse(SupplierBill.objects.exists())
+        self.assertFalse(SupplierBillItem.objects.exists())
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
+        self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_junk_payloads_are_refused_not_500s(self):
+        for body in ["not json", json.dumps([]), ""]:
+            with self.subTest(body=body[:10]):
+                response = self.client.post(
+                    reverse("core:supplier_bill_create"), body,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(SupplierBill.objects.exists())
+
+    # ---- inline creation ----
+    def test_a_supplier_can_be_created_inline(self):
+        response = self.client.post(reverse("core:supplier_quick_create"), {
+            "name": "  New Supplies  ", "phone": " 077 ", "address": "Galle",
+        })
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+
+        supplier = Customer.objects.get(name="New Supplies")
+        self.assertTrue(supplier.is_supplier)
+        self.assertTrue(supplier.is_active)
+        self.assertEqual(supplier.balance, Decimal("0.00"))
+        self.assertEqual(supplier.phone, "077")
+        self.assertEqual(body["supplier"], {"id": supplier.pk, "name": "New Supplies"})
+
+    def test_a_new_supplier_starts_at_zero_then_takes_the_bill(self):
+        response = self.client.post(reverse("core:supplier_quick_create"), {
+            "name": "New Supplies", "phone": "", "address": "",
+        })
+        new_id = response.json()["supplier"]["id"]
+        self.save({
+            "supplier_id": new_id,
+            "lines": [{"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"}],
+        })
+        self.assertEqual(
+            Customer.objects.get(pk=new_id).balance, Decimal("3000.00")
+        )
+
+    def test_a_nameless_supplier_is_refused(self):
+        response = self.client.post(reverse("core:supplier_quick_create"), {"name": ""})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("name", response.json()["errors"])
+
+    def test_a_product_can_be_created_inline(self):
+        response = self.client.post(reverse("core:product_quick_create"), {
+            "name": "Elbow", "size": "50mm",
+            "category": self.category.pk, "default_price": "45",
+        })
+        self.assertEqual(response.status_code, 200)
+        product = Product.objects.get(name="Elbow")
+        self.assertTrue(product.is_active)
+        self.assertEqual(product.qty, Decimal("0.000"))
+        self.assertEqual(
+            response.json()["product"],
+            {
+                "id": product.pk, "name": "Elbow", "size": "50mm",
+                "label": "Elbow 50mm", "default_price": "45.00",
+            },
+        )
+
+    def test_the_inline_product_form_still_rejects_duplicates(self):
+        """The shortcut must not be a way around the name+size rule."""
+        response = self.client.post(reverse("core:product_quick_create"), {
+            "name": "Pipe", "size": "50mm",
+            "category": self.category.pk, "default_price": "45",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("__all__", response.json()["errors"])
+        self.assertEqual(Product.objects.filter(name="Pipe").count(), 1)
+
+    def test_inline_creation_rejects_get(self):
+        for name in ("supplier_quick_create", "product_quick_create"):
+            with self.subTest(endpoint=name):
+                self.assertEqual(self.client.get(reverse(f"core:{name}")).status_code, 405)
+
+    def test_inline_creation_requires_login(self):
+        self.client.logout()
+        self.client.post(reverse("core:supplier_quick_create"), {"name": "Sneaky"})
+        self.assertFalse(Customer.objects.filter(name="Sneaky").exists())
+
+    # ---- editing ----
+    def test_resaving_an_unchanged_bill_changes_nothing(self):
+        """The reversal and re-apply must cancel exactly, or every open and
+        save quietly doubles the delivery."""
+        self.save()
+        bill = SupplierBill.objects.get()
+
+        response = self.client.post(
+            reverse("core:supplier_bill_edit", args=[bill.pk]),
+            json.dumps(self.payload()), content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("15.000"))
+        self.assertEqual(self.balance(), Decimal("3000.00"))
+        self.assertEqual(SupplierBill.objects.count(), 1)
+        self.assertEqual(SupplierBillItem.objects.count(), 1)
+
+    def test_editing_the_quantity_moves_stock_by_the_difference(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        self.client.post(
+            reverse("core:supplier_bill_edit", args=[bill.pk]),
+            json.dumps(self.payload(lines=[
+                {"product_id": self.pipe.pk, "qty": "8", "unit_price": "600.00"}
+            ])),
+            content_type="application/json",
+        )
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("18.000"))
+        self.assertEqual(self.balance(), Decimal("4800.00"))
+
+    def test_editing_keeps_the_original_bill_date(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        bill.bill_date = date(2026, 1, 5)
+        bill.save(update_fields=["bill_date"])
+
+        self.client.post(
+            reverse("core:supplier_bill_edit", args=[bill.pk]),
+            json.dumps(self.payload()), content_type="application/json",
+        )
+        self.assertEqual(SupplierBill.objects.get().bill_date, date(2026, 1, 5))
+
+    def test_the_edit_page_carries_the_bill_back_into_the_form(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        response = self.client.get(reverse("core:supplier_bill_edit", args=[bill.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["initial"]["supplier_id"], self.supplier.pk)
+        self.assertEqual(response.context["initial"]["lines"], [
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"}
+        ])
+
+    def test_a_refused_edit_leaves_the_original_intact(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        response = self.client.post(
+            reverse("core:supplier_bill_edit", args=[bill.pk]),
+            json.dumps(self.payload(lines=[])), content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("15.000"))
+        self.assertEqual(self.balance(), Decimal("3000.00"))
+        self.assertEqual(SupplierBillItem.objects.count(), 1)
+
+    # ---- deleting ----
+    def test_delete_reverses_stock_and_balance(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        response = self.client.post(
+            reverse("core:supplier_bill_delete", args=[bill.pk]), follow=True
+        )
+        self.assertRedirects(response, reverse("core:supplier_bill_list"))
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
+        self.assertEqual(self.balance(), Decimal("0.00"))
+        self.assertFalse(SupplierBill.objects.exists())
+        self.assertFalse(SupplierBillItem.objects.exists())
+
+    def test_stock_already_sold_on_blocks_the_reversal(self):
+        """Taking it back regardless would leave the product holding a negative
+        quantity, and it would vanish from every sales screen."""
+        self.save()
+        bill = SupplierBill.objects.get()
+
+        # 15 received; sell 12, leaving 3 of the 5 this bill brought in.
+        self.pipe.qty = Decimal("3.000")
+        self.pipe.save(update_fields=["qty"])
+
+        response = self.client.post(
+            reverse("core:supplier_bill_delete", args=[bill.pk]), follow=True
+        )
+        self.assertRedirects(
+            response, reverse("core:supplier_bill_detail", args=[bill.pk])
+        )
+        self.assertTrue(SupplierBill.objects.filter(pk=bill.pk).exists())
+
+        msgs = [str(m) for m in response.context["messages"]]
+        self.assertTrue(any("has been sold on" in m for m in msgs), msgs)
+
+        # Nothing moved.
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("3.000"))
+        self.assertEqual(self.balance(), Decimal("3000.00"))
+
+    def test_a_blocked_reversal_rolls_back_earlier_lines(self):
+        """The first line's stock goes back before the second one fails."""
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "600.00"},
+            {"product_id": self.tank.pk, "qty": "2", "unit_price": "300.00"},
+        ]))
+        bill = SupplierBill.objects.get()
+
+        self.tank.qty = Decimal("0.000")  # both received tanks sold on
+        self.tank.save(update_fields=["qty"])
+
+        self.client.post(reverse("core:supplier_bill_delete", args=[bill.pk]))
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("15.000"))  # not taken back
+        self.assertTrue(SupplierBill.objects.filter(pk=bill.pk).exists())
+        self.assertEqual(self.balance(), Decimal("3600.00"))
+
+    def test_manager_cannot_delete_a_supplier_bill(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        self.client.force_login(self.make_manager())
+        response = self.client.post(reverse("core:supplier_bill_delete", args=[bill.pk]))
+        self.assertRedirects(response, reverse("core:dashboard"))
+        self.assertTrue(SupplierBill.objects.exists())
+
+    def test_delete_rejects_get(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        self.assertEqual(
+            self.client.get(reverse("core:supplier_bill_delete", args=[bill.pk])).status_code,
+            405,
+        )
+
+    # ---- pages ----
+    def test_the_detail_page_shows_the_bill_and_links_to_the_ledger(self):
+        self.save()
+        bill = SupplierBill.objects.get()
+        response = self.client.get(reverse("core:supplier_bill_detail", args=[bill.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Lanka Polymers")
+        self.assertContains(response, "Pipe")
+        self.assertContains(response, "3,000.00")
+        self.assertContains(
+            response, reverse("core:customer_ledger", args=[self.supplier.pk])
+        )
+
+    def test_the_create_page_offers_only_suppliers(self):
+        response = self.client.get(reverse("core:supplier_bill_create"))
+        names = [s.name for s in response.context["suppliers"]]
+        self.assertEqual(names, ["Lanka Polymers"])
+        self.assertNotIn("Nimal", names)
+
+    def test_the_create_page_carries_the_product_catalogue(self):
+        response = self.client.get(reverse("core:supplier_bill_create"))
+        catalogue = {p["label"]: p for p in response.context["products_json"]}
+        self.assertEqual(set(catalogue), {"Pipe 50mm", "Tank"})
+        self.assertEqual(catalogue["Pipe 50mm"]["default_price"], "1000.00")
+
+    def test_an_inactive_product_is_not_offered(self):
+        self.pipe.is_active = False
+        self.pipe.save(update_fields=["is_active"])
+        response = self.client.get(reverse("core:supplier_bill_create"))
+        labels = [p["label"] for p in response.context["products_json"]]
+        self.assertNotIn("Pipe 50mm", labels)
+
+    def test_pages_require_login(self):
+        self.client.logout()
+        for url in (
+            reverse("core:supplier_bill_list"),
+            reverse("core:supplier_bill_create"),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 302)
+                self.assertIn(reverse("login"), response["Location"])
+
+
+class SupplierBillListTests(UserFactoryMixin, TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.lanka = Customer.objects.create(name="Lanka Polymers", is_supplier=True)
+        cls.ceylon = Customer.objects.create(name="Ceylon Resins", is_supplier=True)
+
+        cat = Category.objects.create(name="Pipes")
+        cls.pipe = Product.objects.create(
+            name="Pipe", category=cat, default_price=Decimal("100.00"), qty=Decimal("0.000")
+        )
+
+        def bill(supplier, day, total, status):
+            made = SupplierBill.objects.create(
+                supplier=supplier, bill_date=date(2026, 6, day),
+                total_amount=Decimal(total), status=status,
+            )
+            SupplierBillItem.objects.create(
+                supplier_bill=made, product=cls.pipe,
+                qty=Decimal("1.000"), unit_price=Decimal(total),
+                line_total=Decimal(total),
+            )
+            return made
+
+        cls.early = bill(cls.lanka, 1, "1000.00", SupplierBill.Status.UNPAID)
+        cls.mid = bill(cls.ceylon, 5, "2000.00", SupplierBill.Status.PAID)
+        cls.late = bill(cls.lanka, 9, "3000.00", SupplierBill.Status.UNPAID)
+
+    def setUp(self):
+        self.client.force_login(self.make_manager())
+
+    def rows(self, **params):
+        response = self.client.get(reverse("core:supplier_bill_list"), params)
+        self.response = response
+        return {b.pk: b for b in response.context["bills"]}
+
+    def test_list_renders_every_bill(self):
+        self.assertEqual(len(self.rows()), 3)
+
+    def test_items_are_counted(self):
+        self.assertEqual(self.rows()[self.early.pk].item_count, 1)
+
+    def test_filter_by_date_range(self):
+        rows = self.rows(from_date="2026-06-05", to_date="2026-06-09")
+        self.assertEqual(set(rows), {self.mid.pk, self.late.pk})
+
+    def test_filter_by_supplier(self):
+        rows = self.rows(supplier=self.lanka.pk)
+        self.assertEqual(set(rows), {self.early.pk, self.late.pk})
+
+    def test_filter_by_status(self):
+        self.assertEqual(set(self.rows(status="paid")), {self.mid.pk})
+
+    def test_unknown_filter_values_are_ignored_not_500s(self):
+        rows = self.rows(status="zzz", supplier="zzz", from_date="nonsense")
+        self.assertEqual(len(rows), 3)
+        self.assertFalse(self.response.context["is_filtered"])
+
+    def test_row_actions_are_offered(self):
+        self.client.force_login(self.make_admin())
+        response = self.client.get(reverse("core:supplier_bill_list"))
+        self.assertContains(response, reverse("core:supplier_bill_detail", args=[self.early.pk]))
+        self.assertContains(response, reverse("core:supplier_bill_edit", args=[self.early.pk]))
+        self.assertContains(response, reverse("core:supplier_bill_delete", args=[self.early.pk]))
+
+    def test_manager_gets_no_delete_control(self):
+        html = self.client.get(reverse("core:supplier_bill_list")).content.decode()
+        self.assertNotIn(reverse("core:supplier_bill_delete", args=[self.early.pk]), html)
+        self.assertNotIn('id="delete-modal"', html)
 
 
 class ContextProcessorTests(UserFactoryMixin, TestCase):

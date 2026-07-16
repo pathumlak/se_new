@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}New Supplier Bill · Senovka Plastics{% endblock %}
+{% block header %}New Supplier Bill{% endblock %}
+
+{% block content %}
+
+<p class="mb-5 rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
+  Saving adds every line to stock and credits the supplier's balance with the
+  total — a positive balance is what we owe them.
+</p>
+
+{% include "core/_supplier_bill_form.html" %}
+
+{% endblock %}
+
+{% block extra_js %}
+  {% include "core/_supplier_bill_js.html" %}
+{% endblock %}

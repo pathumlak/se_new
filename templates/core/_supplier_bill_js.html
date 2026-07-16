@@ -1,0 +1,447 @@
+{% comment %}
+Supplier bill form, shared by create and edit.
+
+Suppliers and products can be created without leaving the page, so the
+catalogue the line dropdowns read from is a live array rather than the markup
+the server rendered.
+
+Spelled as a comment tag because the hash-style comment is single-line only:
+spanning lines, it isn't stripped and renders onto the page as text.
+{% endcomment %}
+<script>
+  (function () {
+    const SAVE_URL     = '{{ save_url }}';
+    const SUPPLIER_URL = '{% url "core:supplier_quick_create" %}';
+    const PRODUCT_URL  = '{% url "core:product_quick_create" %}';
+    const CSRF = '{{ csrf_token }}';
+
+    function $(id) { return document.getElementById(id); }
+
+    let catalogue = JSON.parse($('product-catalogue').textContent);
+    const initialEl = $('bill-initial');
+    const INITIAL = initialEl ? JSON.parse(initialEl.textContent) : null;
+
+    const supplierSelect = $('supplier');
+    const rowsBody   = $('line-rows');
+    const emptyBody  = $('line-empty');
+    const totalCell  = $('running-total');
+    const saveTotal  = $('save-total');
+    const countEl    = $('line-count');
+    const nounEl     = $('line-noun');
+    const saveBtn    = $('save-bill');
+    const saveNote   = $('save-note');
+    const invalidNote = $('invalid-note');
+
+    const MONEY = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    function money(n) { return MONEY.format(n); }
+
+    // Number('') is 0, which would read an empty box as a free delivery.
+    function num(value) {
+      const text = String(value).trim();
+      if (text === '') return NaN;
+      const n = Number(text);
+      return Number.isFinite(n) ? n : NaN;
+    }
+    function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+    // Every line row, in the order they were added.
+    const lines = [];
+
+    function postForm(url, data) {
+      const body = new URLSearchParams(data);
+      return fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': CSRF,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body,
+      }).then(function (res) {
+        // A session that expired mid-form answers with the login HTML, not
+        // JSON. Anything unparsable counts as a failure.
+        return res.json()
+          .catch(function () { return null; })
+          .then(function (payload) { return { ok: res.ok, data: payload }; });
+      });
+    }
+
+    // ================= lines =================
+
+    function productOptions(select, selectedId) {
+      select.replaceChildren();
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = 'Select a product';
+      select.appendChild(blank);
+
+      catalogue.forEach(function (product) {
+        const option = document.createElement('option');
+        option.value = String(product.id);
+        // textContent: product names are operator-entered.
+        option.textContent = product.label;
+        if (String(product.id) === String(selectedId)) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+
+    function refreshCatalogueOptions() {
+      lines.forEach(function (line) {
+        productOptions(line.select, line.select.value);
+      });
+    }
+
+    function evaluate(line) {
+      const productId = line.select.value;
+      const qty = num(line.qty.value);
+      const price = num(line.price.value);
+
+      let error = '';
+      if (!productId) error = 'Choose a product.';
+      else if (Number.isNaN(qty) || qty <= 0) error = 'Quantity must be above 0.';
+      else if (Number.isNaN(price) || price < 0) error = 'Enter a unit price.';
+
+      line.error.textContent = error;
+      line.error.classList.toggle('hidden', error === '');
+      line.tr.classList.toggle('bg-rose-50', error !== '');
+
+      // Null, not 0: a broken row must not quietly count as free.
+      return error === '' ? round2(qty * price) : null;
+    }
+
+    function recalc() {
+      let total = 0;
+      let invalid = 0;
+
+      lines.forEach(function (line) {
+        const lineTotal = evaluate(line);
+        if (lineTotal === null) {
+          line.total.textContent = '—';
+          line.total.classList.add('text-slate-300');
+          invalid += 1;
+        } else {
+          line.total.textContent = money(lineTotal);
+          line.total.classList.remove('text-slate-300');
+          total = round2(total + lineTotal);
+        }
+      });
+
+      totalCell.textContent = money(total);
+      saveTotal.textContent = money(total);
+      countEl.textContent = lines.length;
+      nounEl.textContent = lines.length === 1 ? 'line' : 'lines';
+      emptyBody.classList.toggle('hidden', lines.length > 0);
+
+      if (invalid > 0) {
+        invalidNote.textContent = invalid + (invalid === 1 ? ' line needs' : ' lines need') +
+          ' attention and is left out of the total.';
+        invalidNote.classList.remove('hidden');
+      } else {
+        invalidNote.classList.add('hidden');
+      }
+
+      const ready = lines.length > 0 && invalid === 0 && supplierSelect.value !== '';
+      saveBtn.disabled = !ready;
+      saveNote.textContent = supplierSelect.value === '' && lines.length > 0
+        ? 'Choose a supplier.'
+        : '';
+      saveNote.className = 'mr-1 text-xs text-slate-400';
+    }
+
+    function addLine(productId, qty, price) {
+      const tr = document.createElement('tr');
+
+      // Product
+      const productTd = document.createElement('td');
+      productTd.className = 'px-4 py-3';
+      const select = document.createElement('select');
+      select.className = 'w-64 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm ' +
+        'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
+      productOptions(select, productId);
+      productTd.appendChild(select);
+      const error = document.createElement('p');
+      error.className = 'mt-1 hidden text-xs text-rose-600';
+      productTd.appendChild(error);
+      tr.appendChild(productTd);
+
+      function numberCell(value, extra) {
+        const td = document.createElement('td');
+        td.className = 'px-4 py-3 text-right';
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.value = value;
+        input.className = 'w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm ' +
+          'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
+        Object.keys(extra).forEach(function (key) { input.setAttribute(key, extra[key]); });
+        td.appendChild(input);
+        tr.appendChild(td);
+        return input;
+      }
+
+      // Stock carries 3 dp, so the step has to allow them.
+      const qtyInput = numberCell(qty || '1', { min: '0.001', step: '0.001', 'aria-label': 'Quantity' });
+      const priceInput = numberCell(price || '', { min: '0', step: '0.01', 'aria-label': 'Unit price' });
+
+      const totalTd = document.createElement('td');
+      totalTd.className = 'whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900';
+      totalTd.textContent = '0.00';
+      tr.appendChild(totalTd);
+
+      const removeTd = document.createElement('td');
+      removeTd.className = 'px-4 py-3 text-right';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50';
+      remove.textContent = 'Remove';
+      removeTd.appendChild(remove);
+      tr.appendChild(removeTd);
+
+      const line = {
+        tr: tr, select: select, qty: qtyInput,
+        price: priceInput, total: totalTd, error: error,
+      };
+      lines.push(line);
+      rowsBody.appendChild(tr);
+
+      // Picking a product suggests its selling price as a starting figure —
+      // it's what the operator has to hand. They set the real purchase price.
+      select.addEventListener('change', function () {
+        const product = catalogue.find(function (candidate) {
+          return String(candidate.id) === select.value;
+        });
+        if (product && priceInput.value.trim() === '') {
+          priceInput.value = product.default_price;
+        }
+        recalc();
+      });
+      qtyInput.addEventListener('input', recalc);
+      priceInput.addEventListener('input', recalc);
+      remove.addEventListener('click', function () {
+        const index = lines.indexOf(line);
+        if (index !== -1) lines.splice(index, 1);
+        tr.remove();
+        recalc();
+      });
+
+      return line;
+    }
+
+    // ================= inline supplier =================
+
+    const supplierPanel = $('supplier-panel');
+
+    function supplierErrors(errors) {
+      document.querySelectorAll('#supplier-panel .js-error').forEach(function (el) {
+        const messages = errors && errors[el.dataset.for];
+        el.textContent = messages ? messages.join(' ') : '';
+        el.classList.toggle('hidden', !messages);
+      });
+    }
+
+    $('new-supplier').addEventListener('click', function () {
+      supplierPanel.classList.remove('hidden');
+      $('sup-name').focus();
+    });
+    $('cancel-supplier').addEventListener('click', function () {
+      supplierPanel.classList.add('hidden');
+      supplierErrors(null);
+      $('supplier-status').textContent = '';
+    });
+
+    $('save-supplier').addEventListener('click', function () {
+      const button = $('save-supplier');
+      const status = $('supplier-status');
+      if (button.disabled) return;
+      button.disabled = true;
+      supplierErrors(null);
+      status.textContent = 'Adding…';
+      status.className = 'text-xs text-slate-400';
+
+      postForm(SUPPLIER_URL, {
+        name: $('sup-name').value,
+        phone: $('sup-phone').value,
+        address: $('sup-address').value,
+      })
+        .then(function (result) {
+          if (!result.ok || !result.data || !result.data.success) {
+            supplierErrors(result.data && result.data.errors);
+            throw new Error('Check the supplier details.');
+          }
+
+          const supplier = result.data.supplier;
+          const option = document.createElement('option');
+          option.value = String(supplier.id);
+          option.textContent = supplier.name;
+          supplierSelect.appendChild(option);
+          supplierSelect.value = String(supplier.id);
+
+          supplierPanel.classList.add('hidden');
+          ['sup-name', 'sup-phone', 'sup-address'].forEach(function (id) { $(id).value = ''; });
+          status.textContent = '';
+          recalc();
+        })
+        .catch(function (err) {
+          status.textContent = err.message;
+          status.className = 'text-xs text-rose-600';
+        })
+        .finally(function () { button.disabled = false; });
+    });
+
+    // ================= inline product =================
+
+    const productModal = $('product-modal');
+
+    function productErrors(errors) {
+      document.querySelectorAll('.js-perror').forEach(function (el) {
+        const messages = errors && errors[el.dataset.for];
+        el.textContent = messages ? messages.join(' ') : '';
+        el.classList.toggle('hidden', !messages);
+      });
+    }
+
+    function openProduct() {
+      productErrors(null);
+      productModal.classList.remove('hidden');
+      productModal.classList.add('flex');
+      $('prod-name').focus();
+    }
+    function closeProduct() {
+      productModal.classList.add('hidden');
+      productModal.classList.remove('flex');
+    }
+
+    $('new-product').addEventListener('click', openProduct);
+    $('product-modal-close').addEventListener('click', closeProduct);
+    $('product-modal-cancel').addEventListener('click', closeProduct);
+    productModal.addEventListener('click', function (e) {
+      if (e.target === productModal) closeProduct();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !productModal.classList.contains('hidden')) closeProduct();
+    });
+
+    $('save-product').addEventListener('click', function () {
+      const button = $('save-product');
+      if (button.disabled) return;
+      button.disabled = true;
+      productErrors(null);
+
+      postForm(PRODUCT_URL, {
+        name: $('prod-name').value,
+        size: $('prod-size').value,
+        category: $('prod-category').value,
+        default_price: $('prod-price').value,
+      })
+        .then(function (result) {
+          if (!result.ok || !result.data || !result.data.success) {
+            productErrors(result.data && result.data.errors);
+            return;
+          }
+
+          const product = result.data.product;
+          catalogue.push(product);
+          refreshCatalogueOptions();
+
+          // It exists now, so put it straight on the bill.
+          addLine(product.id, '1', product.default_price);
+          recalc();
+
+          ['prod-name', 'prod-size', 'prod-price'].forEach(function (id) { $(id).value = ''; });
+          $('prod-category').value = '';
+          closeProduct();
+        })
+        .finally(function () { button.disabled = false; });
+    });
+
+    // ================= save =================
+
+    function collect() {
+      return {
+        supplier_id: supplierSelect.value,
+        lines: lines.map(function (line) {
+          return {
+            product_id: Number(line.select.value),
+            qty: line.qty.value.trim(),
+            unit_price: line.price.value.trim(),
+          };
+        }),
+      };
+    }
+
+    saveBtn.addEventListener('click', function () {
+      if (saveBtn.disabled) return;
+      // Held down for the whole round trip: a second click is a second bill.
+      saveBtn.disabled = true;
+      saveNote.textContent = 'Saving…';
+      saveNote.className = 'mr-1 text-xs text-slate-400';
+
+      fetch(SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': CSRF,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(collect()),
+      })
+        .then(function (res) {
+          return res.json()
+            .catch(function () { return null; })
+            .then(function (data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function (result) {
+          if (!result.ok || !result.data || !result.data.success) {
+            const message = result.data && result.data.error
+              ? result.data.error
+              : 'Could not save — please try again.';
+            throw new Error(message);
+          }
+          // The server rolls back on any error, so reaching here means it is
+          // written. Leave the button down and go read it.
+          window.location = result.data.redirect;
+        })
+        .catch(function (err) {
+          saveNote.textContent = err.message;
+          saveNote.className = 'mr-1 text-xs text-rose-600';
+          saveBtn.disabled = false;
+        });
+    });
+
+    // ================= wiring =================
+
+    supplierSelect.addEventListener('change', recalc);
+    $('add-line').addEventListener('click', function () {
+      addLine('', '1', '');
+      recalc();
+    });
+
+    if (INITIAL) {
+      supplierSelect.value = String(INITIAL.supplier_id);
+      const missing = [];
+      (INITIAL.lines || []).forEach(function (line) {
+        const known = catalogue.some(function (product) {
+          return String(product.id) === String(line.product_id);
+        });
+        if (!known) {
+          // Deactivated since, so it isn't in the catalogue this page loaded.
+          missing.push(line.product_id);
+          return;
+        }
+        addLine(line.product_id, line.qty, line.unit_price);
+      });
+
+      if (missing.length > 0) {
+        const note = $('hydrate-note');
+        note.textContent = missing.length + (missing.length === 1 ? ' line' : ' lines') +
+          ' could not be restored — the product is no longer active. Saving now drops ' +
+          (missing.length === 1 ? 'it' : 'them') + ' from the bill.';
+        note.classList.remove('hidden');
+      }
+    }
+
+    recalc();
+  })();
+</script>

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import Category, Cheque, Customer, Product
+from .models import CashDrawer, Category, Cheque, Customer, Product
 
 INPUT_CLASSES = (
     "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
@@ -196,6 +196,135 @@ class CustomerForm(forms.ModelForm):
         if limit < 0:
             raise forms.ValidationError("Credit limit cannot be negative.")
         return limit
+
+
+class SupplierQuickForm(forms.ModelForm):
+    """Create a supplier from inside the supplier-bill form.
+
+    `is_supplier` is forced rather than offered: this form only exists on a
+    page that is about to bill the party as a supplier.
+    """
+
+    class Meta:
+        model = Customer
+        fields = ["name", "phone", "address"]
+        widgets = {
+            "name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Lanka Polymers"}
+            ),
+            "phone": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. 077 123 4567"}
+            ),
+            "address": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}),
+        }
+
+    def clean_name(self):
+        return self.cleaned_data["name"].strip()
+
+    def clean_phone(self):
+        return self.cleaned_data["phone"].strip()
+
+    def save(self, commit=True):
+        supplier = super().save(commit=False)
+        supplier.is_supplier = True
+        if commit:
+            supplier.save()
+        return supplier
+
+
+class ProductQuickForm(ProductForm):
+    """Create a product from inside the supplier-bill form.
+
+    Subclasses ProductForm to inherit its duplicate name+size check — a
+    shortcut on this page must not be a way around it. `is_active` is dropped
+    and forced on: a product being received into stock is one being sold.
+    """
+
+    class Meta(ProductForm.Meta):
+        fields = ["name", "size", "category", "default_price"]
+
+    def save(self, commit=True):
+        product = super().save(commit=False)
+        product.is_active = True
+        if commit:
+            product.save()
+        return product
+
+
+class CashDrawerOutForm(forms.ModelForm):
+    """Record cash leaving the drawer by hand.
+
+    Everything here is money going out, so `txn_type` is not a field — it is
+    always OUT. Money coming *in* is recorded by saving a bill, never typed.
+
+    `kind` is not stored: CashDrawer has no account column, so which account a
+    transfer went to survives only in the reason text. The per-account totals
+    on the page are read from CashTransfer instead, and so do not count these.
+    """
+
+    KIND_CHOICES = [
+        ("withdrawal", "Owner Withdrawal"),
+        ("senovka", "Transfer to Senovka Account"),
+        ("dinusha", "Transfer to Dinusha Account"),
+    ]
+
+    kind = forms.ChoiceField(
+        choices=KIND_CHOICES,
+        label="Type",
+        widget=forms.Select(attrs={"class": SELECT_CLASSES}),
+    )
+
+    class Meta:
+        model = CashDrawer
+        fields = ["txn_date", "amount", "reason"]
+        labels = {"txn_date": "Date"}
+        widgets = {
+            "txn_date": forms.DateInput(attrs={"class": INPUT_CLASSES, "type": "date"}),
+            "amount": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.01",
+                    "min": "0",
+                    "placeholder": "0.00",
+                }
+            ),
+            "reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. banked at BOC Galle"}
+            ),
+        }
+
+    def __init__(self, *args, drawer_balance=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.drawer_balance = drawer_balance
+
+    def clean_reason(self):
+        return self.cleaned_data["reason"].strip()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be above 0.")
+
+        # Cash that isn't in the drawer can't leave it. Without this the page
+        # would happily report a negative pile of banknotes.
+        if self.drawer_balance is not None and amount > self.drawer_balance:
+            raise forms.ValidationError(
+                f"Only {self.drawer_balance:,.2f} is in the drawer."
+            )
+        return amount
+
+    def save(self, commit=True):
+        entry = super().save(commit=False)
+        entry.txn_type = CashDrawer.TxnType.OUT
+
+        # The destination lives in the text or nowhere, so it goes in the text.
+        label = dict(self.KIND_CHOICES)[self.cleaned_data["kind"]]
+        note = self.cleaned_data.get("reason", "")
+        entry.reason = (f"{label} — {note}" if note else label)[:255]
+
+        if commit:
+            entry.save()
+        return entry
 
 
 class ChequeForm(forms.ModelForm):
