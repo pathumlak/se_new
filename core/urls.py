@@ -28,19 +28,31 @@ urlpatterns = [
     ),
     path("products/<int:pk>/prices/", views.product_prices, name="product_prices"),
     path("customers/", views.customer_list, name="customer_list"),
+    path("customers/create/", views.customer_create, name="customer_create"),
+    path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),
+    path("customers/<int:pk>/edit/", views.customer_update, name="customer_update"),
+    path("customers/<int:pk>/delete/", views.customer_delete, name="customer_delete"),
     path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
+    path("customers/<int:pk>/ledger/", views.customer_ledger, name="customer_ledger"),
     # Serves the Save All button on both price pages above.
     path(
         "api/customer-price/save-all/",
         views.customer_price_save_all,
         name="customer_price_save_all",
     ),
-    path("bills/new/", views.make_bill, name="make_bill"),
+    path("bills/create/", views.bill_create, name="bill_create"),
+    # Feeds the step 1 product table on the page above.
+    path(
+        "api/bill/products/<int:customer_id>/",
+        views.bill_products,
+        name="bill_products",
+    ),
     path("bills/", views.bill_list, name="bill_list"),
     path("cheques/", views.cheque_list, name="cheque_list"),
     path("cash-drawer/", views.cash_drawer, name="cash_drawer"),
     path("supplier-bills/", views.supplier_bill_list, name="supplier_bill_list"),
     path("production/", views.production, name="production"),
-    path("ledger/", views.customer_ledger, name="customer_ledger"),
+    # Section index only. The ledger itself is per-customer, above.
+    path("ledger/", views.ledger_index, name="ledger_index"),
     path("reports/sales/", views.sales_report, name="sales_report"),
 ]

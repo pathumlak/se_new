@@ -119,6 +119,85 @@ class ProductForm(forms.ModelForm):
         return cleaned
 
 
+class CustomerForm(forms.ModelForm):
+    """Create/edit a customer.
+
+    `balance` is deliberately absent: it moves only through bills, payments and
+    cheques, so it must never be typed in here.
+
+    `credit_limit` is *removed from the form* for managers, not just hidden in
+    the template. A field hidden in HTML is still a field the POST can carry,
+    so hiding alone would let a manager set any limit by hand. Dropping it
+    means a manager's POST cannot reach the column at all: on create it takes
+    the model default, and on edit the stored limit is left untouched.
+    """
+
+    class Meta:
+        model = Customer
+        fields = [
+            "name",
+            "phone",
+            "address",
+            "credit_limit",
+            "is_supplier",
+            "is_active",
+        ]
+        widgets = {
+            "name": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Nimal Stores",
+                    "autofocus": True,
+                }
+            ),
+            "phone": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. 077 123 4567"}
+            ),
+            "address": forms.Textarea(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "rows": 3,
+                    "placeholder": "Billing or delivery address",
+                }
+            ),
+            "credit_limit": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.01",
+                    "min": "0",
+                    "placeholder": "0.00",
+                }
+            ),
+            "is_supplier": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+        help_texts = {
+            "phone": "Leave blank if you don't have one.",
+            "address": "Leave blank if you don't have one.",
+            "credit_limit": "How much this customer may owe before new credit sales should be refused.",
+        }
+
+    def __init__(self, *args, is_super_admin=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not is_super_admin:
+            del self.fields["credit_limit"]
+
+    def clean_name(self):
+        """Collapse surrounding whitespace so ' Nimal ' and 'Nimal' don't read
+        as two different accounts in the ledger."""
+        return self.cleaned_data["name"].strip()
+
+    def clean_phone(self):
+        return self.cleaned_data["phone"].strip()
+
+    def clean_credit_limit(self):
+        # Only reachable for a super admin; managers have no such field.
+        limit = self.cleaned_data["credit_limit"]
+        if limit < 0:
+            raise forms.ValidationError("Credit limit cannot be negative.")
+        return limit
+
+
 class CustomerPriceForm(forms.Form):
     """Validates one price save from a price table's AJAX call.
 

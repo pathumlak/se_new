@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{% if is_edit %}Edit {{ customer.name }}{% else %}New Customer{% endif %} · Senovka Plastics{% endblock %}
+{% block header %}{% if is_edit %}Edit Customer{% else %}New Customer{% endif %}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+
+  <!-- Breadcrumb -->
+  <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
+    <a href="{% url 'core:customer_list' %}" class="hover:text-slate-900">Customers</a>
+    <span class="text-slate-300">/</span>
+    {% if is_edit %}
+      <a href="{% url 'core:customer_detail' customer.pk %}" class="hover:text-slate-900">{{ customer.name }}</a>
+      <span class="text-slate-300">/</span>
+      <span class="text-slate-700">Edit</span>
+    {% else %}
+      <span class="text-slate-700">New</span>
+    {% endif %}
+  </nav>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    {% if form.non_field_errors %}
+      <div class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        {{ form.non_field_errors|join:" " }}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="space-y-5">
+
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.name.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.name.label }} <span class="text-rose-500">*</span>
+            </label>
+            {{ form.name }}
+            {% for error in form.name.errors %}
+              <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+            {% endfor %}
+          </div>
+
+          <div>
+            <label for="{{ form.phone.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.phone.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
+            </label>
+            {{ form.phone }}
+            {% if form.phone.help_text %}
+              <p class="mt-1.5 text-xs text-slate-400">{{ form.phone.help_text }}</p>
+            {% endif %}
+            {% for error in form.phone.errors %}
+              <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <label for="{{ form.address.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.address.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
+          </label>
+          {{ form.address }}
+          {% for error in form.address.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
+        {% comment %}
+        Keyed off the form, not off the role: CustomerForm drops credit_limit
+        entirely for managers, so asking the form whether it has the field
+        keeps the page and the permission in step by construction. Re-deriving
+        the role here could drift out of step with the form and print a field
+        that isn't there — or worse, imply one is saved when it isn't.
+        {% endcomment %}
+        {% if form.credit_limit %}
+          <div>
+            <label for="{{ form.credit_limit.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.credit_limit.label }}
+              <span class="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                Admin
+              </span>
+            </label>
+            {{ form.credit_limit }}
+            {% if form.credit_limit.help_text %}
+              <p class="mt-1.5 text-xs text-slate-400">{{ form.credit_limit.help_text }}</p>
+            {% endif %}
+            {% for error in form.credit_limit.errors %}
+              <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <div class="flex items-start gap-3">
+            <div class="flex h-5 items-center">{{ form.is_supplier }}</div>
+            <div>
+              <label for="{{ form.is_supplier.id_for_label }}" class="text-sm font-medium text-slate-700">
+                {{ form.is_supplier.label }}
+              </label>
+              <p class="text-xs text-slate-500">Suppliers are billed on supplier bills instead of sales bills.</p>
+            </div>
+          </div>
+          {% for error in form.is_supplier.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <div class="flex items-start gap-3">
+            <div class="flex h-5 items-center">{{ form.is_active }}</div>
+            <div>
+              <label for="{{ form.is_active.id_for_label }}" class="text-sm font-medium text-slate-700">
+                {{ form.is_active.label }}
+              </label>
+              <p class="text-xs text-slate-500">Inactive customers stay in past bills but can't be added to new ones.</p>
+            </div>
+          </div>
+          {% for error in form.is_active.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
+        {% if is_edit %}
+          {# Read-only: balance only moves via bills, payments and cheques. #}
+          <div class="flex items-start gap-3 rounded-lg border border-slate-200 px-4 py-3">
+            <svg class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/>
+            </svg>
+            <div>
+              <p class="text-sm text-slate-700">
+                Current balance:
+                <span class="font-semibold {% if customer.balance < 0 %}text-rose-600{% elif customer.balance > 0 %}text-emerald-600{% else %}text-slate-900{% endif %}">
+                  {{ customer.balance|floatformat:2|intcomma }}
+                </span>
+                {% if customer.balance < 0 %}
+                  <span class="text-xs text-slate-500">(owes us)</span>
+                {% elif customer.balance > 0 %}
+                  <span class="text-xs text-slate-500">(we owe them)</span>
+                {% endif %}
+              </p>
+              <p class="mt-0.5 text-xs text-slate-500">
+                Balance is managed by bills, payments and cheques, so it can't be edited here.
+              </p>
+            </div>
+          </div>
+        {% endif %}
+
+      </div>
+
+      <div class="mt-7 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
+        <a href="{% if is_edit %}{% url 'core:customer_detail' customer.pk %}{% else %}{% url 'core:customer_list' %}{% endif %}"
+           class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </a>
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          {% if is_edit %}Save changes{% else %}Create customer{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

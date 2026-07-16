@@ -1,0 +1,624 @@
+{% comment %}
+Bill creation, steps 1 and 2. One page, no reloads:
+
+  step 1  pick a customer -> GET their prices -> tick products
+  step 2  set quantities and prices -> live line totals, subtotal and summary
+
+Nothing here writes to the database. The payload the save step needs is built
+by collectBill(); prices the biller edited are flagged there so they can be
+written back to CustomerPrice on save.
+
+Spelled as a comment tag because the hash-style comment is single-line only:
+spanning lines, it isn't stripped and renders onto the page as text.
+{% endcomment %}
+<script>
+  (function () {
+    // A real pk stands in for the customer id so Django builds the path; the
+    // sentinel is swapped for the chosen customer at request time.
+    const URL_TEMPLATE = '{% url "core:bill_products" 999999999 %}';
+
+    const MIN_QTY = 1;
+
+    const select = document.getElementById('customer');
+
+    // ---- step 1 ----
+    const step1     = document.getElementById('step-1');
+    const rowsBody  = document.getElementById('product-rows');
+    const selectAll = document.getElementById('select-all');
+    const addBtn    = document.getElementById('add-selected');
+    const countEl   = document.getElementById('selected-count');
+    const nounEl    = document.getElementById('selected-noun');
+    const errorText = document.getElementById('error-text');
+
+    const panels = {
+      idle:    document.getElementById('panel-idle'),
+      loading: document.getElementById('panel-loading'),
+      error:   document.getElementById('panel-error'),
+      empty:   document.getElementById('panel-empty'),
+      table:   document.getElementById('panel-table'),
+    };
+
+    // ---- step 2 ----
+    const step2       = document.getElementById('step-2');
+    const billBody    = document.getElementById('bill-rows');
+    const billEmpty   = document.getElementById('bill-empty');
+    const subtotalEl  = document.getElementById('subtotal-cell');
+    const invalidNote = document.getElementById('invalid-note');
+    const rail1       = document.getElementById('rail-1');
+    const rail2       = document.getElementById('rail-2');
+
+    const summary = {
+      customer:   document.getElementById('summary-customer'),
+      balance:    document.getElementById('summary-balance'),
+      subtotal:   document.getElementById('summary-subtotal'),
+      owedRow:    document.getElementById('summary-owed-row'),
+      owed:       document.getElementById('summary-owed'),
+      creditRow:  document.getElementById('summary-credit-row'),
+      credit:     document.getElementById('summary-credit'),
+      collect:    document.getElementById('summary-collect'),
+      collectNote: document.getElementById('summary-collect-note'),
+      changed:    document.getElementById('summary-changed'),
+    };
+
+    // ---- modal ----
+    const modal       = document.getElementById('add-modal');
+    const modalRows   = document.getElementById('add-modal-rows');
+    const modalSearch = document.getElementById('add-modal-search');
+    const modalEmpty  = document.getElementById('add-modal-empty');
+
+    // Products as the server last described them for this customer.
+    let loaded = [];
+    // productId -> {product, tr, qtyInput, priceInput, ...}. A Map keeps the
+    // rows in the order they were added.
+    const lines = new Map();
+    let requestToken = 0;
+    let currentCustomer = '';
+
+    const MONEY = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    function money(n) { return MONEY.format(n); }
+
+    // Number('') is 0, which would read an empty box as a free product.
+    function num(value) {
+      const text = String(value).trim();
+      if (text === '') return NaN;
+      const n = Number(text);
+      return Number.isFinite(n) ? n : NaN;
+    }
+    function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+    function show(name) {
+      Object.keys(panels).forEach(function (key) {
+        panels[key].classList.toggle('hidden', key !== name);
+      });
+    }
+
+    // ================= step 1: product picking =================
+
+    function checkboxes() { return Array.from(rowsBody.querySelectorAll('.js-pick')); }
+    function checked() {
+      return checkboxes().filter(function (box) { return box.checked; });
+    }
+
+    function refreshPicker() {
+      const picked = checked();
+      countEl.textContent = picked.length;
+      nounEl.textContent = picked.length === 1 ? 'product' : 'products';
+      addBtn.disabled = picked.length === 0;
+
+      const boxes = checkboxes();
+      selectAll.checked = boxes.length > 0 && picked.length === boxes.length;
+      // Partly ticked reads as neither on nor off.
+      selectAll.indeterminate = picked.length > 0 && picked.length < boxes.length;
+    }
+
+    function cell(row, text, className) {
+      const td = document.createElement('td');
+      td.className = className;
+      // textContent, never innerHTML: product names are operator-entered.
+      td.textContent = text;
+      row.appendChild(td);
+      return td;
+    }
+
+    function priceBadge(hasCustom) {
+      const badge = document.createElement('span');
+      badge.className = 'rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ' +
+        (hasCustom
+          ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+          : 'bg-slate-50 text-slate-500 ring-slate-200');
+      badge.textContent = hasCustom ? 'Custom' : 'Default';
+      return badge;
+    }
+
+    function renderPicker(products) {
+      rowsBody.replaceChildren();
+
+      products.forEach(function (product) {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-50';
+
+        const pick = document.createElement('td');
+        pick.className = 'px-5 py-3';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.className = 'js-pick h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-1 focus:ring-slate-900';
+        box.value = String(product.id);
+        box.setAttribute('aria-label', 'Select ' + product.name);
+        pick.appendChild(box);
+        row.appendChild(pick);
+
+        cell(row, product.name, 'whitespace-nowrap px-5 py-3 font-medium text-slate-900');
+        cell(row, product.size || '—', 'whitespace-nowrap px-5 py-3 text-slate-600' + (product.size ? '' : ' text-slate-300'));
+        cell(row, product.qty, 'whitespace-nowrap px-5 py-3 text-right text-slate-900');
+        cell(row, product.unit_price, 'whitespace-nowrap px-5 py-3 text-right font-medium text-slate-900');
+
+        const note = document.createElement('td');
+        note.className = 'whitespace-nowrap px-5 py-3';
+        note.appendChild(priceBadge(product.has_custom_price));
+        row.appendChild(note);
+
+        rowsBody.appendChild(row);
+      });
+
+      refreshPicker();
+    }
+
+    function load(customerId) {
+      // Each request carries a token; a slow earlier reply must not overwrite
+      // the table after the biller has moved to another customer.
+      const token = ++requestToken;
+
+      loaded = [];
+      rowsBody.replaceChildren();
+      refreshPicker();
+      show('loading');
+
+      fetch(URL_TEMPLATE.replace('999999999', customerId), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+        .then(function (res) {
+          // A session that expired mid-page answers with the login HTML, not
+          // JSON, so anything unparsable counts as a failure.
+          return res.json()
+            .catch(function () { return null; })
+            .then(function (data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function (result) {
+          if (token !== requestToken) return;
+
+          if (!result.ok || !Array.isArray(result.data)) {
+            const message = result.data && result.data.error
+              ? result.data.error
+              : 'Could not load products — please try again.';
+            throw new Error(message);
+          }
+
+          loaded = result.data;
+          if (loaded.length === 0) {
+            show('empty');
+            return;
+          }
+          renderPicker(loaded);
+          show('table');
+        })
+        .catch(function (err) {
+          if (token !== requestToken) return;
+          errorText.textContent = err.message;
+          show('error');
+        });
+    }
+
+    // ================= step 2: bill items =================
+
+    function stockOf(product) {
+      const stock = num(product.qty);
+      return Number.isNaN(stock) ? 0 : stock;
+    }
+
+    // Returns the line total, or null when the row can't produce one. Null is
+    // deliberate: a bad row must not silently count as 0 in the subtotal.
+    function evaluate(line) {
+      const qty = num(line.qtyInput.value);
+      const price = num(line.priceInput.value);
+      const stock = stockOf(line.product);
+
+      let qtyError = '';
+      if (Number.isNaN(qty)) qtyError = 'Enter a quantity.';
+      else if (qty < MIN_QTY) qtyError = 'Minimum quantity is ' + MIN_QTY + '.';
+      else if (qty > stock) qtyError = 'Only ' + line.product.qty + ' in stock.';
+
+      let priceError = '';
+      if (Number.isNaN(price)) priceError = 'Enter a price.';
+      else if (price < 0) priceError = 'Price cannot be negative.';
+
+      line.qtyError.textContent = qtyError;
+      line.qtyError.classList.toggle('hidden', qtyError === '');
+      line.priceError.textContent = priceError;
+      line.priceError.classList.toggle('hidden', priceError === '');
+
+      const bad = qtyError !== '' || priceError !== '';
+      line.tr.classList.toggle('bg-rose-50', bad);
+
+      // A price that differs from what the server quoted gets written back to
+      // CustomerPrice on save, so the biller is told it will stick.
+      const changed = !Number.isNaN(price) &&
+        price.toFixed(2) !== Number(line.product.unit_price).toFixed(2);
+      line.changedBadge.classList.toggle('hidden', !changed);
+      line.changed = changed;
+
+      return bad ? null : round2(qty * price);
+    }
+
+    function recalc() {
+      let subtotal = 0;
+      let invalid = 0;
+      let changed = 0;
+
+      lines.forEach(function (line) {
+        const total = evaluate(line);
+        if (total === null) {
+          line.totalCell.textContent = '—';
+          line.totalCell.classList.add('text-slate-300');
+          invalid += 1;
+        } else {
+          line.totalCell.textContent = money(total);
+          line.totalCell.classList.remove('text-slate-300');
+          subtotal = round2(subtotal + total);
+        }
+        if (line.changed) changed += 1;
+      });
+
+      subtotalEl.textContent = money(subtotal);
+
+      const hasLines = lines.size > 0;
+      billEmpty.classList.toggle('hidden', hasLines);
+
+      if (invalid > 0) {
+        invalidNote.textContent = invalid + (invalid === 1 ? ' row needs' : ' rows need') +
+          ' attention and is left out of the subtotal.';
+        invalidNote.classList.remove('hidden');
+      } else {
+        invalidNote.classList.add('hidden');
+      }
+
+      if (changed > 0) {
+        summary.changed.textContent = changed + (changed === 1 ? ' price was' : ' prices were') +
+          ' edited. Saving the bill will keep them as this customer’s price.';
+        summary.changed.classList.remove('hidden');
+      } else {
+        summary.changed.classList.add('hidden');
+      }
+
+      updateSummary(subtotal);
+    }
+
+    function updateSummary(subtotal) {
+      const option = select.selectedOptions[0];
+      const name = option && option.dataset.name ? option.dataset.name : '';
+      const balanceRaw = option ? num(option.dataset.balance) : NaN;
+      const balance = Number.isNaN(balanceRaw) ? 0 : balanceRaw;
+
+      summary.customer.textContent = name;
+      summary.balance.textContent = money(balance);
+      summary.balance.className = 'font-medium ' +
+        (balance < 0 ? 'text-rose-600' : balance > 0 ? 'text-emerald-600' : 'text-slate-500');
+
+      summary.subtotal.textContent = money(subtotal);
+
+      // Negative balance is what they owe us; positive is what we owe them.
+      const owes = balance < 0;
+      summary.owedRow.classList.toggle('hidden', !owes);
+      summary.owedRow.classList.toggle('flex', owes);
+      if (owes) summary.owed.textContent = money(Math.abs(balance));
+
+      const inCredit = balance > 0;
+      summary.creditRow.classList.toggle('hidden', !inCredit);
+      summary.creditRow.classList.toggle('flex', inCredit);
+      if (inCredit) summary.credit.textContent = money(balance);
+
+      // subtotal + what they owe, or subtotal - what we owe them. Both are
+      // subtotal - balance, because the sign already says which way it runs.
+      const collect = round2(subtotal - balance);
+      summary.collect.textContent = money(collect);
+      summary.collect.className = 'text-xl font-semibold ' +
+        (collect < 0 ? 'text-emerald-600' : 'text-slate-900');
+
+      if (collect < 0) {
+        summary.collectNote.textContent = 'Nothing to collect — ' + money(Math.abs(collect)) +
+          ' credit would remain.';
+      } else if (owes) {
+        summary.collectNote.textContent = 'This bill plus the ' + money(Math.abs(balance)) +
+          ' already outstanding.';
+      } else if (inCredit) {
+        summary.collectNote.textContent = 'This bill less the ' + money(balance) + ' in credit.';
+      } else {
+        summary.collectNote.textContent = 'This bill only.';
+      }
+    }
+
+    function numberInput(value, extra) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.value = value;
+      input.className = 'w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm ' +
+        'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
+      Object.keys(extra).forEach(function (key) { input.setAttribute(key, extra[key]); });
+      return input;
+    }
+
+    function errorText_(row) {
+      const p = document.createElement('p');
+      p.className = 'mt-1 hidden text-right text-xs text-rose-600';
+      row.appendChild(p);
+      return p;
+    }
+
+    function addLine(product) {
+      if (lines.has(product.id)) return;
+
+      const tr = document.createElement('tr');
+
+      cell(tr, product.name, 'whitespace-nowrap px-4 py-3 font-medium text-slate-900');
+      cell(tr, product.size || '—', 'whitespace-nowrap px-4 py-3 text-slate-600' + (product.size ? '' : ' text-slate-300'));
+
+      // Qty
+      const qtyTd = document.createElement('td');
+      qtyTd.className = 'px-4 py-3 text-right';
+      const qtyInput = numberInput('1', {
+        min: String(MIN_QTY),
+        max: product.qty,
+        // Stock carries 3 dp, so the step has to allow them or the browser
+        // rejects a perfectly sellable 2.5.
+        step: '0.001',
+        'aria-label': 'Quantity for ' + product.name,
+      });
+      qtyTd.appendChild(qtyInput);
+      const qtyError = errorText_(qtyTd);
+      const stockHint = document.createElement('p');
+      stockHint.className = 'mt-1 text-right text-[10px] text-slate-400';
+      stockHint.textContent = product.qty + ' in stock';
+      qtyTd.appendChild(stockHint);
+      tr.appendChild(qtyTd);
+
+      // Unit price
+      const priceTd = document.createElement('td');
+      priceTd.className = 'px-4 py-3 text-right';
+      const priceInput = numberInput(product.unit_price, {
+        min: '0',
+        step: '0.01',
+        'aria-label': 'Unit price for ' + product.name,
+      });
+      priceTd.appendChild(priceInput);
+      const priceError = errorText_(priceTd);
+
+      const changedBadge = document.createElement('span');
+      changedBadge.className = 'mt-1 hidden rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold ' +
+        'text-amber-700 ring-1 ring-inset ring-amber-200';
+      changedBadge.textContent = 'Price updated';
+      const badgeWrap = document.createElement('div');
+      badgeWrap.className = 'flex justify-end';
+      badgeWrap.appendChild(changedBadge);
+      priceTd.appendChild(badgeWrap);
+      tr.appendChild(priceTd);
+
+      const totalCell = cell(tr, '0.00', 'whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900');
+
+      // Remove
+      const removeTd = document.createElement('td');
+      removeTd.className = 'px-4 py-3 text-right';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', 'Remove ' + product.name);
+      removeTd.appendChild(remove);
+      tr.appendChild(removeTd);
+
+      const line = {
+        product: product,
+        tr: tr,
+        qtyInput: qtyInput,
+        priceInput: priceInput,
+        qtyError: qtyError,
+        priceError: priceError,
+        totalCell: totalCell,
+        changedBadge: changedBadge,
+        changed: false,
+      };
+      lines.set(product.id, line);
+      billBody.appendChild(tr);
+
+      // 'input' fires on keyup, paste and the spinner arrows alike.
+      qtyInput.addEventListener('input', recalc);
+      priceInput.addEventListener('input', recalc);
+      remove.addEventListener('click', function () {
+        lines.delete(product.id);
+        tr.remove();
+        recalc();
+      });
+    }
+
+    /**
+     * What the save step needs. Prices the biller edited are flagged so they
+     * can be written back to CustomerPrice.
+     */
+    function collectBill() {
+      const out = [];
+      lines.forEach(function (line) {
+        out.push({
+          product_id: line.product.id,
+          qty: line.qtyInput.value.trim(),
+          unit_price: line.priceInput.value.trim(),
+          price_changed: line.changed,
+        });
+      });
+      return { customer_id: select.value, lines: out };
+    }
+    // The save step (not built yet) reads the bill through this.
+    document.addEventListener('bill:collect', function (e) {
+      if (e.detail && typeof e.detail.reply === 'function') e.detail.reply(collectBill());
+    });
+
+    function enterStep2() {
+      step1.classList.add('hidden');
+      step2.classList.remove('hidden');
+      step2.classList.add('grid');
+      rail1.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+      recalc();
+    }
+
+    function resetToStep1() {
+      lines.clear();
+      billBody.replaceChildren();
+      step2.classList.add('hidden');
+      step2.classList.remove('grid');
+      step1.classList.remove('hidden');
+      rail1.className = 'flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-white';
+      rail2.className = 'flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-400';
+      checkboxes().forEach(function (box) { box.checked = false; });
+      refreshPicker();
+    }
+
+    // ================= modal =================
+
+    function available() {
+      return loaded.filter(function (product) { return !lines.has(product.id); });
+    }
+
+    function renderModal() {
+      const term = modalSearch.value.trim().toLowerCase();
+      const rows = available().filter(function (product) {
+        return product.name.toLowerCase().indexOf(term) !== -1;
+      });
+
+      modalRows.replaceChildren();
+
+      if (rows.length === 0) {
+        modalEmpty.textContent = available().length === 0
+          ? 'Every product is already on the bill.'
+          : 'No products match that search.';
+        modalEmpty.classList.remove('hidden');
+        return;
+      }
+      modalEmpty.classList.add('hidden');
+
+      rows.forEach(function (product) {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50';
+
+        const nameTd = document.createElement('td');
+        nameTd.className = 'px-5 py-3';
+        const name = document.createElement('p');
+        name.className = 'font-medium text-slate-900';
+        name.textContent = product.name;
+        const meta = document.createElement('p');
+        meta.className = 'text-xs text-slate-500';
+        meta.textContent = (product.size ? product.size + ' · ' : '') +
+          product.qty + ' in stock · ' + product.unit_price +
+          (product.has_custom_price ? ' (custom)' : ' (default)');
+        nameTd.appendChild(name);
+        nameTd.appendChild(meta);
+        tr.appendChild(nameTd);
+
+        const actionTd = document.createElement('td');
+        actionTd.className = 'w-24 px-5 py-3 text-right';
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50';
+        add.textContent = 'Add';
+        add.addEventListener('click', function () {
+          addLine(product);
+          recalc();
+          renderModal();  // it is on the bill now, so drop it from the list
+        });
+        actionTd.appendChild(add);
+        tr.appendChild(actionTd);
+
+        modalRows.appendChild(tr);
+      });
+    }
+
+    function openModal() {
+      renderModal();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modalSearch.focus();
+    }
+    function closeModal() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      modalSearch.value = '';
+    }
+
+    // ================= wiring =================
+
+    select.addEventListener('change', function () {
+      const id = select.value;
+
+      // The bill belongs to a customer, prices and all, so it cannot follow
+      // them to a different one.
+      if (lines.size > 0 && id !== currentCustomer) {
+        const ok = window.confirm('Changing the customer clears the ' + lines.size +
+          ' item' + (lines.size === 1 ? '' : 's') + ' on this bill. Continue?');
+        if (!ok) {
+          select.value = currentCustomer;
+          return;
+        }
+      }
+
+      resetToStep1();
+      currentCustomer = id;
+
+      if (!id) {
+        requestToken++;  // abandon any reply still in flight
+        loaded = [];
+        show('idle');
+        return;
+      }
+      load(id);
+    });
+
+    document.getElementById('retry').addEventListener('click', function () {
+      if (select.value) load(select.value);
+    });
+
+    selectAll.addEventListener('change', function () {
+      checkboxes().forEach(function (box) { box.checked = selectAll.checked; });
+      refreshPicker();
+    });
+
+    rowsBody.addEventListener('change', function (e) {
+      if (e.target.classList.contains('js-pick')) refreshPicker();
+    });
+
+    addBtn.addEventListener('click', function () {
+      const picked = checked().map(function (box) { return box.value; });
+      loaded.forEach(function (product) {
+        if (picked.indexOf(String(product.id)) !== -1) addLine(product);
+      });
+      if (lines.size === 0) return;
+      enterStep2();
+    });
+
+    document.getElementById('add-more').addEventListener('click', openModal);
+    document.getElementById('add-more-empty').addEventListener('click', openModal);
+    document.getElementById('add-modal-close').addEventListener('click', closeModal);
+    document.getElementById('add-modal-done').addEventListener('click', closeModal);
+    modalSearch.addEventListener('input', renderModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+
+    document.getElementById('start-over').addEventListener('click', function () {
+      if (lines.size > 0 && !window.confirm('Clear this bill and start over?')) return;
+      resetToStep1();
+    });
+
+    refreshPicker();
+  })();
+</script>

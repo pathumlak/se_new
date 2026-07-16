@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Ledger · {{ customer.name }} · Senovka Plastics{% endblock %}
+{% block header %}Customer Ledger{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Screen: the print-only masthead stays out of the way. */
+  .print-only { display: none; }
+
+  @media print {
+    /* Export PDF is the browser's own print dialogue, so everything that is
+       app chrome rather than ledger has to disappear here. */
+    #sidebar, #sidebar-backdrop, header, .no-print { display: none !important; }
+    .lg\:pl-64 { padding-left: 0 !important; }
+    main { padding: 0 !important; }
+    body { background: #fff !important; }
+
+    .print-only { display: block; }
+    .print-plain { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+
+    /* Long ledgers span pages: repeat the head and never split a row. */
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+
+    @page { size: A4; margin: 12mm; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Masthead, print only -->
+<div class="print-only mb-4">
+  <h1 style="font-size:16px; font-weight:700;">Senovka Plastics — Customer Ledger</h1>
+  <p style="font-size:12px;">
+    {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% endif %}
+    ·
+    {% if from_date or to_date %}
+      {% if from_date %}{{ from_date|date:"j M Y" }}{% else %}Start{% endif %}
+      –
+      {% if to_date %}{{ to_date|date:"j M Y" }}{% else %}Today{% endif %}
+    {% else %}
+      All activity
+    {% endif %}
+  </p>
+</div>
+
+<!-- Header -->
+<div class="no-print mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div class="min-w-0">
+    <a href="{% url 'core:customer_detail' customer.pk %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      {{ customer.name }}
+    </a>
+    <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">Ledger</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      {% if customer.phone %}{{ customer.phone }}{% else %}<span class="text-slate-300">No phone recorded</span>{% endif %}
+    </p>
+  </div>
+
+  <div class="flex shrink-0 flex-wrap gap-2">
+    <a href="{% url 'core:customer_prices' customer.pk %}"
+       class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Prices
+    </a>
+    <button type="button" id="export-pdf"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z"/>
+      </svg>
+      Export PDF
+    </button>
+  </div>
+</div>
+
+<!-- Account summary -->
+<div class="mb-5 grid gap-4 sm:grid-cols-3">
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print-plain">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Balance</p>
+    <p class="mt-1 text-2xl font-semibold
+              {% if customer.balance < 0 %}text-rose-600
+              {% elif customer.balance > 0 %}text-emerald-600
+              {% else %}text-slate-400{% endif %}">
+      {{ customer.balance|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-1 text-xs text-slate-500">
+      {% if customer.balance < 0 %}
+        Owes us {{ customer.owed|floatformat:2|intcomma }}
+      {% elif customer.balance > 0 %}
+        We owe them {{ customer.balance|floatformat:2|intcomma }}
+      {% else %}
+        Settled
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print-plain">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Credit Limit</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ customer.credit_limit|floatformat:2|intcomma }}</p>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print-plain">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available Credit</p>
+    <p class="mt-1 text-2xl font-semibold
+              {% if customer.credit_limit > 0 and customer.available_credit <= 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+      {{ customer.available_credit|floatformat:2|intcomma }}
+    </p>
+  </div>
+</div>
+
+<!-- Date range -->
+<form method="get" class="no-print mb-5 flex flex-col gap-2 sm:flex-row sm:items-end">
+  <div>
+    <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">To</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div class="flex gap-2">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:customer_ledger' customer.pk %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+{% if from_date %}
+  {# The running balance restarts at 0 on the first row shown, so a part-range view is not a statement of what is owed overall. #}
+  <p class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+    Running balance starts at 0 on the first row below. Activity before
+    {{ from_date|date:"j M Y" }} is not carried in.
+  </p>
+{% endif %}
+
+<!-- Ledger -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm print-plain">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Sale</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Che/Cash</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ row.date|date:"j M Y" }}</td>
+            <td class="px-5 py-3 text-slate-900">{{ row.description }}</td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right text-slate-900">
+              {% if row.sale is not None %}{{ row.sale|floatformat:2|intcomma }}{% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right text-slate-900">
+              {% if row.credit is not None %}{{ row.credit|floatformat:2|intcomma }}{% endif %}
+            </td>
+
+            {# Positive means the customer owes us at this point in the run. #}
+            <td class="whitespace-nowrap px-5 py-3 text-right font-medium
+                       {% if row.balance > 0 %}text-rose-600
+                       {% elif row.balance < 0 %}text-emerald-600
+                       {% else %}text-slate-400{% endif %}">
+              {{ row.balance|floatformat:2|intcomma }}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="px-5 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No ledger activity in this date range.</p>
+                <a href="{% url 'core:customer_ledger' customer.pk %}"
+                   class="no-print mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear dates
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No ledger activity yet.</p>
+                <p class="mt-1 text-xs text-slate-400">Bills, payments and purchases will appear here.</p>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      {% if rows %}
+        <tfoot class="border-t-2 border-slate-200 bg-slate-50">
+          <tr>
+            <td class="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500" colspan="2">
+              Totals{% if is_filtered %} <span class="font-normal normal-case text-slate-400">(range shown)</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-right font-semibold text-slate-900">
+              {{ total_sale|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-right font-semibold text-slate-900">
+              {{ total_credit|floatformat:2|intcomma }}
+            </td>
+            <td class="whitespace-nowrap px-5 py-3 text-right font-semibold
+                       {% if closing_balance > 0 %}text-rose-600
+                       {% elif closing_balance < 0 %}text-emerald-600
+                       {% else %}text-slate-400{% endif %}">
+              {{ closing_balance|floatformat:2|intcomma }}
+            </td>
+          </tr>
+        </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+
+<p class="mt-3 text-xs text-slate-400">
+  Balance runs positive when the customer owes us: each sale adds, each
+  cheque, cash payment or purchase subtracts.
+</p>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    // No PDF library on the server — the browser's print dialogue writes the
+    // PDF, and the print stylesheet above strips the app chrome out of it.
+    const btn = document.getElementById('export-pdf');
+    if (btn) btn.addEventListener('click', function () { window.print(); });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Customers · Senovka Plastics{% endblock %}
+{% block header %}Customers{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <form method="get" role="search" class="flex w-full flex-col gap-2 sm:flex-row sm:max-w-3xl">
+    <div class="relative flex-1">
+      <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+        </svg>
+      </span>
+      <input type="search" name="q" value="{{ query }}"
+             placeholder="Search customers…"
+             class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
+                    placeholder:text-slate-400 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+
+    <select name="kind"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">Everyone</option>
+      <option value="customers" {% if kind == 'customers' %}selected{% endif %}>Customers only</option>
+      <option value="suppliers" {% if kind == 'suppliers' %}selected{% endif %}>Suppliers only</option>
+    </select>
+
+    <select name="status"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">Any status</option>
+      <option value="active" {% if status == 'active' %}selected{% endif %}>Active</option>
+      <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>Inactive</option>
+    </select>
+
+    <div class="flex gap-2">
+      <button type="submit"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Search
+      </button>
+      {% if is_filtered %}
+        <a href="{% url 'core:customer_list' %}"
+           class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+          Clear
+        </a>
+      {% endif %}
+    </div>
+  </form>
+
+  <a href="{% url 'core:customer_create' %}"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Customer
+  </a>
+</div>
+
+{% if is_filtered %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ customers|length }} result{{ customers|length|pluralize }}
+    <span class="text-slate-400">of {{ total_count }} customers</span>
+  </p>
+{% endif %}
+
+<!-- Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Credit Limit</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Available Credit</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Type</th>
+          <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for customer in customers %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-5 py-3">
+              <a href="{% url 'core:customer_detail' customer.pk %}"
+                 class="font-medium text-slate-900 hover:underline">
+                {{ customer.name }}
+              </a>
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-slate-600">
+              {% if customer.phone %}{{ customer.phone }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+
+            {# Negative means they owe us, positive means we owe them — the sign is the story. #}
+            <td class="whitespace-nowrap px-5 py-3 text-right font-medium
+                       {% if customer.balance < 0 %}text-rose-600
+                       {% elif customer.balance > 0 %}text-emerald-600
+                       {% else %}text-slate-400{% endif %}"
+                title="{% if customer.balance < 0 %}Owes us {{ customer.owed|floatformat:2|intcomma }}{% elif customer.balance > 0 %}We owe {{ customer.balance|floatformat:2|intcomma }}{% else %}Settled{% endif %}">
+              {{ customer.balance|floatformat:2|intcomma }}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right text-slate-600">
+              {{ customer.credit_limit|floatformat:2|intcomma }}
+            </td>
+
+            {# Zero means the limit is fully used up, which blocks further credit sales. #}
+            <td class="whitespace-nowrap px-5 py-3 text-right font-medium
+                       {% if customer.credit_limit > 0 and customer.available_credit <= 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+              {{ customer.available_credit|floatformat:2|intcomma }}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3">
+              {% if customer.is_supplier %}
+                <span class="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                  Supplier
+                </span>
+              {% else %}
+                <span class="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+                  Customer
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3">
+              {% if customer.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                  Active
+                </span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+                  Inactive
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-5 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                <a href="{% url 'core:customer_ledger' customer.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Ledger
+                </a>
+                <a href="{% url 'core:customer_prices' customer.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Prices
+                </a>
+                <a href="{% url 'core:customer_update' customer.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+                {% if is_super_admin %}
+                  {% if customer.history_count %}
+                    {# History PROTECTs the row — don't offer a delete the server will refuse. #}
+                    <span class="cursor-not-allowed rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-300"
+                          title="Has trading history — deactivate instead of deleting.">
+                      Delete
+                    </span>
+                  {% else %}
+                    <button type="button"
+                            data-delete-url="{% url 'core:customer_delete' customer.pk %}"
+                            data-name="{{ customer.name }}"
+                            data-prices="{{ customer.custom_price_count }}"
+                            class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                      Delete
+                    </button>
+                  {% endif %}
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8" class="px-5 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No customers match your filters.</p>
+                <a href="{% url 'core:customer_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear filters
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No customers yet.</p>
+                <a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Create the first one
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if is_super_admin %}
+  {% include "core/_customer_delete_modal.html" %}
+{% endif %}
+{% endblock %}
