@@ -240,6 +240,8 @@ class Command(BaseCommand):
         suppliers = Customer.objects.filter(is_supplier=True).count()
         self.stdout.write("")
         self.stdout.write(f"  Customers flagged as suppliers: {suppliers}")
+        self.stdout.write("  Login: Dushan / Dushan123  (super_admin)")
+        self.stdout.write("         Dinusha / Dinusha123  (manager)")
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS("Seeding complete."))
         self.stdout.write("  Login: admin / admin123  (super_admin)")

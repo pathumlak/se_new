@@ -86,10 +86,18 @@ echo ""
 
 
 
-1. git pull origin main        ← pulls your latest code
-2. pip install -r requirements ← installs any new packages
-3. python manage.py migrate    ← applies any new migrations
-4. python manage.py collectstatic ← updates static files
-5. chown www-data              ← fixes permissions
-6. systemctl restart senovka_erp ← restarts gunicorn
-7. systemctl reload nginx      ← reloads nginx
+git pull origin main        
+pip install -r requirements 
+python manage.py migrate    
+python manage.py collectstatic 
+chown www-data             
+systemctl restart senovka_erp 
+systemctl reload nginx      
+
+
+
+git config --global --add safe.directory /var/www/senovka_erp
+root@srv1665087:/var/www/senovka_erp/senovka_erp# git config --global --add safe.directory /var/www/senovka_erp
+root@srv1665087:/var/www/senovka_erp/senovka_erp# git pull
+python manage.py seed
+source /var/www/senovka_erp/venv/bin/activate

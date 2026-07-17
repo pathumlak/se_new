@@ -12,23 +12,32 @@ from django.core.management.base import BaseCommand
 
 SEED_USERS = [
     {
-        "username": "admin",
-        "email": "admin@senovka.local",
+        "username": "Dushan",
+        "email": "dushan@senovka.com",
         "password_env": "SENOVKA_ADMIN_PASSWORD",
-        "default_password": "admin12345",
+        "default_password": "Dushan123",
         "role": "super_admin",
         "is_staff": True,
         "is_superuser": True,
     },
     {
-        "username": "manager",
-        "email": "manager@senovka.local",
+        "username": "Dinusha",
+        "email": "dinusha@senovka.com",
         "password_env": "SENOVKA_MANAGER_PASSWORD",
-        "default_password": "manager12345",
+        "default_password": "Dinusha123",
         "role": "manager",
         "is_staff": True,
         "is_superuser": False,
     },
+    {
+        "username": "Udara",
+        "email": "udara@senovka.com",
+        "password_env": "SENOVKA_MANAGER_PASSWORD",
+        "default_password": "Udara123",
+        "role": "manager",
+        "is_staff": True,
+        "is_superuser": False,
+    }
 ]
 
 
