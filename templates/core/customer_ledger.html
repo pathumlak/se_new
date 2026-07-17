@@ -211,8 +211,7 @@
               {{ row.balance|floatformat:2|intcomma }}
             </td>
 
-            {# Only sale rows carry a bill_pk; only bills with a positive
-               remaining balance can take a follow-up payment. #}
+    
             <td class="no-print whitespace-nowrap px-5 py-3 text-right">
               {% if row.bill_pk and row.remaining > 0 %}
                 <a href="{% url 'core:bill_add_payment' row.bill_pk %}"
