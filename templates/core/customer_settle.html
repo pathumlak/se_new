@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Settle balance · {{ customer.name }} · Senovka Plastics{% endblock %}
+{% block header %}Settle Balance{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl">
+
+  <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
+    <a href="{% url 'core:customer_ledger' customer.pk %}" class="hover:text-slate-900">
+      {{ customer.name }} · Ledger
+    </a>
+    <span class="text-slate-300">/</span>
+    <span class="text-slate-700">Settle balance</span>
+  </nav>
+
+  {% if form.non_field_errors %}
+    <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      {% for e in form.non_field_errors %}<p>{{ e }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  {# Context: what is currently owed, and which bills the payment will hit. #}
+  <div class="mb-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-900">{{ customer.name }}</h3>
+        <p class="mt-0.5 text-xs text-slate-500">
+          Balance:
+          <span class="font-medium
+                       {% if customer.balance < 0 %}text-rose-600
+                       {% elif customer.balance > 0 %}text-emerald-600
+                       {% else %}text-slate-500{% endif %}">
+            {{ customer.balance|floatformat:2|intcomma }}
+          </span>
+          · {{ outstanding_bills|length }} outstanding bill{{ outstanding_bills|length|pluralize }}
+        </p>
+      </div>
+      <div class="text-right">
+        <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total outstanding</p>
+        <p class="text-2xl font-semibold text-rose-600">{{ total_owed|floatformat:2|intcomma }}</p>
+      </div>
+    </div>
+
+    {% if outstanding_bills %}
+      <div class="mt-4 overflow-hidden rounded-lg border border-slate-200">
+        <table class="min-w-full divide-y divide-slate-200 text-xs">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-3 py-2 text-left font-semibold uppercase tracking-wide text-slate-500">Bill</th>
+              <th class="px-3 py-2 text-left font-semibold uppercase tracking-wide text-slate-500">Date</th>
+              <th class="px-3 py-2 text-right font-semibold uppercase tracking-wide text-slate-500">Total</th>
+              <th class="px-3 py-2 text-right font-semibold uppercase tracking-wide text-slate-500">Paid</th>
+              <th class="px-3 py-2 text-right font-semibold uppercase tracking-wide text-slate-500">Outstanding</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for bill in outstanding_bills %}
+              <tr>
+                <td class="whitespace-nowrap px-3 py-2 font-medium text-slate-800">
+                  <a href="{% url 'core:bill_detail' bill.pk %}" class="hover:underline">#{{ bill.pk }}</a>
+                </td>
+                <td class="whitespace-nowrap px-3 py-2 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
+                <td class="whitespace-nowrap px-3 py-2 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
+                <td class="whitespace-nowrap px-3 py-2 text-right text-slate-600">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
+                <td class="whitespace-nowrap px-3 py-2 text-right font-semibold text-rose-600">{{ bill.remaining_balance|floatformat:2|intcomma }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-2 text-xs text-slate-500">
+        Cash is split across these bills oldest → newest. Each cheque attaches
+        whole to the oldest bill still owing. Any excess becomes credit on
+        this customer's account.
+      </p>
+    {% else %}
+      <p class="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-500">
+        No outstanding bills. Anything paid here would just sit on the
+        customer's account as credit — use a balance adjustment for that.
+      </p>
+    {% endif %}
+  </div>
+
+  <form method="post" novalidate class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    {% csrf_token %}
+    <input type="hidden" name="cheques_json" id="cheques-json">
+
+    <!-- Method -->
+    <div>
+      <span class="mb-1.5 block text-sm font-medium text-slate-700">Payment method</span>
+      <div class="grid grid-cols-3 gap-2">
+        {% for radio in form.method %}
+          <label class="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
+            {{ radio.tag }}
+            <span class="font-medium text-slate-800">{{ radio.choice_label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Cash section -->
+    <div data-panel="cash-block" class="mt-5 space-y-4">
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="{{ form.cash_amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            Cash amount
+          </label>
+          {{ form.cash_amount }}
+          {% for e in form.cash_amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ form.cash_account.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            Account
+          </label>
+          {{ form.cash_account }}
+          <p class="mt-1.5 text-xs text-slate-400">
+            "Physical drawer" leaves the cash in the till.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cheque section -->
+    <div data-panel="cheque-block" class="mt-5 space-y-3 hidden">
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-slate-700">Cheques</span>
+        <button type="button" id="add-cheque"
+                class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+          + Add cheque
+        </button>
+      </div>
+      <div id="cheque-rows" class="space-y-3"></div>
+      <p id="cheque-total-note" class="text-xs text-slate-500"></p>
+    </div>
+
+    <!-- Live totals -->
+    <div class="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-sm">
+      <div class="flex items-center justify-between text-slate-600">
+        <span>Total this settlement:</span>
+        <span id="lump-total" class="font-semibold text-slate-900">0.00</span>
+      </div>
+      <div class="mt-1 flex items-center justify-between text-slate-600">
+        <span>Total outstanding:</span>
+        <span class="font-semibold text-slate-900">{{ total_owed|floatformat:2|intcomma }}</span>
+      </div>
+      <p id="lump-note" class="mt-2 text-xs text-slate-500"></p>
+    </div>
+
+    <div class="mt-6 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
+      <a href="{% url 'core:customer_ledger' customer.pk %}"
+         class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </a>
+      <button type="submit"
+              class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+        Record settlement
+      </button>
+    </div>
+  </form>
+</div>
+
+<template id="cheque-row-tmpl">
+  <div class="js-cheque rounded-lg border border-slate-200 bg-slate-50 p-3">
+    <div class="mb-2 flex items-center justify-between">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 js-idx">Cheque 1</p>
+      <button type="button" class="js-remove rounded-md px-1.5 text-lg leading-none text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove">&times;</button>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Cheque no <span class="text-rose-500">*</span></label>
+        <input type="text" data-field="cheque_no"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Bank <span class="text-rose-500">*</span></label>
+        <input type="text" data-field="bank_name" placeholder="e.g. BOC"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Branch</label>
+        <input type="text" data-field="branch"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Account no</label>
+        <input type="text" data-field="acc_no"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Amount <span class="text-rose-500">*</span></label>
+        <input type="number" step="0.01" min="0" data-field="amount"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Received <span class="text-rose-500">*</span></label>
+        <input type="date" data-field="received_date"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Maturity <span class="text-rose-500">*</span></label>
+        <input type="date" data-field="maturity_date"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+    </div>
+  </div>
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const TOTAL_OWED = parseFloat("{{ total_owed|floatformat:2 }}") || 0;
+
+    const methodRadios = document.querySelectorAll('input[name="method"]');
+    const panels = {
+      cash:   document.querySelector('[data-panel="cash-block"]'),
+      cheque: document.querySelector('[data-panel="cheque-block"]'),
+    };
+    const cashAmount   = document.getElementById('{{ form.cash_amount.id_for_label }}');
+    const chequeRows   = document.getElementById('cheque-rows');
+    const chequeNote   = document.getElementById('cheque-total-note');
+    const addChequeBtn = document.getElementById('add-cheque');
+    const chequesJson  = document.getElementById('cheques-json');
+    const lumpTotal    = document.getElementById('lump-total');
+    const lumpNote     = document.getElementById('lump-note');
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    function currentMethod() {
+      for (const r of methodRadios) if (r.checked) return r.value;
+      return 'cash';
+    }
+
+    function fmt(n) {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function applyMethod() {
+      const method = currentMethod();
+      panels.cash.classList.toggle('hidden', method === 'cheque');
+      panels.cheque.classList.toggle('hidden', method === 'cash');
+      if (method === 'cheque') cashAmount.value = '';
+      if (method !== 'cheque' && method !== 'mixed' && chequeRows.children.length > 0) {
+        chequeRows.innerHTML = '';
+      }
+      if ((method === 'cheque' || method === 'mixed') && chequeRows.children.length === 0) {
+        addChequeRow();
+      }
+      recalc();
+    }
+
+    function addChequeRow() {
+      const tmpl = document.getElementById('cheque-row-tmpl');
+      const node = tmpl.content.firstElementChild.cloneNode(true);
+      const received = node.querySelector('[data-field="received_date"]');
+      const maturity = node.querySelector('[data-field="maturity_date"]');
+      received.value = today;
+      maturity.value = today;
+      chequeRows.appendChild(node);
+      relabelCheques();
+      node.querySelectorAll('input').forEach(function (i) {
+        i.addEventListener('input', recalc);
+      });
+      node.querySelector('.js-remove').addEventListener('click', function () {
+        node.remove();
+        relabelCheques();
+        recalc();
+      });
+      recalc();
+    }
+
+    function relabelCheques() {
+      chequeRows.querySelectorAll('.js-cheque').forEach(function (row, i) {
+        row.querySelector('.js-idx').textContent = 'Cheque ' + (i + 1);
+      });
+    }
+
+    function collectCheques() {
+      const rows = [];
+      chequeRows.querySelectorAll('.js-cheque').forEach(function (row) {
+        const obj = {};
+        row.querySelectorAll('[data-field]').forEach(function (input) {
+          obj[input.dataset.field] = input.value;
+        });
+        rows.push(obj);
+      });
+      return rows;
+    }
+
+    function recalc() {
+      const cheques = collectCheques();
+      let chequeSum = 0;
+      cheques.forEach(function (c) {
+        const v = parseFloat(c.amount) || 0;
+        chequeSum += v;
+      });
+      const cash = parseFloat(cashAmount.value) || 0;
+      const total = cash + chequeSum;
+      lumpTotal.textContent = fmt(total);
+      chequeNote.textContent = 'Cheques total: ' + fmt(chequeSum);
+
+      if (total <= 0) {
+        lumpNote.textContent = 'Enter an amount above.';
+        lumpNote.className = 'mt-2 text-xs text-slate-500';
+      } else if (total > TOTAL_OWED) {
+        const excess = total - TOTAL_OWED;
+        lumpNote.textContent = 'Over by ' + fmt(excess) + ' — kept as credit on the customer’s account.';
+        lumpNote.className = 'mt-2 text-xs text-emerald-700';
+      } else if (total < TOTAL_OWED) {
+        const under = TOTAL_OWED - total;
+        lumpNote.textContent = 'Short by ' + fmt(under) + ' — bills go partially paid, oldest first.';
+        lumpNote.className = 'mt-2 text-xs text-amber-700';
+      } else {
+        lumpNote.textContent = 'Settles everything outstanding.';
+        lumpNote.className = 'mt-2 text-xs text-emerald-700';
+      }
+
+      chequesJson.value = JSON.stringify(cheques);
+    }
+
+    methodRadios.forEach(function (r) { r.addEventListener('change', applyMethod); });
+    addChequeBtn.addEventListener('click', addChequeRow);
+    cashAmount.addEventListener('input', recalc);
+
+    applyMethod();
+  })();
+</script>
+{% endblock %}

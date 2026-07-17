@@ -1,7 +1,9 @@
-from decimal import Decimal
+import json
+from decimal import Decimal, InvalidOperation
 
 from django import forms
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 
 from .models import (
     CashDrawer,
@@ -10,6 +12,8 @@ from .models import (
     Customer,
     CustomerBalanceAdjustment,
     Payment,
+    PettyCashEntry,
+    PettyCashReimbursement,
     Product,
     ProductionEntry,
     User,
@@ -1001,5 +1005,308 @@ class BillPaymentForm(forms.Form):
     def first_error(self):
         for messages in self.errors.values():
             return messages[0]
+        return "Could not save."
+
+
+class CustomerSettlementForm(forms.Form):
+    """Settle one lump payment against a customer's outstanding bills.
+
+    Not a ModelForm: a settlement can produce many Payment rows across many
+    Bills — the view fans out the amount FIFO across the customer's unpaid
+    bills, then creates one Payment per bill via the same _record_payments
+    the bill-write path uses.
+
+    Cheques are supplied as JSON on `cheques_json` so any number of them can
+    ride on the same submission; the view parses and validates each one.
+
+    Amount rules:
+      * Cash: cash > 0.
+      * Cheque: at least one cheque row, each with amount > 0.
+      * Mixed: both a cash amount and at least one cheque.
+    A total larger than what is outstanding is allowed — the excess lands on
+    the customer's balance as credit for the next bill.
+    """
+
+    METHOD_CHOICES = [
+        ("cash", "Cash"),
+        ("cheque", "Cheque"),
+        ("mixed", "Mixed"),
+    ]
+
+    method = forms.ChoiceField(
+        choices=METHOD_CHOICES,
+        widget=forms.RadioSelect(),
+        initial="cash",
+    )
+    cash_amount = forms.DecimalField(
+        max_digits=12, decimal_places=2, required=False,
+        min_value=Decimal("0"),
+        widget=forms.NumberInput(
+            attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}
+        ),
+    )
+    cash_account = forms.ChoiceField(
+        choices=[("", "Physical drawer")] + list(Payment.Account.choices),
+        required=False,
+        widget=forms.Select(attrs={"class": SELECT_CLASSES}),
+    )
+    # JSON list of {cheque_no, bank_name, branch, acc_no, amount,
+    # received_date, maturity_date}. The template's JS collects the rows into
+    # this hidden field on submit — matches how _bill_form does cheque rows.
+    cheques_json = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def __init__(self, *args, customer=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.customer = customer
+        self.parsed_cheques = []
+
+    def clean(self):
+        cleaned = super().clean()
+        method = cleaned.get("method") or "cash"
+
+        # ---- cheques ----
+        raw = cleaned.get("cheques_json") or ""
+        if raw.strip():
+            try:
+                items = json.loads(raw)
+            except (ValueError, TypeError):
+                raise forms.ValidationError("Cheque list is malformed.")
+            if not isinstance(items, list):
+                raise forms.ValidationError("Cheque list is malformed.")
+
+            for index, row in enumerate(items, start=1):
+                if not isinstance(row, dict):
+                    raise forms.ValidationError(f"Cheque {index}: malformed row.")
+                cheque = self._read_one_cheque(row, index)
+                self.parsed_cheques.append(cheque)
+
+        cash_amount = cleaned.get("cash_amount") or Decimal("0")
+        cheque_total = sum((c["amount"] for c in self.parsed_cheques), Decimal("0"))
+
+        # ---- per-method validation ----
+        if method == "cash":
+            if cash_amount <= 0:
+                self.add_error("cash_amount", "Cash amount must be above 0.")
+            if self.parsed_cheques:
+                raise forms.ValidationError(
+                    "Cash method — remove the cheques or switch to Mixed."
+                )
+
+        elif method == "cheque":
+            if not self.parsed_cheques:
+                raise forms.ValidationError("Add at least one cheque.")
+            if cash_amount > 0:
+                raise forms.ValidationError(
+                    "Cheque method — clear the cash box or switch to Mixed."
+                )
+
+        elif method == "mixed":
+            if cash_amount <= 0:
+                self.add_error("cash_amount", "Mixed payment needs a cash amount above 0.")
+            if not self.parsed_cheques:
+                raise forms.ValidationError("Mixed payment needs at least one cheque.")
+
+        # ---- cash account, if cash is being tendered ----
+        account = cleaned.get("cash_account") or ""
+        valid_accounts = {v for v, _ in Payment.Account.choices}
+        if account and account not in valid_accounts:
+            self.add_error("cash_account", "Choose a valid account.")
+
+        total = cash_amount + cheque_total
+        if total <= 0:
+            raise forms.ValidationError("Nothing to settle.")
+
+        cleaned["_cash_amount"] = cash_amount
+        cleaned["_cheque_total"] = cheque_total
+        cleaned["_total_paid"] = total
+        return cleaned
+
+    def _read_one_cheque(self, row, index):
+        """Validate one cheque dict and return it cleaned up."""
+        def _s(key):
+            return str(row.get(key) or "").strip()
+
+        cheque_no = _s("cheque_no")
+        bank_name = _s("bank_name")
+        if not cheque_no:
+            raise forms.ValidationError(f"Cheque {index}: number is required.")
+        if not bank_name:
+            raise forms.ValidationError(f"Cheque {index}: bank name is required.")
+
+        try:
+            amount = Decimal(str(row.get("amount") or "").strip())
+        except (InvalidOperation, TypeError):
+            raise forms.ValidationError(f"Cheque {index}: amount must be a number.")
+        if amount <= 0:
+            raise forms.ValidationError(f"Cheque {index}: amount must be above 0.")
+
+        received = parse_date(_s("received_date"))
+        maturity = parse_date(_s("maturity_date"))
+        if received is None:
+            raise forms.ValidationError(f"Cheque {index}: received date is required.")
+        if maturity is None:
+            raise forms.ValidationError(f"Cheque {index}: maturity date is required.")
+        if maturity < received:
+            raise forms.ValidationError(
+                f"Cheque {index}: maturity date cannot be before the received date."
+            )
+
+        return {
+            "cheque_no": cheque_no,
+            "bank_name": bank_name,
+            "branch": _s("branch"),
+            "acc_no": _s("acc_no"),
+            "amount": amount.quantize(Decimal("0.01")),
+            "received_date": received,
+            "maturity_date": maturity,
+        }
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class PettyCashExpenseForm(forms.ModelForm):
+    """One expense out of the tin.
+
+    `fund` and `added_by` are set by the view — the caller already knows the
+    month and who is logged in — so this only asks for the operator inputs.
+    entry_type is fixed to EXPENSE by the view path; reimbursements have
+    their own model, not this one.
+    """
+
+    class Meta:
+        model = PettyCashEntry
+        fields = ["date", "description", "category", "amount", "receipt_no", "edit_reason"]
+        labels = {
+            "date": "Date",
+            "description": "Description",
+            "category": "Category",
+            "amount": "Amount",
+            "receipt_no": "Receipt no",
+            "edit_reason": "Reason for edit",
+        }
+        widgets = {
+            "date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "description": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Fuel for delivery run"}
+            ),
+            "category": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "amount": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0.01", "placeholder": "0.00"}
+            ),
+            "receipt_no": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "optional"}
+            ),
+            "edit_reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Why this correction?", "maxlength": 500}
+            ),
+        }
+
+    def __init__(self, *args, require_edit_reason=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not require_edit_reason:
+            # Only shown on the edit modal — on create the field would just
+            # sit blank and confuse the operator.
+            self.fields.pop("edit_reason", None)
+        if not self.initial.get("date") and not self.instance.pk:
+            self.initial["date"] = timezone.localdate()
+        if not self.initial.get("category") and not self.instance.pk:
+            self.initial["category"] = PettyCashEntry.Category.OTHER
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be above 0.")
+        return amount
+
+    def clean_description(self):
+        description = (self.cleaned_data.get("description") or "").strip()
+        if not description:
+            raise forms.ValidationError("Description is required.")
+        return description
+
+    def clean_edit_reason(self):
+        reason = (self.cleaned_data.get("edit_reason") or "").strip()
+        if "edit_reason" in self.fields and not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class PettyCashReimbursementForm(forms.ModelForm):
+    """One top-up of the tin. `fund` and `added_by` are set by the view."""
+
+    class Meta:
+        model = PettyCashReimbursement
+        fields = ["date", "amount", "reason", "given_by", "edit_reason"]
+        labels = {
+            "date": "Date",
+            "amount": "Amount",
+            "reason": "Reason",
+            "given_by": "Given by",
+            "edit_reason": "Reason for edit",
+        }
+        widgets = {
+            "date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "amount": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0.01", "placeholder": "0.00"}
+            ),
+            "reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Weekly top-up from office cash"}
+            ),
+            "given_by": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Who handed over the cash"}
+            ),
+            "edit_reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Why this correction?", "maxlength": 500}
+            ),
+        }
+
+    def __init__(self, *args, require_edit_reason=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not require_edit_reason:
+            self.fields.pop("edit_reason", None)
+        if not self.initial.get("date") and not self.instance.pk:
+            self.initial["date"] = timezone.localdate()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be above 0.")
+        return amount
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if not reason:
+            raise forms.ValidationError("Reason is required.")
+        return reason
+
+    def clean_given_by(self):
+        given_by = (self.cleaned_data.get("given_by") or "").strip()
+        if not given_by:
+            raise forms.ValidationError("Say who gave the cash.")
+        return given_by
+
+    def clean_edit_reason(self):
+        reason = (self.cleaned_data.get("edit_reason") or "").strip()
+        if "edit_reason" in self.fields and not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
         return "Could not save."
 

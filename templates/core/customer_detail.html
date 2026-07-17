@@ -43,6 +43,13 @@
   </div>
 
   <div class="flex shrink-0 flex-wrap gap-2">
+    {% if customer.balance < 0 %}
+      <a href="{% url 'core:customer_settle' customer.pk %}"
+         class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+         title="Record a lump payment against this customer's outstanding bills">
+        Settle Balance
+      </a>
+    {% endif %}
     <a href="{% url 'core:customer_ledger' customer.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       View Ledger

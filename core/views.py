@@ -45,6 +45,9 @@ from .forms import (
     CustomerBalanceAdjustmentForm,
     CustomerForm,
     CustomerPriceForm,
+    CustomerSettlementForm,
+    PettyCashExpenseForm,
+    PettyCashReimbursementForm,
     ProductForm,
     ProductionEntryForm,
     ProductQuickForm,
@@ -65,6 +68,9 @@ from .models import (
     CustomerPrice,
     HeldBill,
     Payment,
+    PettyCashEntry,
+    PettyCashFund,
+    PettyCashReimbursement,
     Product,
     ProductionEntry,
     SupplierBill,
@@ -2522,6 +2528,170 @@ def bill_add_payment(request, pk):
         {
             "bill": bill,
             "form": form,
+            "account_choices": Payment.Account.choices,
+        },
+    )
+
+
+def _outstanding_bills_for(customer):
+    """The customer's unpaid or partially paid bills, oldest first.
+
+    Ordering is the settlement contract: cash and cheques both flow into
+    these bills in this order. Cancelled bills are excluded — nothing is
+    owed on a cancelled sale. Walk-in flag is irrelevant here because a
+    customer-scoped settlement only makes sense for a real account anyway.
+    """
+    bills = (
+        Bill.objects.filter(customer=customer)
+        .exclude(status=Bill.Status.CANCELLED)
+        .order_by("bill_date", "pk")
+    )
+    return [b for b in bills if b.remaining_balance > ZERO]
+
+
+def _allocate_settlement(customer, cash, cash_account, cheques, user):
+    """Fan a lump settlement out across the customer's outstanding bills.
+
+    Cash goes first, split across bills oldest→newest up to each bill's
+    remaining balance. Cheques attach whole (they are physical instruments —
+    a cheque cannot be split) to the current oldest unpaid bill.
+
+    Any excess after all bills are settled lands on Customer.balance as
+    credit, which is what balance_change carries forward the next time a
+    bill is written.
+
+    Must run inside a transaction — a half-allocated settlement would leave
+    Payment rows against bills whose paid_amount was never updated.
+    """
+    outstanding = _outstanding_bills_for(customer)
+    if not outstanding:
+        return {"allocations": [], "excess": cash + sum((c["amount"] for c in cheques), ZERO)}
+
+    # Snapshot so the local remaining tracks alongside the DB update — the
+    # F() update on Bill.paid_amount leaves the in-memory object stale.
+    remaining = {b.pk: b.remaining_balance for b in outstanding}
+    allocations = []
+
+    # --- cash pass ---
+    cash_left = cash
+    for bill in outstanding:
+        if cash_left <= ZERO:
+            break
+        take = min(cash_left, remaining[bill.pk])
+        if take <= ZERO:
+            continue
+        parts = {"cash": take, "cash_account": cash_account, "cheques": []}
+        _record_payments(bill, customer, parts)
+        Bill.objects.filter(pk=bill.pk).update(
+            paid_amount=F("paid_amount") + take,
+            balance_change=F("balance_change") + take,
+        )
+        remaining[bill.pk] -= take
+        cash_left -= take
+        allocations.append(("cash", bill.pk, take))
+
+    # --- cheque pass ---
+    # Each cheque is a whole physical instrument, so it attaches to one bill.
+    # Pick the oldest bill still owing; if none, attach to the oldest overall
+    # (over-paying it, which is what carries the excess into balance_change).
+    cheque_total = ZERO
+    for cheque in cheques:
+        target = None
+        for bill in outstanding:
+            if remaining[bill.pk] > ZERO:
+                target = bill
+                break
+        if target is None:
+            target = outstanding[0]
+
+        parts = {"cash": ZERO, "cash_account": "", "cheques": [cheque]}
+        _record_payments(target, customer, parts)
+        Bill.objects.filter(pk=target.pk).update(
+            paid_amount=F("paid_amount") + cheque["amount"],
+            balance_change=F("balance_change") + cheque["amount"],
+        )
+        remaining[target.pk] -= cheque["amount"]
+        cheque_total += cheque["amount"]
+        allocations.append(("cheque", target.pk, cheque["amount"]))
+
+    total_paid = cash + cheque_total
+
+    # Customer.balance rises by the whole lump. Any excess over what the
+    # bills owed rolls in as credit for the next bill — no separate posting
+    # needed because bill.balance_change already went up by the same total.
+    Customer.objects.filter(pk=customer.pk).update(
+        balance=F("balance") + total_paid
+    )
+
+    # Status pass — a bill that has been settled or partially covered by
+    # this call should read that way on the next page load.
+    for bill in outstanding:
+        bill.refresh_from_db()
+        _refresh_bill_status(bill)
+
+    return {"allocations": allocations, "total_paid": total_paid}
+
+
+@login_required
+def customer_settle(request, pk):
+    """Settle a customer's outstanding bills with one lump payment.
+
+    Reused from the bill-payment view but customer-scoped: the operator
+    enters cash and/or cheques once, and _allocate_settlement fans the
+    amount out across the unpaid bills FIFO. Every allocation goes through
+    _record_payments, so the cash drawer, the cheque list and the ledger
+    all see the same rows they would from a per-bill payment.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+
+    outstanding = _outstanding_bills_for(customer)
+    total_owed = sum((b.remaining_balance for b in outstanding), ZERO)
+
+    form = CustomerSettlementForm(request.POST or None, customer=customer)
+
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        cash = data["_cash_amount"]
+        account = data.get("cash_account") or ""
+        cheques = form.parsed_cheques
+        total_paid = data["_total_paid"]
+
+        if not outstanding:
+            messages.info(
+                request,
+                f"{customer.name} has no outstanding bills to settle.",
+            )
+            return redirect("core:customer_ledger", pk=customer.pk)
+
+        with transaction.atomic():
+            _allocate_settlement(customer, cash, account, cheques, request.user)
+
+        excess = total_paid - total_owed
+        if excess > ZERO:
+            messages.success(
+                request,
+                f"Settled {total_owed:,.2f} across {len(outstanding)} bill"
+                f"{'' if len(outstanding) == 1 else 's'}. "
+                f"{excess:,.2f} kept as credit on {customer.name}'s account.",
+            )
+        else:
+            messages.success(
+                request,
+                f"Recorded {total_paid:,.2f} against {customer.name}'s bills.",
+            )
+        return redirect("core:customer_ledger", pk=customer.pk)
+
+    if request.method == "POST":
+        messages.error(request, f"Settlement not saved: {form.first_error()}")
+
+    return render(
+        request,
+        "core/customer_settle.html",
+        {
+            "customer": customer,
+            "form": form,
+            "outstanding_bills": outstanding,
+            "total_owed": total_owed,
             "account_choices": Payment.Account.choices,
         },
     )
