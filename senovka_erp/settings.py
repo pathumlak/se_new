@@ -12,7 +12,13 @@ SECRET_KEY = "django-insecure-CHANGE-ME-BEFORE-DEPLOYING-senovka-erp"
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "senovkaplastics.cloud",
+    "www.senovkaplastics.cloud",
+    "YOUR_SERVER_IP",
+    "127.0.0.1",
+    "localhost",
+]
 
 
 INSTALLED_APPS = [
