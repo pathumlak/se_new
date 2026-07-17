@@ -98,6 +98,62 @@ class Customer(models.Model):
         return self.name
 
 
+class CustomerBalanceAdjustment(models.Model):
+    """A manual correction to a customer's running balance.
+
+    Not a Bill, not a Payment, not a BillSettlement: those all move money
+    against a specific bill. This one moves the customer's balance without any
+    invoice or receipt behind it — a starting balance being seeded, an old
+    write-off being reversed, an off-book credit being granted. The rule the
+    ledger relies on is that every source of movement has to be tied back to a
+    row somewhere, so it exists rather than the alternative of editing
+    Customer.balance in place with no history.
+
+    Sign convention here matches Customer.balance itself, not the ledger view:
+      credit  — Customer.balance += amount   (we owe them, or they owe us less)
+      debit   — Customer.balance -= amount   (they owe us more)
+
+    amount is always positive; the direction is on `adjustment_type`. Storing
+    a signed amount would let a "-500 credit" mean the same thing as a "500
+    debit" and the reports would have to canonicalise every row.
+    """
+
+    class Type(models.TextChoices):
+        CREDIT = "credit", "Credit (+)"
+        DEBIT = "debit", "Debit (-)"
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.CASCADE,
+        related_name="balance_adjustments",
+    )
+    adjustment_type = models.CharField(max_length=10, choices=Type.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=500)
+    adjustment_date = models.DateField()
+    adjusted_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="balance_adjustments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-adjustment_date", "-id"]
+
+    def __str__(self):
+        sign = "+" if self.adjustment_type == self.Type.CREDIT else "-"
+        return f"Adjustment {sign}{self.amount} · {self.customer}"
+
+    @property
+    def signed_amount(self):
+        """The amount as it moves Customer.balance: positive for credit,
+        negative for debit."""
+        if self.adjustment_type == self.Type.CREDIT:
+            return self.amount
+        return -self.amount
+
+
 class CustomerPrice(models.Model):
     """Per-customer negotiated price, overriding Product.default_price."""
 
@@ -161,6 +217,11 @@ class Bill(models.Model):
     # Written off rather than collected — see BillSettlement, which is the only
     # thing that should ever move this.
     settled_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # How much of the customer's positive balance (credit we owed them) this
+    # bill consumed. Stored as a snapshot at save time so the bill detail can
+    # show it as a line item — the balance itself has already been moved by
+    # `balance_change`, so this is display-only and never re-applied.
+    credit_applied = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     # Signed: how this bill moved the customer's running balance.
     balance_change = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_type = models.CharField(max_length=20, choices=PaymentType.choices)
@@ -189,6 +250,18 @@ class Bill(models.Model):
     def remaining_balance(self):
         """What is still owed on this bill: neither collected nor written off."""
         return self.total_amount - self.paid_amount - self.settled_amount
+
+    @property
+    def amount_to_collect(self):
+        """What the customer had to hand over at the till: bill total minus any
+        credit already sitting on their account that this bill consumed.
+
+        Display-only. The actual money moves are still `paid_amount` (what
+        came in) and `balance_change` (how the account moved). This exists so
+        the bill detail can show a line the customer would recognise from
+        their own paperwork.
+        """
+        return self.total_amount - self.credit_applied
 
 
 class BillItem(models.Model):

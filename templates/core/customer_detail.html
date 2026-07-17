@@ -180,6 +180,368 @@
 </div>
 
 {% if is_super_admin %}
+  <!-- Balance Adjustments (super admin only) -->
+  <div class="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-900">Balance Adjustments</h3>
+        <p class="mt-1 text-xs text-slate-500">
+          Manual credits or debits to the customer's running balance. Every
+          adjustment is written to the ledger.
+        </p>
+      </div>
+      <button type="button" id="adjustment-open"
+              class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+        </svg>
+        Adjust Balance
+      </button>
+    </div>
+
+    {% include 'partials/pagination.html' with page_obj=adjustments_page %}
+
+    <div class="mt-4 overflow-hidden rounded-lg border border-slate-200">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Type</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Adjusted By</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for adj in adjustments %}
+              <tr class="hover:bg-slate-50">
+                <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ adj.adjustment_date|date:"j M Y" }}</td>
+                <td class="px-4 py-3">
+                  {% if adj.adjustment_type == 'credit' %}
+                    <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                      Credit (+)
+                    </span>
+                  {% else %}
+                    <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+                      Debit (−)
+                    </span>
+                  {% endif %}
+                </td>
+                <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                           {% if adj.adjustment_type == 'credit' %}text-emerald-700{% else %}text-rose-700{% endif %}">
+                  {% if adj.adjustment_type == 'credit' %}+{% else %}−{% endif %}{{ adj.amount|floatformat:2|intcomma }}
+                </td>
+                <td class="px-4 py-3 text-slate-900">{{ adj.reason }}</td>
+                <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ adj.adjusted_by.username }}</td>
+                <td class="whitespace-nowrap px-4 py-3 text-right">
+                  <button type="button"
+                          class="js-adj-edit rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                          data-id="{{ adj.pk }}"
+                          data-date="{{ adj.adjustment_date|date:'Y-m-d' }}"
+                          data-type="{{ adj.adjustment_type }}"
+                          data-amount="{{ adj.amount|stringformat:'.2f' }}"
+                          data-reason="{{ adj.reason }}"
+                          data-action="{% url 'core:customer_adjustment_edit' customer.pk adj.pk %}">
+                    Edit
+                  </button>
+                  <button type="button"
+                          class="js-adj-delete ml-1 rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                          data-id="{{ adj.pk }}"
+                          data-label="{{ adj.get_adjustment_type_display }} of {{ adj.amount|floatformat:2 }} on {{ adj.adjustment_date|date:'j M Y' }}"
+                          data-action="{% url 'core:customer_adjustment_delete' customer.pk adj.pk %}">
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-500">
+                  No balance adjustments recorded.
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / edit modal -->
+  <div id="adjustment-modal"
+       class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+       role="dialog" aria-modal="true" aria-labelledby="adjustment-modal-title">
+    <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+      <div class="flex items-start justify-between">
+        <h3 id="adjustment-modal-title" class="text-base font-semibold text-slate-900">
+          Adjust balance
+        </h3>
+        <button type="button" id="adjustment-cancel"
+                class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <p class="mt-1 text-xs text-slate-500">
+        Current balance:
+        <span class="font-semibold
+                     {% if customer.balance < 0 %}text-rose-600
+                     {% elif customer.balance > 0 %}text-emerald-600
+                     {% else %}text-slate-500{% endif %}">
+          {{ customer.balance|floatformat:2|intcomma }}
+        </span>
+      </p>
+
+      <form id="adjustment-form" method="post"
+            action="{% url 'core:customer_adjustment_create' customer.pk %}"
+            class="mt-4 space-y-4">
+        {% csrf_token %}
+
+        <div>
+          <label for="{{ adjustment_form.adjustment_date.id_for_label }}"
+                 class="mb-1.5 block text-xs font-medium text-slate-600">Adjustment date</label>
+          {{ adjustment_form.adjustment_date }}
+        </div>
+
+        <div>
+          <label for="adjustment-new-balance"
+                 class="mb-1.5 block text-xs font-medium text-slate-600">New balance</label>
+          <input type="number" id="adjustment-new-balance" step="0.01" required
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                 placeholder="Type what the balance should be">
+          <p class="mt-1 text-xs text-slate-500">
+            Type what the balance <em>should</em> be. Positive means we owe the
+            customer, negative means the customer owes us.
+          </p>
+        </div>
+
+        <div>
+          <label for="{{ adjustment_form.reason.id_for_label }}"
+                 class="mb-1.5 block text-xs font-medium text-slate-600">Reason</label>
+          {{ adjustment_form.reason }}
+        </div>
+
+        <div id="adjustment-summary" class="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          Enter a new balance above to see the change.
+        </div>
+
+        {# The three model fields the server needs. Filled from the target
+           above by the JS below — the operator never touches these. #}
+        <input type="hidden" name="adjustment_type" id="adjustment-type-hidden" value="credit">
+        <input type="hidden" name="amount" id="adjustment-amount-hidden" value="">
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" id="adjustment-cancel-2"
+                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button type="submit" id="adjustment-submit"
+                  class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete modal (adjustments) -->
+  <div id="adjustment-delete-modal"
+       class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+       role="dialog" aria-modal="true" aria-labelledby="adjustment-delete-title">
+    <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+      <h3 id="adjustment-delete-title" class="text-base font-semibold text-slate-900">
+        Reverse adjustment
+      </h3>
+      <p class="mt-2 text-sm text-slate-600">
+        Delete <span id="adjustment-delete-label" class="font-semibold text-slate-900"></span>?
+        The customer's balance will move back by the same amount.
+      </p>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" id="adjustment-delete-cancel"
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <form id="adjustment-delete-form" method="post">
+          {% csrf_token %}
+          <button type="submit"
+                  class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+            Delete
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   {% include "core/_customer_delete_modal.html" %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if is_super_admin %}
+<script>
+  (function () {
+    const CREATE_ACTION = "{% url 'core:customer_adjustment_create' customer.pk %}";
+    const CURRENT_BALANCE = parseFloat("{{ customer.balance|floatformat:2 }}") || 0;
+
+    const modal      = document.getElementById('adjustment-modal');
+    const form       = document.getElementById('adjustment-form');
+    const title      = document.getElementById('adjustment-modal-title');
+    const summary    = document.getElementById('adjustment-summary');
+    const openBtn    = document.getElementById('adjustment-open');
+    const cancel1    = document.getElementById('adjustment-cancel');
+    const cancel2    = document.getElementById('adjustment-cancel-2');
+    const submitBtn  = document.getElementById('adjustment-submit');
+
+    const dateEl     = form.querySelector('input[type="date"]');
+    const reasonEl   = document.getElementById('{{ adjustment_form.reason.id_for_label }}');
+    const targetEl   = document.getElementById('adjustment-new-balance');
+    const typeHidden = document.getElementById('adjustment-type-hidden');
+    const amtHidden  = document.getElementById('adjustment-amount-hidden');
+
+    // Baseline the modal is measured against. For a new adjustment this is
+    // the customer's current balance; for an edit we baseline against the
+    // balance as it stood *before* this row was applied, so re-saving the
+    // same target is a no-op instead of double-counting the row.
+    let baseline = CURRENT_BALANCE;
+
+    function fmt(n) {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function updatePreview() {
+      const raw = targetEl.value;
+      if (raw === '' || raw === '-' || isNaN(parseFloat(raw))) {
+        summary.textContent = 'Enter a new balance above to see the change.';
+        summary.className = 'rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500';
+        typeHidden.value = 'credit';
+        amtHidden.value = '';
+        submitBtn.disabled = true;
+        return;
+      }
+
+      const target = Math.round(parseFloat(raw) * 100) / 100;
+      const delta  = Math.round((target - baseline) * 100) / 100;
+
+      if (delta === 0) {
+        summary.textContent = 'That is already the balance — nothing to record.';
+        summary.className = 'rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800';
+        typeHidden.value = 'credit';
+        amtHidden.value = '';
+        submitBtn.disabled = true;
+        return;
+      }
+
+      const amount = Math.abs(delta);
+      const isCredit = delta > 0;
+      typeHidden.value = isCredit ? 'credit' : 'debit';
+      amtHidden.value  = amount.toFixed(2);
+
+      const sign  = isCredit ? '+' : '−';
+      const color = isCredit ? 'text-emerald-700' : 'text-rose-700';
+      const bg    = isCredit ? 'bg-emerald-50' : 'bg-rose-50';
+      summary.className = 'rounded-lg ' + bg + ' px-3 py-2 text-sm ' + color;
+      summary.innerHTML =
+        (isCredit ? 'Credit' : 'Debit') +
+        ' <span class="font-semibold">' + sign + fmt(amount) + '</span>' +
+        ' — balance ' + fmt(baseline) + ' → <span class="font-semibold">' + fmt(target) + '</span>';
+      submitBtn.disabled = false;
+    }
+
+    function openCreate() {
+      title.textContent = 'Adjust balance';
+      form.action = CREATE_ACTION;
+      dateEl.value = new Date().toISOString().slice(0, 10);
+      reasonEl.value = '';
+      baseline = CURRENT_BALANCE;
+      targetEl.value = CURRENT_BALANCE.toFixed(2);
+      // Select-all so the operator can just type over the current figure.
+      updatePreview();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      targetEl.focus();
+      targetEl.select();
+    }
+
+    function openEdit(btn) {
+      title.textContent = 'Edit adjustment';
+      form.action = btn.dataset.action;
+      dateEl.value = btn.dataset.date;
+      reasonEl.value = btn.dataset.reason;
+
+      // What this row is currently doing to the balance, in the same signed
+      // convention Customer.balance moves in.
+      const rowAmount = parseFloat(btn.dataset.amount) || 0;
+      const signed = (btn.dataset.type === 'credit') ? rowAmount : -rowAmount;
+
+      // Undo it to find the pre-row balance. The target the operator types
+      // is measured against that, so an edit that leaves the target the same
+      // ends up re-applying the same delta, not doubling it.
+      baseline = Math.round((CURRENT_BALANCE - signed) * 100) / 100;
+      targetEl.value = CURRENT_BALANCE.toFixed(2);
+      updatePreview();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      targetEl.focus();
+      targetEl.select();
+    }
+
+    function closeModal() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    openBtn.addEventListener('click', openCreate);
+    cancel1.addEventListener('click', closeModal);
+    cancel2.addEventListener('click', closeModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+
+    targetEl.addEventListener('input', updatePreview);
+
+    document.querySelectorAll('.js-adj-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () { openEdit(btn); });
+    });
+
+    // Delete modal wiring, separate so it can share the same page's CSRF.
+    const delModal  = document.getElementById('adjustment-delete-modal');
+    const delForm   = document.getElementById('adjustment-delete-form');
+    const delLabel  = document.getElementById('adjustment-delete-label');
+    const delCancel = document.getElementById('adjustment-delete-cancel');
+
+    document.querySelectorAll('.js-adj-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delForm.action = btn.dataset.action;
+        delLabel.textContent = '“' + btn.dataset.label + '”';
+        delModal.classList.remove('hidden');
+        delModal.classList.add('flex');
+        delCancel.focus();
+      });
+    });
+
+    delCancel.addEventListener('click', function () {
+      delModal.classList.add('hidden');
+      delModal.classList.remove('flex');
+    });
+    delModal.addEventListener('click', function (e) {
+      if (e.target === delModal) {
+        delModal.classList.add('hidden');
+        delModal.classList.remove('flex');
+      }
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (!modal.classList.contains('hidden')) closeModal();
+      if (!delModal.classList.contains('hidden')) {
+        delModal.classList.add('hidden');
+        delModal.classList.remove('flex');
+      }
+    });
+  })();
+</script>
 {% endif %}
 {% endblock %}

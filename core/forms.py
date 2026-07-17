@@ -8,6 +8,8 @@ from .models import (
     Category,
     Cheque,
     Customer,
+    CustomerBalanceAdjustment,
+    Payment,
     Product,
     ProductionEntry,
     User,
@@ -228,8 +230,11 @@ class ProductForm(forms.ModelForm):
 class CustomerForm(forms.ModelForm):
     """Create/edit a customer.
 
-    `balance` is deliberately absent: it moves only through bills, payments and
-    cheques, so it must never be typed in here.
+    `balance` is editable directly here — positive means we owe the customer,
+    negative means the customer owes us. Managers and super admins both may
+    set it. Bills, payments and cheques still move the balance as they always
+    did; this field just lets the operator seed an opening figure and correct
+    it later without going via a separate adjustment flow.
 
     `credit_limit` is *removed from the form* for managers, not just hidden in
     the template. A field hidden in HTML is still a field the POST can carry,
@@ -244,10 +249,14 @@ class CustomerForm(forms.ModelForm):
             "name",
             "phone",
             "address",
+            "balance",
             "credit_limit",
             "is_supplier",
             "is_active",
         ]
+        labels = {
+            "balance": "Opening balance",
+        }
         widgets = {
             "name": forms.TextInput(
                 attrs={
@@ -266,6 +275,13 @@ class CustomerForm(forms.ModelForm):
                     "placeholder": "Billing or delivery address",
                 }
             ),
+            "balance": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.01",
+                    "placeholder": "0.00",
+                }
+            ),
             "credit_limit": forms.NumberInput(
                 attrs={
                     "class": INPUT_CLASSES,
@@ -280,6 +296,7 @@ class CustomerForm(forms.ModelForm):
         help_texts = {
             "phone": "Leave blank if you don't have one.",
             "address": "Leave blank if you don't have one.",
+            "balance": "Positive = we owe the customer. Negative = customer owes us. Leave 0 for a fresh account.",
             "credit_limit": "How much this customer may owe before new credit sales should be refused.",
         }
 
@@ -789,3 +806,200 @@ class CustomerPriceForm(forms.Form):
         for messages in self.errors.values():
             return messages[0]
         return "Could not save."
+
+
+class CustomerBalanceAdjustmentForm(forms.ModelForm):
+    """One manual balance adjustment for a customer.
+
+    Rendered inside a modal on the customer detail page. `customer` and
+    `adjusted_by` are set by the view — the caller already knows who and where
+    — so this only asks for the four figures the operator supplies.
+    """
+
+    class Meta:
+        model = CustomerBalanceAdjustment
+        fields = ["adjustment_date", "adjustment_type", "amount", "reason"]
+        labels = {
+            "adjustment_date": "Adjustment date",
+            "adjustment_type": "Type",
+            "amount": "Amount",
+            "reason": "Reason",
+        }
+        widgets = {
+            "adjustment_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "adjustment_type": forms.RadioSelect(),
+            "amount": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.01",
+                    "min": "0.01",
+                    "placeholder": "0.00",
+                }
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Opening balance, off-book credit, correction",
+                    "maxlength": 500,
+                }
+            ),
+        }
+        error_messages = {
+            "reason": {"required": "Give a reason for this adjustment."},
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.initial.get("adjustment_date") and not self.instance.pk:
+            self.initial["adjustment_date"] = timezone.localdate()
+        if not self.initial.get("adjustment_type") and not self.instance.pk:
+            self.initial["adjustment_type"] = CustomerBalanceAdjustment.Type.CREDIT
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError(
+                "Amount must be above 0. Switch the type instead of using a negative."
+            )
+        return amount
+
+    def clean_reason(self):
+        reason = self.cleaned_data["reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for this adjustment.")
+        return reason
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0]
+        return "Could not save."
+
+
+class BillPaymentForm(forms.Form):
+    """Record a follow-up payment against a bill that was left outstanding.
+
+    Not a ModelForm: a single payment on the source bill is one Payment row
+    (cash) OR one Payment + one Cheque row (cheque). The `method` field decides
+    which fields are actually required, so a plain Form with per-method
+    validation is simpler than layering a modelform on top.
+
+    Bound to `bill` at __init__ so the amount can be checked against what is
+    actually still owed — anything larger is refused with the exact figure, not
+    a generic 'too much'.
+    """
+
+    METHOD_CHOICES = [
+        (Payment.Method.CASH, "Cash"),
+        (Payment.Method.CHEQUE, "Cheque"),
+    ]
+
+    method = forms.ChoiceField(
+        choices=METHOD_CHOICES,
+        widget=forms.RadioSelect(),
+        initial=Payment.Method.CASH,
+    )
+    amount = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        widget=forms.NumberInput(
+            attrs={
+                "class": INPUT_CLASSES,
+                "step": "0.01",
+                "min": "0.01",
+                "placeholder": "0.00",
+            }
+        ),
+    )
+    cash_account = forms.ChoiceField(
+        choices=[("", "Physical drawer")] + list(Payment.Account.choices),
+        required=False,
+        widget=forms.Select(attrs={"class": SELECT_CLASSES}),
+    )
+
+    # Cheque-only fields. All optional at the field level; `clean` promotes
+    # them to required when method='cheque'. That way a cash-only submission
+    # is not tripped up by empty cheque fields the operator never touched.
+    cheque_no = forms.CharField(
+        max_length=50, required=False,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES}),
+    )
+    bank_name = forms.CharField(
+        max_length=100, required=False,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. BOC"}),
+    )
+    branch = forms.CharField(
+        max_length=100, required=False,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES}),
+    )
+    acc_no = forms.CharField(
+        max_length=50, required=False,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES}),
+    )
+    received_date = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"class": INPUT_CLASSES, "type": "date"},
+        ),
+    )
+    maturity_date = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"class": INPUT_CLASSES, "type": "date"},
+        ),
+    )
+
+    def __init__(self, *args, bill=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Bill is the reference for the remaining-balance check below. The
+        # view has already refused to open this form for a walk-in, a
+        # cancelled bill or a settled one — the check here is only for the
+        # amount, which the operator types.
+        self.bill = bill
+        if not self.initial.get("received_date"):
+            self.initial["received_date"] = timezone.localdate()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if self.bill is not None and amount > self.bill.remaining_balance:
+            raise forms.ValidationError(
+                f"That is more than the {self.bill.remaining_balance:,.2f} still "
+                f"outstanding on this bill."
+            )
+        return amount
+
+    def clean(self):
+        cleaned = super().clean()
+        method = cleaned.get("method")
+
+        if method == Payment.Method.CHEQUE:
+            required = {
+                "cheque_no": "Cheque number is required.",
+                "bank_name": "Bank name is required.",
+                "received_date": "Received date is required.",
+                "maturity_date": "Maturity date is required.",
+            }
+            for field, message in required.items():
+                if not cleaned.get(field):
+                    self.add_error(field, message)
+
+            received = cleaned.get("received_date")
+            maturity = cleaned.get("maturity_date")
+            if received and maturity and maturity < received:
+                self.add_error(
+                    "maturity_date",
+                    "Maturity date cannot be before the received date.",
+                )
+
+        return cleaned
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0]
+        return "Could not save."
+

@@ -86,11 +86,15 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const railPay     = $('rail-pay');
 
     const summary = {
-      customer:    $('summary-customer'),
-      balance:     $('summary-balance'),
-      collect:     $('summary-collect'),
-      collectNote: $('summary-collect-note'),
-      changed:     $('summary-changed'),
+      customer:        $('summary-customer'),
+      balance:         $('summary-balance'),
+      collect:         $('summary-collect'),
+      collectNote:     $('summary-collect-note'),
+      changed:         $('summary-changed'),
+      creditRow:       $('summary-credit-row'),
+      credit:          $('summary-credit'),
+      outstandingRow:  $('summary-outstanding-row'),
+      outstanding:     $('summary-outstanding'),
     };
 
     // ---- payment ----
@@ -573,6 +577,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
     function updateSummary() {
       const balance = balanceNow();
+      const total = currentTotal;
 
       summary.customer.textContent = customerLabel();
       summary.balance.textContent = money(balance);
@@ -586,11 +591,30 @@ spanning lines, it isn't stripped and renders onto the page as text.
       summary.collect.className = 'font-semibold ' +
         (collect < 0 ? 'text-emerald-600' : 'text-slate-900');
 
+      // Only one of these three rows is ever shown — the sign of the balance
+      // decides which. `hidden` is toggled directly on the row div; Tailwind's
+      // `hidden` sets display:none, which wins over the flex utility on the
+      // same element, so the row stays out of layout until it's needed.
+      const creditApplied = balance > 0 && total > 0 ? Math.min(balance, total) : 0;
+      if (creditApplied > 0) {
+        summary.creditRow.classList.remove('hidden');
+        summary.credit.textContent = '-' + money(creditApplied);
+      } else {
+        summary.creditRow.classList.add('hidden');
+      }
+
+      if (!isWalkIn() && balance < 0) {
+        summary.outstandingRow.classList.remove('hidden');
+        summary.outstanding.textContent = '+' + money(Math.abs(balance));
+      } else {
+        summary.outstandingRow.classList.add('hidden');
+      }
+
       if (isWalkIn()) {
         summary.collectNote.textContent = 'Walk-in — payable in full now.';
       } else if (collect < 0) {
         summary.collectNote.textContent = 'Nothing to collect — ' + money(Math.abs(collect)) +
-          ' credit would remain.';
+          ' credit would remain on their account.';
       } else if (balance < 0) {
         summary.collectNote.textContent = 'This bill plus the ' + money(Math.abs(balance)) +
           ' already outstanding.';

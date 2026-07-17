@@ -122,29 +122,25 @@
           {% endfor %}
         </div>
 
+        <div>
+          <label for="{{ form.balance.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {% if is_edit %}Balance{% else %}{{ form.balance.label }}{% endif %}
+          </label>
+          {{ form.balance }}
+          {% if form.balance.help_text %}
+            <p class="mt-1.5 text-xs text-slate-400">{{ form.balance.help_text }}</p>
+          {% endif %}
+          {% for error in form.balance.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
         {% if is_edit %}
-          {# Read-only: balance only moves via bills, payments and cheques. #}
-          <div class="flex items-start gap-3 rounded-lg border border-slate-200 px-4 py-3">
-            <svg class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/>
-            </svg>
-            <div>
-              <p class="text-sm text-slate-700">
-                Current balance:
-                <span class="font-semibold {% if customer.balance < 0 %}text-rose-600{% elif customer.balance > 0 %}text-emerald-600{% else %}text-slate-900{% endif %}">
-                  {{ customer.balance|floatformat:2|intcomma }}
-                </span>
-                {% if customer.balance < 0 %}
-                  <span class="text-xs text-slate-500">(owes us)</span>
-                {% elif customer.balance > 0 %}
-                  <span class="text-xs text-slate-500">(we owe them)</span>
-                {% endif %}
-              </p>
-              <p class="mt-0.5 text-xs text-slate-500">
-                Balance is managed by bills, payments and cheques, so it can't be edited here.
-              </p>
-            </div>
-          </div>
+          <p class="text-xs text-slate-500">
+            Bills, payments and cheques will still move this balance
+            automatically — this field is only for the opening figure or a
+            manual correction.
+          </p>
         {% endif %}
 
       </div>

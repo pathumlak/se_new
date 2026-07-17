@@ -162,6 +162,7 @@
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Sale</th>
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Che/Cash</th>
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+          <th class="no-print px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
@@ -199,10 +200,27 @@
                        {% else %}text-slate-400{% endif %}">
               {{ row.balance|floatformat:2|intcomma }}
             </td>
+
+            {# Only sale rows carry a bill_pk; only bills with a positive
+               remaining balance can take a follow-up payment. #}
+            <td class="no-print whitespace-nowrap px-5 py-3 text-right">
+              {% if row.bill_pk and row.remaining > 0 %}
+                <a href="{% url 'core:bill_add_payment' row.bill_pk %}"
+                   class="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                   title="Record a payment against Bill #{{ row.bill_pk }} (outstanding: {{ row.remaining|floatformat:2|intcomma }})">
+                  Pay
+                </a>
+              {% elif row.bill_pk %}
+                <a href="{% url 'core:bill_detail' row.bill_pk %}"
+                   class="text-xs font-medium text-slate-400 hover:text-slate-700">
+                  View
+                </a>
+              {% endif %}
+            </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="5" class="px-5 py-12 text-center">
+            <td colspan="6" class="px-5 py-12 text-center">
               {% if is_filtered %}
                 <p class="text-sm text-slate-500">No ledger activity in this date range.</p>
                 <a href="{% url 'core:customer_ledger' customer.pk %}"
@@ -236,6 +254,7 @@
                        {% else %}text-slate-400{% endif %}">
               {{ closing_balance|floatformat:2|intcomma }}
             </td>
+            <td class="no-print"></td>
           </tr>
         </tfoot>
       {% endif %}

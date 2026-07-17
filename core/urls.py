@@ -45,6 +45,22 @@ urlpatterns = [
     path("customers/<int:pk>/delete/", views.customer_delete, name="customer_delete"),
     path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
     path("customers/<int:pk>/ledger/", views.customer_ledger, name="customer_ledger"),
+    # Super-admin only, enforced per view.
+    path(
+        "customers/<int:pk>/adjustments/create/",
+        views.customer_adjustment_create,
+        name="customer_adjustment_create",
+    ),
+    path(
+        "customers/<int:pk>/adjustments/<int:adjustment_pk>/edit/",
+        views.customer_adjustment_edit,
+        name="customer_adjustment_edit",
+    ),
+    path(
+        "customers/<int:pk>/adjustments/<int:adjustment_pk>/delete/",
+        views.customer_adjustment_delete,
+        name="customer_adjustment_delete",
+    ),
     # Serves the Save All button on both price pages above.
     path(
         "api/customer-price/save-all/",
@@ -74,6 +90,8 @@ urlpatterns = [
     # GET renders the form; POST rewrites the bill.
     path("bills/<int:pk>/edit/", views.bill_edit, name="bill_edit"),
     path("bills/<int:pk>/delete/", views.bill_delete, name="bill_delete"),
+    # Record a follow-up payment against a bill that still owes money.
+    path("bills/<int:pk>/pay/", views.bill_add_payment, name="bill_add_payment"),
     path("cheques/", views.cheque_list, name="cheque_list"),
     path("cheques/<int:pk>/deposit/", views.cheque_deposit, name="cheque_deposit"),
     path("cheques/<int:pk>/hold/", views.cheque_hold, name="cheque_hold"),

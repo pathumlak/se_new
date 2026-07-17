@@ -77,6 +77,13 @@
         Ledger
       </a>
     {% endif %}
+    
+    {% if not bill.is_walk_in and bill.status != 'cancelled' and bill.remaining_balance > 0 %}
+      <a href="{% url 'core:bill_add_payment' bill.pk %}"
+         class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+        Record Payment
+      </a>
+    {% endif %}
     <a href="{% url 'core:bill_edit' bill.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Edit
@@ -162,6 +169,24 @@
                 {{ bill.total_amount|floatformat:2|intcomma }}
               </td>
             </tr>
+            {% if bill.credit_applied %}
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Customer credit applied
+                </td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-emerald-600">
+                  -{{ bill.credit_applied|floatformat:2|intcomma }}
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Amount to collect
+                </td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-semibold text-slate-900">
+                  {{ bill.amount_to_collect|floatformat:2|intcomma }}
+                </td>
+              </tr>
+            {% endif %}
           </tfoot>
         </table>
       </div>

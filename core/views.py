@@ -36,10 +36,12 @@ from django.views.decorators.http import require_GET, require_POST
 from .decorators import super_admin_required
 from .forms import (
     BillEditReasonForm,
+    BillPaymentForm,
     CashDrawerEditForm,
     CashDrawerOutForm,
     CategoryForm,
     ChequeForm,
+    CustomerBalanceAdjustmentForm,
     CustomerForm,
     CustomerPriceForm,
     ProductForm,
@@ -58,6 +60,7 @@ from .models import (
     Category,
     Cheque,
     Customer,
+    CustomerBalanceAdjustment,
     CustomerPrice,
     HeldBill,
     Payment,
@@ -801,11 +804,124 @@ def customer_list(request):
 @login_required
 def customer_detail(request, pk):
     customer = get_object_or_404(_customers(), pk=pk)
+
+    # The adjustments table and its modal are super-admin only, but the query
+    # runs regardless so a manager viewing the page does not see a suddenly
+    # missing section on reload after a role change.
+    adjustments = customer.balance_adjustments.select_related("adjusted_by")
+    page_obj = _paginate(request, adjustments)
+
     return render(
         request,
         "core/customer_detail.html",
-        {"customer": customer, "blockers": _delete_blockers(customer)},
+        {
+            "customer": customer,
+            "blockers": _delete_blockers(customer),
+            "adjustment_form": CustomerBalanceAdjustmentForm(),
+            "adjustments_page": page_obj,
+            "adjustments": page_obj.object_list,
+        },
     )
+
+
+def _apply_adjustment(customer, adjustment_type, amount):
+    """Move Customer.balance by one adjustment, in the direction of its type.
+
+    Not called anywhere Customer.balance is already touched — this is the only
+    thing that should ever move it from an adjustment, so any change to that
+    rule lives here.
+    """
+    if adjustment_type == CustomerBalanceAdjustment.Type.CREDIT:
+        Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + amount)
+    else:
+        Customer.objects.filter(pk=customer.pk).update(balance=F("balance") - amount)
+
+
+def _reverse_adjustment(customer, adjustment_type, amount):
+    """Undo one adjustment's effect on Customer.balance.
+
+    An edit reverses the old row before applying the new one, and a delete
+    reverses the row on its way out. Kept separate from `_apply_adjustment`
+    even though it is the mirror: reading `reverse` at the call site is
+    clearer than reading `apply(opposite_type)`.
+    """
+    if adjustment_type == CustomerBalanceAdjustment.Type.CREDIT:
+        Customer.objects.filter(pk=customer.pk).update(balance=F("balance") - amount)
+    else:
+        Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + amount)
+
+
+@require_POST
+@super_admin_required
+def customer_adjustment_create(request, pk):
+    customer = get_object_or_404(Customer, pk=pk)
+    form = CustomerBalanceAdjustmentForm(request.POST)
+
+    if not form.is_valid():
+        messages.error(request, f"Adjustment not saved: {form.first_error()}")
+        return redirect("core:customer_detail", pk=customer.pk)
+
+    with transaction.atomic():
+        adjustment = form.save(commit=False)
+        adjustment.customer = customer
+        adjustment.adjusted_by = request.user
+        adjustment.save()
+        _apply_adjustment(customer, adjustment.adjustment_type, adjustment.amount)
+
+    sign = "+" if adjustment.adjustment_type == CustomerBalanceAdjustment.Type.CREDIT else "-"
+    messages.success(
+        request,
+        f"Balance adjustment {sign}{adjustment.amount:,.2f} recorded for "
+        f"{customer.name}.",
+    )
+    return redirect("core:customer_detail", pk=customer.pk)
+
+
+@require_POST
+@super_admin_required
+def customer_adjustment_edit(request, pk, adjustment_pk):
+    customer = get_object_or_404(Customer, pk=pk)
+    adjustment = get_object_or_404(
+        CustomerBalanceAdjustment, pk=adjustment_pk, customer=customer
+    )
+    form = CustomerBalanceAdjustmentForm(request.POST, instance=adjustment)
+
+    if not form.is_valid():
+        messages.error(request, f"Adjustment not saved: {form.first_error()}")
+        return redirect("core:customer_detail", pk=customer.pk)
+
+    with transaction.atomic():
+        # Reverse the row as it stood before the edit, so the balance walks
+        # from the pre-edit total to the new one and never counts either the
+        # old amount or the new amount twice — the same shape as _reverse_bill.
+        _reverse_adjustment(customer, adjustment.adjustment_type, adjustment.amount)
+
+        edited = form.save(commit=False)
+        # adjusted_by tracks the person of record for the current values, not
+        # the person who wrote the row first. That matches how BillEditAudit
+        # attributes edits.
+        edited.adjusted_by = request.user
+        edited.save()
+        _apply_adjustment(customer, edited.adjustment_type, edited.amount)
+
+    messages.success(request, f"Adjustment updated for {customer.name}.")
+    return redirect("core:customer_detail", pk=customer.pk)
+
+
+@require_POST
+@super_admin_required
+def customer_adjustment_delete(request, pk, adjustment_pk):
+    customer = get_object_or_404(Customer, pk=pk)
+    adjustment = get_object_or_404(
+        CustomerBalanceAdjustment, pk=adjustment_pk, customer=customer
+    )
+
+    with transaction.atomic():
+        _reverse_adjustment(customer, adjustment.adjustment_type, adjustment.amount)
+        adjustment.delete()
+
+    messages.success(request, f"Adjustment removed from {customer.name}.")
+    return redirect("core:customer_detail", pk=customer.pk)
 
 
 @login_required
@@ -901,6 +1017,11 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": bill.total_amount,
                 "credit": None,
                 "is_note": False,
+                # Carried through so the ledger row can offer a "Pay" link on a
+                # bill that still owes money. Everything else lands as None so
+                # the template can guard on it with a single check.
+                "bill_pk": bill.pk,
+                "remaining": bill.remaining_balance,
             }
         )
 
@@ -966,6 +1087,25 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "description": f"{payment.get_method_display()} received",
                 "sale": None,
                 "credit": payment.amount,
+                "is_note": False,
+            }
+        )
+
+    # Manual adjustments book like a payment or a charge — a credit reduces
+    # what the customer owes us, a debit adds to it — so they share the sale
+    # and credit columns. The description carries the reason so a reader who
+    # only has the printed ledger can see why the balance moved.
+    for adjustment in customer.balance_adjustments.all():
+        is_credit = adjustment.adjustment_type == CustomerBalanceAdjustment.Type.CREDIT
+        sign = "+" if is_credit else "-"
+        entries.append(
+            {
+                "date": adjustment.adjustment_date,
+                "kind": 2,
+                "pk": adjustment.pk,
+                "description": f"Balance Adjustment ({sign}) — {adjustment.reason}",
+                "sale": None if is_credit else adjustment.amount,
+                "credit": adjustment.amount if is_credit else None,
                 "is_note": False,
             }
         )
@@ -1785,6 +1925,16 @@ def _write_bill(bill, user, payload):
     # always paid in full anyway, so the net would be zero even if there were.
     balance_change = ZERO if is_walk_in else paid - total
 
+    # Snapshot of how much of the customer's positive balance (credit we owed
+    # them) this bill absorbed. `customer` was fetched fresh above after any
+    # reversal, so its `balance` here is the pre-bill figure — the same one
+    # the payment target was measured against — which is what makes this
+    # correct even on an edit.
+    if not is_walk_in and customer.balance > ZERO:
+        credit_applied = min(customer.balance, total)
+    else:
+        credit_applied = ZERO
+
     # 1. header. An edit keeps the date it was billed on — the goods left the
     # yard that day whatever gets corrected afterwards.
     bill.customer = customer
@@ -1797,6 +1947,7 @@ def _write_bill(bill, user, payload):
     bill.total_amount = total
     bill.paid_amount = paid
     bill.balance_change = balance_change
+    bill.credit_applied = credit_applied
     bill.payment_type = parts["type"]
     bill.status = status
     bill.is_walk_in = is_walk_in
@@ -1927,6 +2078,137 @@ def bill_detail(request, pk):
             # Templates can't take an absolute value, and a debt reads better
             # as a positive figure.
             "owed_now": owed_now,
+        },
+    )
+
+
+def _refresh_bill_status(bill):
+    """Set `bill.status` from what has now been collected and settled.
+
+    The same shape the bill-write path computes at save time, kept in one place
+    so a follow-up payment or a settlement lands on the same status as if the
+    bill had been written that way to begin with. A cancelled bill is left
+    alone — payments against a cancelled bill would already have been refused
+    upstream.
+    """
+    if bill.status == Bill.Status.CANCELLED:
+        return
+    covered = bill.paid_amount + bill.settled_amount
+    if covered >= bill.total_amount:
+        new_status = Bill.Status.PAID
+    elif covered > ZERO:
+        new_status = Bill.Status.PARTIAL
+    else:
+        new_status = Bill.Status.UNPAID
+    if new_status != bill.status:
+        Bill.objects.filter(pk=bill.pk).update(status=new_status)
+        bill.status = new_status
+
+
+@login_required
+def bill_add_payment(request, pk):
+    """Record one follow-up payment against a bill that still owes money.
+
+    A Pay Later bill (or a Partial one) leaves an outstanding balance the
+    customer still has to hand over. This view is that follow-up: pick cash or
+    a single cheque, enter the amount, save. The plumbing is deliberately the
+    same as the bill-write path — `_record_payments` writes the Payment / Cheque
+    / CashDrawer / CashTransfer rows — so the drawer, the cheque list and the
+    ledger see nothing they haven't seen before.
+
+    Refused for:
+      - walk-in bills: no customer to owe anything, and they are paid at the
+        till by construction.
+      - cancelled bills: nothing is owed on a cancelled sale.
+      - bills already fully covered by payments and settlements.
+    """
+    bill = get_object_or_404(
+        Bill.objects.select_related("customer"), pk=pk
+    )
+
+    if bill.is_walk_in or bill.customer_id is None:
+        messages.error(
+            request,
+            "Walk-in bills are paid at the till and can't take a follow-up payment.",
+        )
+        return redirect("core:bill_detail", pk=pk)
+    if bill.status == Bill.Status.CANCELLED:
+        messages.error(request, "Cancelled bills can't take new payments.")
+        return redirect("core:bill_detail", pk=pk)
+    if bill.remaining_balance <= ZERO:
+        messages.info(request, f"Bill #{bill.pk} is already settled.")
+        return redirect("core:bill_detail", pk=pk)
+
+    form = BillPaymentForm(request.POST or None, bill=bill)
+
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        amount = data["amount"]
+
+        # Shape the payload _record_payments expects. Only one leg is ever
+        # populated on this form — cash OR one cheque — so the other side is
+        # an empty default.
+        if data["method"] == Payment.Method.CASH:
+            parts = {
+                "cash": amount,
+                "cash_account": data.get("cash_account") or "",
+                "cheques": [],
+            }
+        else:
+            parts = {
+                "cash": ZERO,
+                "cash_account": "",
+                "cheques": [
+                    {
+                        "cheque_no": data["cheque_no"],
+                        "bank_name": data["bank_name"],
+                        "branch": data.get("branch") or "",
+                        "acc_no": data.get("acc_no") or "",
+                        "amount": amount,
+                        "received_date": data["received_date"],
+                        "maturity_date": data["maturity_date"],
+                    }
+                ],
+            }
+
+        with transaction.atomic():
+            _record_payments(bill, bill.customer, parts)
+
+            # Two counters move by the same figure: the bill's paid_amount so
+            # remaining_balance drops, and balance_change so the pre-edit
+            # figure the bill stores stays a true summary of everything it has
+            # ever moved. Customer.balance rises by `amount` — cash coming in
+            # settles debt, which reads as a positive move in the balance
+            # column.
+            Bill.objects.filter(pk=bill.pk).update(
+                paid_amount=F("paid_amount") + amount,
+                balance_change=F("balance_change") + amount,
+            )
+            Customer.objects.filter(pk=bill.customer_id).update(
+                balance=F("balance") + amount
+            )
+
+            # Read the fresh figures back and let the status helper decide.
+            bill.refresh_from_db()
+            _refresh_bill_status(bill)
+
+        messages.success(
+            request,
+            f"Recorded {amount:,.2f} against Bill #{bill.pk}. "
+            f"Remaining: {bill.remaining_balance:,.2f}.",
+        )
+        return redirect("core:bill_detail", pk=bill.pk)
+
+    if request.method == "POST":
+        messages.error(request, f"Payment not saved: {form.first_error()}")
+
+    return render(
+        request,
+        "core/bill_add_payment.html",
+        {
+            "bill": bill,
+            "form": form,
+            "account_choices": Payment.Account.choices,
         },
     )
 
