@@ -15,7 +15,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "senovkaplastics.cloud",
     "www.senovkaplastics.cloud",
-    "YOUR_SERVER_IP",
+    "72.61.174.119",
     "127.0.0.1",
     "localhost",
 ]
