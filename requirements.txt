@@ -8,3 +8,7 @@ crispy-tailwind>=1.0
 #   Windows        install the GTK3 runtime, or skip it — the report falls back
 #                  to a print-friendly page and the browser's Print to PDF.
 weasyprint>=60
+
+# Quotation export from the order book. Pure Python, no native dependencies —
+# unlike WeasyPrint above, this one just works wherever pip does.
+openpyxl>=3.1

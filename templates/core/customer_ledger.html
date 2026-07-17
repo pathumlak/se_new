@@ -165,9 +165,7 @@
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
-        {# A note row moves no money: italic grey throughout, dashes where a
-           financial row has figures, and the balance carried in unchanged from
-           the row above so it reads as unaffected rather than as a new one. #}
+        
         {% for row in rows %}
           <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %}">
             <td class="whitespace-nowrap px-5 py-3 {% if row.is_note %}text-slate-400{% else %}text-slate-600{% endif %}">

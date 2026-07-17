@@ -130,8 +130,7 @@
     </tr>
   </thead>
   <tbody>
-    {# A note row moves no money — italic grey, dashes for figures, and the
-       balance above carried in unchanged. #}
+    
     {% for row in rows %}
       <tr{% if row.is_note %} class="note"{% endif %}>
         <td>{{ row.date|date:"j M Y" }}</td>

@@ -83,3 +83,13 @@ echo "" && \
 echo "=== TO DEPLOY FUTURE UPDATES RUN ===" && \
 echo " bash /var/www/senovka_erp/deploy.sh" && \
 echo ""
+
+
+
+1. git pull origin main        ← pulls your latest code
+2. pip install -r requirements ← installs any new packages
+3. python manage.py migrate    ← applies any new migrations
+4. python manage.py collectstatic ← updates static files
+5. chown www-data              ← fixes permissions
+6. systemctl restart senovka_erp ← restarts gunicorn
+7. systemctl reload nginx      ← reloads nginx
