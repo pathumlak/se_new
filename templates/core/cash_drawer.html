@@ -4,88 +4,366 @@
 {% block title %}Cash Drawer · Senovka Plastics{% endblock %}
 {% block header %}Cash Drawer{% endblock %}
 
+{% block extra_head %}
+<style>
+  /* ── Stat cards ── */
+  .drawer-stat {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+    position: relative;
+    overflow: hidden;
+    transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .drawer-stat:hover {
+    box-shadow: 0 4px 16px rgba(15,23,42,0.10);
+    transform: translateY(-1px);
+  }
+  .drawer-stat::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 14px 14px 0 0;
+  }
+  .drawer-stat.strip-blue::before    { background: linear-gradient(90deg,#3b82f6,#60a5fa); }
+  .drawer-stat.strip-emerald::before { background: linear-gradient(90deg,#10b981,#34d399); }
+  .drawer-stat.strip-violet::before  { background: linear-gradient(90deg,#8b5cf6,#a78bfa); }
+
+  /* ── Info callout ── */
+  .info-callout {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.6;
+  }
+
+  /* ── Filter bar ── */
+  .filter-input {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: #0f172a;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    outline: none;
+  }
+  .filter-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  }
+
+  /* ── Log table ── */
+  .log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .log-table thead th {
+    background: #f8fafc;
+    padding: 10px 16px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .log-table thead th.text-right { text-align: right; }
+  .log-table tbody tr { border-bottom: 1px solid #f8fafc; transition: background 0.1s; }
+  .log-table tbody tr:hover { background: #f8fafc; }
+  .log-table tbody td { padding: 12px 16px; vertical-align: middle; }
+  .log-table tfoot td { padding: 12px 16px; }
+  .log-table tfoot { background: #f8fafc; border-top: 2px solid #e2e8f0; }
+
+  /* ── "Opening balance" pinned row ── */
+  .opening-row td { background: #f1f5f9; font-size: 11px; color: #64748b; padding: 8px 16px; }
+
+  /* ── In / Out amounts ── */
+  .amt-in  { color: #059669; font-weight: 600; }
+  .amt-out { color: #e11d48; font-weight: 600; }
+  .amt-neg { color: #e11d48; font-weight: 700; }
+
+  /* ── Edited badge ── */
+  .badge-edited {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 600;
+    background: #fef9c3;
+    color: #854d0e;
+    border: 1px solid #fde68a;
+    cursor: help;
+  }
+
+  /* ── Bill link ── */
+  .bill-link {
+    font-weight: 600;
+    color: #1e40af;
+    text-decoration: none;
+    transition: color 0.12s;
+  }
+  .bill-link:hover { color: #1d4ed8; text-decoration: underline; }
+
+  /* ── Row action buttons ── */
+  .btn-row-edit {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #475569;
+    background: transparent;
+    border: 1px solid #e2e8f0;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .btn-row-edit:hover { background: #f1f5f9; color: #0f172a; border-color: #cbd5e1; }
+
+  .btn-row-delete {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e11d48;
+    background: transparent;
+    border: 1px solid #fecdd3;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .btn-row-delete:hover { background: #fff1f2; color: #be123c; }
+
+  /* ── Modal shared ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(15,23,42,0.6);
+    backdrop-filter: blur(4px);
+    padding: 16px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%; max-width: 440px;
+    box-shadow: 0 20px 60px rgba(15,23,42,0.22), 0 0 0 1px rgba(15,23,42,0.06);
+    animation: modalIn 0.18s ease;
+  }
+  @keyframes modalIn {
+    from { opacity:0; transform:translateY(10px) scale(0.98); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+  }
+  .modal-title {
+    font-size: 15px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em;
+  }
+  .modal-sub {
+    font-size: 12px; color: #64748b; margin-top: 3px;
+  }
+  .modal-close-btn {
+    background: none; border: none; cursor: pointer;
+    color: #94a3b8; padding: 4px; border-radius: 6px;
+    transition: color 0.12s, background 0.12s;
+  }
+  .modal-close-btn:hover { color: #0f172a; background: #f1f5f9; }
+
+  /* ── Form fields inside modals ── */
+  .form-label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: #374151; margin-bottom: 5px; letter-spacing: 0.01em;
+  }
+  .form-label .req { color: #f43f5e; margin-left: 2px; }
+  .form-label .opt { font-weight: 400; color: #94a3b8; font-size: 11px; margin-left: 4px; }
+  .form-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .form-error { font-size: 11px; color: #e11d48; margin-top: 4px; }
+  .form-divider { border-top: 1px solid #f1f5f9; padding-top: 16px; margin-top: 4px; }
+
+  /* Style Django-rendered inputs inside modals */
+  #out-modal input, #out-modal select, #out-modal textarea,
+  #edit-modal input, #edit-modal select, #edit-modal textarea {
+    width: 100%;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #0f172a;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    font-family: inherit;
+  }
+  #out-modal input:focus, #out-modal select:focus, #out-modal textarea:focus,
+  #edit-modal input:focus, #edit-modal select:focus, #edit-modal textarea:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  }
+
+  /* ── Modal buttons ── */
+  .btn-modal-cancel {
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .btn-modal-cancel:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+
+  .btn-modal-primary {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #1e40af; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-primary:hover { background: #1d4ed8; }
+
+  .btn-modal-danger {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #e11d48; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-danger:hover { background: #be123c; }
+
+  /* ── Delete modal warning box ── */
+  .delete-detail-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: #475569;
+    line-height: 1.6;
+    margin-top: 14px;
+  }
+
+  /* ── "From Bill" tag ── */
+  .from-bill-tag {
+    display: inline-flex; align-items: center;
+    font-size: 10px; font-weight: 600; color: #64748b;
+    background: #f1f5f9; border: 1px solid #e2e8f0;
+    padding: 2px 8px; border-radius: 99px;
+  }
+
+  /* ── Record button ── */
+  .btn-record {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: 10px;
+    font-size: 13px; font-weight: 700;
+    background: #1e40af; color: #fff; border: none; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(30,64,175,0.25);
+    transition: background 0.12s, box-shadow 0.12s, transform 0.1s;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+  .btn-record:hover { background: #1d4ed8; box-shadow: 0 4px 12px rgba(30,64,175,0.3); transform: translateY(-1px); }
+
+  /* ── Filter buttons ── */
+  .btn-filter {
+    padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .btn-filter:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+
+  .btn-clear {
+    padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    color: #64748b; text-decoration: none; transition: color 0.12s;
+    display: flex; align-items: center;
+  }
+  .btn-clear:hover { color: #0f172a; }
+
+  /* ── Empty state ── */
+  .empty-state { padding: 48px 20px; text-align: center; }
+  .empty-state p { font-size: 13px; color: #94a3b8; }
+  .empty-state a { color: #3b82f6; font-weight: 600; text-decoration: none; }
+  .empty-state a:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
 {% block content %}
 
-<!-- Balance -->
+<!-- ═══════════════ HEADER ROW: Balance + Action ═══════════════ -->
 <div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:flex-1">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Drawer Balance</p>
-    <p class="mt-1 text-4xl font-semibold {% if balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+
+  <!-- Main balance card -->
+  <div class="drawer-stat strip-blue lg:flex-1">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Current Drawer Balance</p>
+    <p class="text-[38px] font-extrabold tracking-tight leading-none {% if balance < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
       Rs {{ balance|floatformat:2|intcomma }}
     </p>
-    <p class="mt-1 text-xs text-slate-500">
+    <p class="mt-2 text-[11px] text-slate-400 leading-relaxed">
       Cash taken in on bills, less what has been withdrawn or moved out.
     </p>
   </div>
 
-  <button type="button" id="open-form"
-          class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2.5
-                 text-sm font-semibold text-white hover:bg-slate-800">
-    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-    </svg>
-    Record Transfer / Withdrawal
-  </button>
+  <!-- Record button -->
+  <div class="flex items-start">
+    <button type="button" id="open-form" class="btn-record">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Record Transfer / Withdrawal
+    </button>
+  </div>
 </div>
 
-<!-- Breakdown -->
-<div class="mb-5 grid gap-4 sm:grid-cols-3">
-  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Physical Cash in Drawer</p>
-    <p class="mt-1 text-2xl font-semibold {% if balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+<!-- ═══════════════ BREAKDOWN STATS ═══════════════ -->
+<div class="mb-4 grid gap-4 sm:grid-cols-3">
+  <div class="drawer-stat strip-blue">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Physical Cash in Drawer</p>
+    <p class="text-2xl font-extrabold tracking-tight {% if balance < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
       {{ balance|floatformat:2|intcomma }}
     </p>
-    <p class="mt-1 text-xs text-slate-500">Notes and coins on hand.</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">Notes and coins on hand.</p>
   </div>
 
-  {% comment %}
-  These two are read from CashTransfer, which is written only when a bill's
-  cash is banked. CashDrawer has no account column, so a transfer recorded on
-  this page lowers the drawer without landing here. The sub-labels say so
-  rather than let the figures read as "everything ever sent to this account".
-  {% endcomment %}
-  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Transferred to Senovka Acc</p>
-    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
-    <p class="mt-1 text-xs text-slate-500">Banked from bill payments only.</p>
+  <div class="drawer-stat strip-emerald">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Senovka Acc</p>
+    <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">Banked from bill payments only.</p>
   </div>
 
-  <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Transferred to Dinusha Acc</p>
-    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ dinusha_banked|floatformat:2|intcomma }}</p>
-    <p class="mt-1 text-xs text-slate-500">Banked from bill payments only.</p>
+  <div class="drawer-stat strip-violet">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Dinusha Acc</p>
+    <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ dinusha_banked|floatformat:2|intcomma }}</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">Banked from bill payments only.</p>
   </div>
 </div>
 
-<p class="mb-5 rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
-  The two account totals cover cash banked as part of a bill payment. A transfer
-  recorded on this page comes off the drawer and is named in the log below, but
-  isn't counted in those totals — the drawer has nowhere to record which account
-  it went to.
-</p>
+<!-- Info callout -->
+<div class="info-callout mb-5">
+  The two account totals cover cash banked as part of a bill payment. A transfer recorded on this page
+  comes off the drawer and is named in the log below, but isn't counted in those totals — the drawer
+  has nowhere to record which account it went to.
+</div>
 
-<!-- Date range -->
-<form method="get" class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end">
+<!-- ═══════════════ DATE FILTER ═══════════════ -->
+<form method="get" class="mb-5 flex flex-wrap items-end gap-3">
   <div>
-    <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
-    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
-           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
-                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    <label for="from_date" class="form-label">From</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}" class="filter-input">
   </div>
   <div>
-    <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">To</label>
-    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
-           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
-                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    <label for="to_date" class="form-label">To</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}" class="filter-input">
   </div>
   <div class="flex gap-2">
-    <button type="submit"
-            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+    <button type="submit" class="btn-filter">
+      <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591L15.75 12.5V18a.75.75 0 01-.362.643l-3.75 2.25A.75.75 0 0110.5 20.25V12.5L4.659 7.409A2.25 2.25 0 014 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z"/>
+      </svg>
       Filter
     </button>
     {% if is_filtered %}
-      <a href="{% url 'core:cash_drawer' %}"
-         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <a href="{% url 'core:cash_drawer' %}" class="btn-clear">
+        <svg class="h-3.5 w-3.5 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
         Clear
       </a>
     {% endif %}
@@ -94,141 +372,125 @@
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
 
-<!-- Log -->
-<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+<!-- ═══════════════ TRANSACTION LOG ═══════════════ -->
+<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);">
   <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
+    <table class="log-table">
+      <thead>
         <tr>
-          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
-          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">In (+)</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Out (−)</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Running Balance</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+          <th>Date</th>
+          <th>Description</th>
+          <th class="text-right">In (+)</th>
+          <th class="text-right">Out (−)</th>
+          <th class="text-right">Running Balance</th>
+          <th class="text-right">Actions</th>
         </tr>
       </thead>
 
-      <tbody class="divide-y divide-slate-100">
+      <tbody>
         {% if is_filtered and rows %}
-          {# The drawer didn't start at zero on this date, so neither does the column. #}
-          <tr class="bg-slate-50">
-            <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
-              {% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}
-            </td>
-            <td class="px-4 py-2 text-xs font-medium text-slate-500" colspan="3">
-              Opening balance — everything before this range
-            </td>
-            <td class="whitespace-nowrap px-4 py-2 text-right text-xs font-semibold text-slate-500">
-              {{ opening|floatformat:2|intcomma }}
-            </td>
+          <tr class="opening-row">
+            <td class="whitespace-nowrap">{% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}</td>
+            <td colspan="3" style="font-weight:500">Opening balance — everything before this range</td>
+            <td class="text-right" style="font-weight:600;color:#475569">{{ opening|floatformat:2|intcomma }}</td>
             <td></td>
           </tr>
         {% endif %}
 
         {% for row in rows %}
-          <tr class="hover:bg-slate-50">
-            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ row.entry.txn_date|date:"j M Y" }}</td>
+          <tr>
+            <td class="whitespace-nowrap" style="color:#64748b">{{ row.entry.txn_date|date:"j M Y" }}</td>
 
-            <td class="px-4 py-3 text-slate-900">
+            <td>
               {% if row.entry.bill_id %}
-                {# Bill-linked: point at the bill rather than repeat its reason. #}
-                <a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="font-medium text-slate-900 hover:underline">
+                <a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
                   Bill #{{ row.entry.bill_id }}
                 </a>
                 {% if row.entry.bill.customer_id %}
-                  <span class="text-slate-500">· {{ row.entry.bill.customer.name }}</span>
+                  <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.customer.name }}</span>
                 {% endif %}
                 {% if row.entry.reason %}
-                  <span class="block text-xs text-slate-400">{{ row.entry.reason }}</span>
+                  <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px">{{ row.entry.reason }}</span>
                 {% endif %}
               {% elif row.entry.reason %}
-                {{ row.entry.reason }}
+                <span style="color:#0f172a;font-weight:500">{{ row.entry.reason }}</span>
               {% else %}
-                <span class="text-slate-400">{{ row.entry.get_txn_type_display }}</span>
+                <span style="color:#94a3b8">{{ row.entry.get_txn_type_display }}</span>
               {% endif %}
 
               {% if row.entry.edited_at %}
-                {# title=, so the reason for the change is one hover away rather
-                   than another column wide. #}
-                <span class="ml-1 cursor-help rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+                <span class="badge-edited"
                       title="Edited {{ row.entry.edited_at|date:'j M Y, g:i a' }}{% if row.entry.edited_by %} by {{ row.entry.edited_by.username }}{% endif %}{% if row.entry.edit_reason %} — {{ row.entry.edit_reason }}{% endif %}">
-                  Edited
+                  ✎ Edited
                 </span>
               {% endif %}
             </td>
 
-            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-emerald-600">
-              {% if row.is_in %}{{ row.entry.amount|floatformat:2|intcomma }}{% endif %}
+            <td class="text-right whitespace-nowrap">
+              {% if row.is_in %}<span class="amt-in">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
             </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-rose-600">
-              {% if not row.is_in %}{{ row.entry.amount|floatformat:2|intcomma }}{% endif %}
+            <td class="text-right whitespace-nowrap">
+              {% if not row.is_in %}<span class="amt-out">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
             </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
-                       {% if row.running < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+            <td class="text-right whitespace-nowrap font-bold {% if row.running < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
               {{ row.running|floatformat:2|intcomma }}
             </td>
 
-            <td class="whitespace-nowrap px-4 py-3 text-right">
+            <td class="text-right whitespace-nowrap">
               {% if row.is_manual %}
-                <div class="flex justify-end gap-1">
+                <div style="display:flex;justify-content:flex-end;gap:6px">
                   <button type="button"
                           data-url="{% url 'core:cash_drawer_edit' row.entry.pk %}"
                           data-date="{{ row.entry.txn_date|date:'Y-m-d' }}"
                           data-type="{{ row.entry.txn_type }}"
                           data-amount="{{ row.entry.amount }}"
                           data-reason="{{ row.entry.reason }}"
-                          class="js-edit rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
-                    Edit
-                  </button>
+                          class="js-edit btn-row-edit">Edit</button>
                   <button type="button"
                           data-url="{% url 'core:cash_drawer_delete' row.entry.pk %}"
                           data-date="{{ row.entry.txn_date|date:'j M Y' }}"
                           data-type="{{ row.entry.get_txn_type_display }}"
                           data-amount="{{ row.entry.amount|floatformat:2|intcomma }}"
                           data-reason="{{ row.entry.reason }}"
-                          class="js-delete rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">
-                    Delete
-                  </button>
+                          class="js-delete btn-row-delete">Delete</button>
                 </div>
               {% else %}
-                {# Written by a bill: it belongs to that bill's payment, and is
-                   corrected by editing the bill, not here. #}
-                <span class="text-xs text-slate-400">From Bill #{{ row.entry.bill_id }}</span>
+                <span class="from-bill-tag">From Bill #{{ row.entry.bill_id }}</span>
               {% endif %}
             </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="6" class="px-4 py-12 text-center">
-              {% if is_filtered %}
-                <p class="text-sm text-slate-500">No drawer activity in this date range.</p>
-                <a href="{% url 'core:cash_drawer' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
-                  Clear dates
-                </a>
-              {% else %}
-                <p class="text-sm text-slate-500">Nothing in the drawer log yet.</p>
-                <p class="mt-1 text-xs text-slate-400">Cash comes in when a bill is paid with it.</p>
-              {% endif %}
+            <td colspan="6">
+              <div class="empty-state">
+                {% if is_filtered %}
+                  <svg style="margin:0 auto 12px;display:block;color:#cbd5e1" class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803M10.5 7.5v3m0 0v3m0-3h3m-3 0H7.5"/>
+                  </svg>
+                  <p>No drawer activity in this date range.</p>
+                  <a href="{% url 'core:cash_drawer' %}" style="margin-top:8px;display:inline-block">Clear dates</a>
+                {% else %}
+                  <svg style="margin:0 auto 12px;display:block;color:#cbd5e1" class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
+                  </svg>
+                  <p>Nothing in the drawer log yet.</p>
+                  <p style="margin-top:4px;font-size:11px;color:#cbd5e1">Cash comes in when a bill is paid with it.</p>
+                {% endif %}
+              </div>
             </td>
           </tr>
         {% endfor %}
       </tbody>
 
       {% if rows %}
-        <tfoot class="border-t-2 border-slate-200 bg-slate-50">
+        <tfoot>
           <tr>
-            <td colspan="2" class="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Totals{% if is_filtered %} <span class="font-normal normal-case text-slate-400">(range shown)</span>{% endif %}
+            <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8">
+              Totals{% if is_filtered %} <span style="font-weight:400;text-transform:none;letter-spacing:0">(range shown)</span>{% endif %}
             </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-emerald-600">
-              {{ total_in|floatformat:2|intcomma }}
-            </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-rose-600">
-              {{ total_out|floatformat:2|intcomma }}
-            </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold
-                       {% if closing < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+            <td class="text-right whitespace-nowrap" style="font-weight:700;color:#059669;font-size:14px">{{ total_in|floatformat:2|intcomma }}</td>
+            <td class="text-right whitespace-nowrap" style="font-weight:700;color:#e11d48;font-size:14px">{{ total_out|floatformat:2|intcomma }}</td>
+            <td class="text-right whitespace-nowrap" style="font-size:16px;font-weight:800;{% if closing < 0 %}color:#e11d48{% else %}color:#0f172a{% endif %}">
               {{ closing|floatformat:2|intcomma }}
             </td>
             <td></td>
@@ -239,25 +501,19 @@
   </div>
 </div>
 
-<!-- ====================== Record out modal ====================== -->
-<div id="out-modal"
-     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
-     role="dialog" aria-modal="true" aria-labelledby="out-modal-title">
-  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+
+<!-- ═══════════════════════ RECORD MODAL ═══════════════════════ -->
+<div id="out-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="out-modal-title">
+  <div class="modal-box">
     <form method="post" novalidate>
       {% csrf_token %}
 
-      <div class="flex items-start justify-between gap-4">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
         <div>
-          <h3 id="out-modal-title" class="text-base font-semibold text-slate-900">
-            Record transfer or withdrawal
-          </h3>
-          <p class="mt-0.5 text-xs text-slate-500">
-            Cash leaving the drawer. {{ balance|floatformat:2|intcomma }} is in it now.
-          </p>
+          <h3 id="out-modal-title" class="modal-title">Record transfer or withdrawal</h3>
+          <p class="modal-sub">Cash leaving the drawer. <strong>{{ balance|floatformat:2|intcomma }}</strong> is in it now.</p>
         </div>
-        <button type="button" id="out-modal-close" aria-label="Close"
-                class="text-slate-400 hover:text-slate-900">
+        <button type="button" id="out-modal-close" class="modal-close-btn" aria-label="Close">
           <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
           </svg>
@@ -265,86 +521,56 @@
       </div>
 
       {% if form.non_field_errors %}
-        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
           {{ form.non_field_errors|join:" " }}
         </div>
       {% endif %}
 
-      <div class="mt-5 space-y-4">
+      <div style="display:flex;flex-direction:column;gap:16px">
         <div>
-          <label for="{{ form.txn_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ form.txn_date.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ form.txn_date.id_for_label }}" class="form-label">{{ form.txn_date.label }}<span class="req">*</span></label>
           {{ form.txn_date }}
-          {% for error in form.txn_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ form.kind.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ form.kind.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ form.kind.id_for_label }}" class="form-label">{{ form.kind.label }}<span class="req">*</span></label>
           {{ form.kind }}
-          {% for error in form.kind.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in form.kind.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ form.amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ form.amount.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ form.amount.id_for_label }}" class="form-label">{{ form.amount.label }}<span class="req">*</span></label>
           {{ form.amount }}
-          {% for error in form.amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ form.reason.label }} <span class="text-xs font-normal text-slate-400">(optional)</span>
-          </label>
+          <label for="{{ form.reason.id_for_label }}" class="form-label">{{ form.reason.label }}<span class="opt">(optional)</span></label>
           {{ form.reason }}
-          <p class="mt-1.5 text-xs text-slate-400">Appears in the log next to the type.</p>
-          {% for error in form.reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          <p class="form-hint">Appears in the log next to the type.</p>
+          {% for error in form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
       </div>
 
-      <div class="mt-6 flex justify-end gap-2">
-        <button type="button" id="out-modal-cancel"
-                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          Cancel
-        </button>
-        <button type="submit"
-                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-          Record
-        </button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="out-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary">Record</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ====================== Edit modal ====================== -->
-{% comment %}
-Only ever opened on a manual entry — a bill-linked row has no Edit button, and
-cash_drawer_edit refuses one regardless of what is posted at it.
 
-The form action is set per row by JS. When a correction fails validation the
-view re-renders this page with `edit_form` bound and `edit_entry` set, and the
-script below reopens the modal on the errors rather than lose what was typed.
-{% endcomment %}
-<div id="edit-modal"
-     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
-     role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
-  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+<!-- ═══════════════════════ EDIT MODAL ═══════════════════════ -->
+<div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+  <div class="modal-box">
     <form method="post" id="edit-modal-form" novalidate>
       {% csrf_token %}
 
-      <div class="flex items-start justify-between gap-4">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
         <div>
-          <h3 id="edit-modal-title" class="text-base font-semibold text-slate-900">Edit drawer entry</h3>
-          <p class="mt-0.5 text-xs text-slate-500">
-            The running balance is summed from the rows on every render, so it
-            re-reckons itself once this is saved.
-          </p>
+          <h3 id="edit-modal-title" class="modal-title">Edit drawer entry</h3>
+          <p class="modal-sub">The running balance recalculates on every page load.</p>
         </div>
-        <button type="button" id="edit-modal-close" aria-label="Close"
-                class="text-slate-400 hover:text-slate-900">
+        <button type="button" id="edit-modal-close" class="modal-close-btn" aria-label="Close">
           <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
           </svg>
@@ -352,113 +578,83 @@ script below reopens the modal on the errors rather than lose what was typed.
       </div>
 
       {% if edit_form.non_field_errors %}
-        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
           {{ edit_form.non_field_errors|join:" " }}
         </div>
       {% endif %}
 
-      <div class="mt-5 space-y-4">
+      <div style="display:flex;flex-direction:column;gap:16px">
         <div>
-          <label for="{{ edit_form.txn_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ edit_form.txn_date.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ edit_form.txn_date.id_for_label }}" class="form-label">{{ edit_form.txn_date.label }}<span class="req">*</span></label>
           {{ edit_form.txn_date }}
-          {% for error in edit_form.txn_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in edit_form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ edit_form.txn_type.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ edit_form.txn_type.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ edit_form.txn_type.id_for_label }}" class="form-label">{{ edit_form.txn_type.label }}<span class="req">*</span></label>
           {{ edit_form.txn_type }}
-          {% for error in edit_form.txn_type.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in edit_form.txn_type.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ edit_form.amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ edit_form.amount.label }} <span class="text-rose-500">*</span>
-          </label>
+          <label for="{{ edit_form.amount.id_for_label }}" class="form-label">{{ edit_form.amount.label }}<span class="req">*</span></label>
           {{ edit_form.amount }}
-          {% for error in edit_form.amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          {% for error in edit_form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
         <div>
-          <label for="{{ edit_form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ edit_form.reason.label }}
-          </label>
+          <label for="{{ edit_form.reason.id_for_label }}" class="form-label">{{ edit_form.reason.label }}</label>
           {{ edit_form.reason }}
-          <p class="mt-1.5 text-xs text-slate-400">{{ edit_form.reason.help_text }}</p>
-          {% for error in edit_form.reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          <p class="form-hint">{{ edit_form.reason.help_text }}</p>
+          {% for error in edit_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
-
-        <div class="border-t border-slate-200 pt-4">
-          <label for="{{ edit_form.edit_reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-            {{ edit_form.edit_reason.label }} <span class="text-rose-500">*</span>
-          </label>
+        <div class="form-divider">
+          <label for="{{ edit_form.edit_reason.id_for_label }}" class="form-label">{{ edit_form.edit_reason.label }}<span class="req">*</span></label>
           {{ edit_form.edit_reason }}
-          <p class="mt-1.5 text-xs text-slate-400">
-            Kept against the entry and shown on the Edited badge in the log.
-          </p>
-          {% for error in edit_form.edit_reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          <p class="form-hint">Kept against the entry — shown on the Edited badge in the log.</p>
+          {% for error in edit_form.edit_reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
         </div>
       </div>
 
-      <div class="mt-6 flex justify-end gap-2">
-        <button type="button" id="edit-modal-cancel"
-                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          Cancel
-        </button>
-        <button type="submit"
-                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-          Save changes
-        </button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="edit-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary">Save changes</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ====================== Delete modal ====================== -->
-<div id="delete-modal"
-     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
-     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
-  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-    <div class="flex items-start gap-4">
-      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+
+<!-- ═══════════════════════ DELETE MODAL ═══════════════════════ -->
+<div id="delete-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="modal-box">
+
+    <div style="display:flex;align-items:flex-start;gap:14px">
+      <span style="width:40px;height:40px;border-radius:50%;background:#fff1f2;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg class="h-5 w-5" style="color:#e11d48" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
         </svg>
       </span>
-      <div class="min-w-0">
-        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">Delete drawer entry?</h3>
-        <p class="mt-1 text-sm text-slate-600">
-          <span id="delete-modal-type" class="font-semibold text-slate-900"></span>
-          of <span id="delete-modal-amount" class="font-semibold text-slate-900"></span>
-          on <span id="delete-modal-date" class="font-semibold text-slate-900"></span>
+      <div class="min-w-0 flex-1">
+        <h3 id="delete-modal-title" class="modal-title">Delete drawer entry?</h3>
+        <p style="font-size:13px;color:#475569;margin-top:6px">
+          <span id="delete-modal-type" style="font-weight:700;color:#0f172a"></span>
+          of <span id="delete-modal-amount" style="font-weight:700;color:#0f172a"></span>
+          on <span id="delete-modal-date" style="font-weight:700;color:#0f172a"></span>
         </p>
-        <p id="delete-modal-reason-line" class="mt-1 hidden text-sm text-slate-500">
-          “<span id="delete-modal-reason"></span>”
+        <p id="delete-modal-reason-line" class="hidden" style="font-size:12px;color:#64748b;margin-top:3px">
+          "<span id="delete-modal-reason"></span>"
         </p>
-
-        <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          Nothing needs reversing: the drawer total isn't stored anywhere, it's
-          added up from the rows each time the page is drawn. Once this row is
-          gone it simply stops counting.
-        </p>
-        <p class="mt-2 text-xs text-slate-500">This can't be undone.</p>
       </div>
     </div>
 
-    <div class="mt-6 flex justify-end gap-2">
-      <button type="button" id="delete-modal-cancel"
-              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-        Cancel
-      </button>
-      <form method="post" id="delete-modal-form">
+    <div class="delete-detail-box">
+      <p>The drawer total is calculated from rows on every render. Once this row is gone it stops counting — nothing needs reversing separately.</p>
+      <p style="margin-top:6px;color:#e11d48;font-weight:600;font-size:11px">This cannot be undone.</p>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+      <button type="button" id="delete-modal-cancel" class="btn-modal-cancel">Cancel</button>
+      <form method="post" id="delete-modal-form" style="display:inline">
         {% csrf_token %}
-        <button type="submit"
-                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
-          Delete
-        </button>
+        <button type="submit" class="btn-modal-danger">Delete entry</button>
       </form>
     </div>
   </div>
@@ -466,151 +662,102 @@ script below reopens the modal on the errors rather than lose what was typed.
 
 {% endblock %}
 
+
 {% block extra_js %}
-{% comment %}
-Set only when a correction bounced back with errors: the URL of the entry that
-was being edited, so the reopened modal still knows where to post.
-{% endcomment %}
 <script id="edit-failed-url" type="application/json">
   {% if edit_entry %}"{% url 'core:cash_drawer_edit' edit_entry.pk %}"{% else %}null{% endif %}
 </script>
 
 <script>
-  // ---- record out ----
-  (function () {
-    const modal = document.getElementById('out-modal');
-    if (!modal) return;
+/* ─── Shared modal helpers ─── */
+function openModal(el) {
+  el.classList.add('open');
+  const first = el.querySelector('input, select, textarea, button');
+  if (first) setTimeout(() => first.focus(), 50);
+}
+function closeModal(el, returnFocus) {
+  el.classList.remove('open');
+  if (returnFocus) returnFocus.focus();
+}
+function bindClose(modal, ...btns) {
+  btns.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => closeModal(modal));
+  });
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(modal);
+  });
+}
 
-    const open = document.getElementById('open-form');
-    const close = document.getElementById('out-modal-close');
-    const cancel = document.getElementById('out-modal-cancel');
+/* ─── Record out ─── */
+(function () {
+  const modal = document.getElementById('out-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-form');
+  openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'out-modal-close', 'out-modal-cancel');
+  // Reopen if validation failed
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
 
-    function show() {
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-      const first = modal.querySelector('input, select');
-      if (first) first.focus();
-    }
-    function hide() {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-      open.focus();
-    }
+/* ─── Edit entry ─── */
+(function () {
+  const modal = document.getElementById('edit-modal');
+  if (!modal) return;
+  const form = document.getElementById('edit-modal-form');
+  function field(name) { return form.querySelector('[name="' + name + '"]'); }
 
-    open.addEventListener('click', show);
-    close.addEventListener('click', hide);
-    cancel.addEventListener('click', hide);
-    modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !modal.classList.contains('hidden')) hide();
-    });
-
-    // A rejected entry comes back as a fresh page with the errors on the form,
-    // so reopen it rather than hide what the operator typed.
-    if (modal.querySelector('.text-rose-600')) show();
-  })();
-
-  // ---- edit a manual entry ----
-  (function () {
-    const modal = document.getElementById('edit-modal');
-    if (!modal) return;
-
-    const form   = document.getElementById('edit-modal-form');
-    const close  = document.getElementById('edit-modal-close');
-    const cancel = document.getElementById('edit-modal-cancel');
-
-    // The modal is one form reused by every row, so its fields are Django's,
-    // named as the form names them.
-    function field(name) { return form.querySelector('[name="' + name + '"]'); }
-
-    function show() {
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-      const first = modal.querySelector('input, select');
-      if (first) first.focus();
-    }
-    function hide() {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-    }
-
-    document.querySelectorAll('.js-edit').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        form.action = btn.dataset.url;
-        field('txn_date').value = btn.dataset.date;
-        field('txn_type').value = btn.dataset.type;
-        field('amount').value = btn.dataset.amount;
-        field('reason').value = btn.dataset.reason;
-        // Never carried over from a previous row: the reason for *this* change
-        // has to be typed for this change.
-        field('edit_reason').value = '';
-        show();
-      });
-    });
-
-    close.addEventListener('click', hide);
-    cancel.addEventListener('click', hide);
-    modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !modal.classList.contains('hidden')) hide();
-    });
-
-    // A correction that failed validation is re-rendered into this modal by the
-    // view, already carrying its values and errors. Reopen it as it stands —
-    // the prefill above would wipe exactly what needs correcting.
-    const failedUrl = JSON.parse(document.getElementById('edit-failed-url').textContent);
-    if (failedUrl) {
-      form.action = failedUrl;
-      show();
-    }
-  })();
-
-  // ---- delete a manual entry ----
-  (function () {
-    const modal = document.getElementById('delete-modal');
-    if (!modal) return;
-
-    const form       = document.getElementById('delete-modal-form');
-    const typeEl     = document.getElementById('delete-modal-type');
-    const amountEl   = document.getElementById('delete-modal-amount');
-    const dateEl     = document.getElementById('delete-modal-date');
-    const reasonEl   = document.getElementById('delete-modal-reason');
-    const reasonLine = document.getElementById('delete-modal-reason-line');
-    const cancel     = document.getElementById('delete-modal-cancel');
-    let lastFocus = null;
-
-    function open(btn) {
-      lastFocus = btn;
+  document.querySelectorAll('.js-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
       form.action = btn.dataset.url;
-      typeEl.textContent = btn.dataset.type;
-      amountEl.textContent = btn.dataset.amount;
-      dateEl.textContent = btn.dataset.date;
+      field('txn_date').value  = btn.dataset.date;
+      field('txn_type').value  = btn.dataset.type;
+      field('amount').value    = btn.dataset.amount;
+      field('reason').value    = btn.dataset.reason;
+      field('edit_reason').value = '';
+      openModal(modal);
+    });
+  });
 
-      // reason is optional on a drawer entry; an empty quoted string would read
-      // as though it had been left blank on purpose.
+  bindClose(modal, 'edit-modal-close', 'edit-modal-cancel');
+
+  // Reopen on validation failure
+  const failedUrl = JSON.parse(document.getElementById('edit-failed-url').textContent);
+  if (failedUrl) { form.action = failedUrl; openModal(modal); }
+})();
+
+/* ─── Delete entry ─── */
+(function () {
+  const modal = document.getElementById('delete-modal');
+  if (!modal) return;
+  const form       = document.getElementById('delete-modal-form');
+  const typeEl     = document.getElementById('delete-modal-type');
+  const amountEl   = document.getElementById('delete-modal-amount');
+  const dateEl     = document.getElementById('delete-modal-date');
+  const reasonEl   = document.getElementById('delete-modal-reason');
+  const reasonLine = document.getElementById('delete-modal-reason-line');
+  let lastFocus = null;
+
+  document.querySelectorAll('.js-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      lastFocus = btn;
+      form.action      = btn.dataset.url;
+      typeEl.textContent   = btn.dataset.type;
+      amountEl.textContent = btn.dataset.amount;
+      dateEl.textContent   = btn.dataset.date;
       const reason = btn.dataset.reason || '';
       reasonEl.textContent = reason;
       reasonLine.classList.toggle('hidden', reason === '');
-
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-      cancel.focus();
-    }
-    function close() {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-      if (lastFocus) lastFocus.focus();
-    }
-
-    document.querySelectorAll('.js-delete').forEach(function (btn) {
-      btn.addEventListener('click', function () { open(btn); });
+      openModal(modal);
     });
+  });
 
-    cancel.addEventListener('click', close);
-    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
-    });
-  })();
+  document.getElementById('delete-modal-cancel').addEventListener('click', () => closeModal(modal, lastFocus));
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal, lastFocus); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(modal, lastFocus);
+  });
+})();
 </script>
 {% endblock %}
