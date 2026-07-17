@@ -97,7 +97,8 @@ systemctl reload nginx
 
 
 git config --global --add safe.directory /var/www/senovka_erp
-root@srv1665087:/var/www/senovka_erp/senovka_erp# git config --global --add safe.directory /var/www/senovka_erp
-root@srv1665087:/var/www/senovka_erp/senovka_erp# git pull
-python manage.py seed
+cd /var/www/senovka_erp/senovka_erp# git config --global --add safe.directory /var/www/senovka_erp
+cd /var/www/senovka_erp/senovka_erp# git pull
+python manage.py seed_users
 source /var/www/senovka_erp/venv/bin/activate
+systemctl restart erp

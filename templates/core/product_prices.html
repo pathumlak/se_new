@@ -9,7 +9,7 @@
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
     <a href="{% url 'core:product_list' %}"
-       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
@@ -22,7 +22,9 @@
       {% if product.size %}<span>{{ product.size }}</span><span class="text-slate-300">·</span>{% endif %}
       <span>{{ product.category.name }}</span>
       <span class="text-slate-300">·</span>
-      <span>Default price <span class="font-medium text-slate-900">{{ product.default_price|floatformat:2 }}</span></span>
+      <span>Default price
+        <span class="font-medium text-slate-900">{{ product.default_price|floatformat:2 }}</span>
+      </span>
       {% if not product.is_active %}
         <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
           Inactive
@@ -33,21 +35,31 @@
 
   <a href="{% url 'core:product_update' product.pk %}"
      class="inline-flex shrink-0 items-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium
-            text-slate-700 hover:bg-slate-50">
+            text-slate-700 hover:bg-slate-50 transition-colors">
     Edit product
   </a>
 </div>
 
-<p class="mb-3 text-sm text-slate-500">
-  {{ custom_count }} customer{{ custom_count|pluralize }} priced
-  <span class="text-slate-400">of {{ rows|length }} shown</span>
-</p>
+<div class="mb-3 flex items-center justify-between">
+  <p class="text-sm text-slate-500">
+    <span class="font-medium text-slate-900">{{ custom_count }}</span> customer{{ custom_count|pluralize }} priced
+    <span class="text-slate-400">of {{ rows|length }} shown</span>
+  </p>
+  <div class="hidden sm:flex items-center gap-3 text-xs text-slate-400">
+    <span class="inline-flex items-center gap-1">
+      <span class="h-2 w-2 rounded-full bg-slate-900"></span> custom
+    </span>
+    <span class="inline-flex items-center gap-1">
+      <span class="h-2 w-2 rounded-full border border-slate-300"></span> default
+    </span>
+  </div>
+</div>
 
 <!-- Table -->
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
   <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-slate-200 text-sm">
-      <thead class="bg-slate-50">
+      <thead class="bg-slate-50 sticky top-0 z-10">
         <tr>
           <th class="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Current Custom Price</th>
@@ -57,23 +69,36 @@
       </thead>
       <tbody class="divide-y divide-slate-100">
         {% for row in rows %}
-          <tr class="js-price-row hover:bg-slate-50"
+          <tr class="js-price-row group hover:bg-slate-50/80 transition-colors"
               data-customer-id="{{ row.customer.pk }}"
               data-product-id="{{ product.pk }}">
 
-            <td class="whitespace-nowrap px-5 py-3 font-medium text-slate-900">
-              {{ row.customer.name }}
-              {% if row.customer.is_supplier %}
-                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Supplier
+            <td class="whitespace-nowrap px-5 py-3">
+              <div class="flex items-center gap-2.5">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full
+                             bg-slate-100 text-[11px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+                  {{ row.customer.name|slice:":1"|upper }}
                 </span>
-              {% endif %}
+                <span class="min-w-0 truncate font-medium text-slate-900">{{ row.customer.name }}</span>
+                {% if row.customer.is_supplier %}
+                  <span class="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 ring-1 ring-inset ring-amber-200">
+                    Supplier
+                  </span>
+                {% endif %}
+              </div>
             </td>
 
             {# Falls back to the product's default until someone prices it here. #}
-            <td class="js-price-cell whitespace-nowrap px-5 py-3 text-right
-                       {% if row.has_custom %}font-medium text-slate-900{% else %}text-slate-400{% endif %}">
-              {% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% else %}default ({{ product.default_price|floatformat:2 }}){% endif %}
+            <td class="js-price-cell whitespace-nowrap px-5 py-3 text-right">
+              {% if row.has_custom %}
+                <span class="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1 text-sm font-semibold text-white">
+                  {{ row.unit_price|floatformat:2 }}
+                </span>
+              {% else %}
+                <span class="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-2.5 py-1 text-sm text-slate-400">
+                  default · {{ product.default_price|floatformat:2 }}
+                </span>
+              {% endif %}
             </td>
 
             <td class="js-updated whitespace-nowrap px-5 py-3 text-slate-500">
@@ -81,16 +106,37 @@
             </td>
 
             <td class="px-5 py-3">
-              <div class="flex justify-end">
-                {# data-original is what Save All diffs against to find edits. #}
-                <input type="number" step="0.01" min="0" inputmode="decimal"
-                       value="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
-                       data-original="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
-                       placeholder="{{ product.default_price|floatformat:2 }}"
-                       aria-label="Custom price for {{ row.customer.name }}"
-                       class="js-price w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm
-                              text-slate-900 placeholder:text-slate-300 shadow-sm
-                              focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              <div class="flex items-center justify-end gap-1.5">
+                <div class="relative">
+                  <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-xs text-slate-400">
+                    $
+                  </span>
+                  {# data-original is what Save All diffs against to find edits. #}
+                  <input type="number" step="0.01" min="0" inputmode="decimal"
+                         value="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
+                         data-original="{% if row.has_custom %}{{ row.unit_price|floatformat:2 }}{% endif %}"
+                         placeholder="{{ product.default_price|floatformat:2 }}"
+                         aria-label="Custom price for {{ row.customer.name }}"
+                         class="js-price w-28 rounded-lg border border-slate-300 py-1.5 pl-6 pr-2.5 text-right text-sm
+                                text-slate-900 placeholder:text-slate-300 shadow-sm transition-shadow
+                                focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10">
+                </div>
+                <button type="button"
+                        title="Reset to default price"
+                        aria-label="Reset to default price for {{ row.customer.name }}"
+                        class="js-price-reset invisible group-hover:visible inline-flex h-8 w-8 shrink-0 items-center justify-center
+                               rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                        onclick="(function(btn){
+                          const input = btn.previousElementSibling.querySelector('.js-price');
+                          input.value = '';
+                          input.dispatchEvent(new Event('input', { bubbles: true }));
+                          input.dispatchEvent(new Event('change', { bubbles: true }));
+                          input.focus();
+                        })(this)">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 016 6v0a6 6 0 01-6 6h-3"/>
+                  </svg>
+                </button>
               </div>
               <p class="js-hint mt-1 hidden text-right text-xs text-slate-400"></p>
               <p class="js-status mt-1 hidden text-right text-xs text-rose-600" role="status"></p>
@@ -98,8 +144,13 @@
           </tr>
         {% empty %}
           <tr>
-            <td colspan="4" class="px-5 py-12 text-center">
-              <p class="text-sm text-slate-500">No customers yet.</p>
+            <td colspan="4" class="px-5 py-16 text-center">
+              <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975M15 9.75a3 3 0 11-6 0 3 3 0 016 0zM21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <p class="text-sm font-medium text-slate-500">No customers yet</p>
               <p class="mt-1 text-xs text-slate-400">Add a customer before setting negotiated prices.</p>
             </td>
           </tr>
