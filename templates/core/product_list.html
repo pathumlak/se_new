@@ -83,11 +83,7 @@
             </td>
             <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ product.category.name }}</td>
 
-            {# One stock cell for four states, spotted at a glance:
-                 negative → oversold, red bold
-                 zero     → out of stock, red badge
-                 low      → amber badge
-                 healthy  → green figure. #}
+         
             <td class="whitespace-nowrap px-5 py-3 text-right font-medium">
               {% if product.qty < 0 %}
                 <span class="font-bold text-rose-600">{{ product.qty|floatformat:"-3" }}</span>
