@@ -2203,9 +2203,11 @@ class BillSaveTests(UserFactoryMixin, TestCase):
         the stock ledger records the shortfall. Paid in full so the credit
         check can't fire: 99 x 1000 = 99,000, plus the 5,000 already owed."""
         pipe_before = self.pipe.qty  # 10
-        response = self.post(self.payload(lines=[
+        payload = self.payload(lines=[
             {"product_id": self.pipe.pk, "qty": "99", "unit_price": "1000.00"}
-        ], payment={"type": "full_cash", "cash": "104000.00", "account": ""}))
+        ], payment={"type": "full_cash", "cash": "104000.00", "account": ""})
+        payload["bill_date"] = timezone.localdate().isoformat()
+        response = self.post(payload)
         self.assertEqual(response.status_code, 200, response.content)
 
         self.pipe.refresh_from_db()
