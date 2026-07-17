@@ -1,0 +1,577 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Petty Cash · Senovka Plastics{% endblock %}
+{% block header %}Petty Cash{% endblock %}
+
+{% block content %}
+
+<!-- ==================== HEADER + MONTH FILTER ==================== -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div>
+    <h2 class="text-xl font-semibold text-slate-900">
+      {% if month_filter.is_all_time %}All months{% else %}{{ month_filter.label }}{% endif %}
+    </h2>
+    <p class="mt-1 text-sm text-slate-500">
+      One petty cash float per month, carried forward from the previous month.
+    </p>
+    {% if carried_from %}
+      <p class="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-1 text-xs text-indigo-800">
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"/>
+        </svg>
+        Opening balance carried forward from {{ carried_from.month|date:"F Y" }}:
+        <span class="font-semibold">{{ fund.opening_balance|floatformat:2|intcomma }}</span>
+      </p>
+    {% endif %}
+  </div>
+
+  <form method="get" class="no-print flex items-center gap-2 text-sm">
+    <input type="month" name="month"
+           value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+    <a href="?month=all"
+       class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+      All months
+    </a>
+    <a href="{% url 'core:petty_cash_pdf' %}{% if not month_filter.is_all_time %}?month={{ month_filter.param }}{% endif %}"
+       class="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171L17.66 18M6.34 18L5.25 15.75H3M17.66 18l1.09-2.25H21"/>
+      </svg>
+      Export PDF
+    </a>
+  </form>
+</div>
+
+<!-- ==================== SUMMARY TILES ==================== -->
+<div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-blue-700">Opening balance</p>
+    <p class="mt-1 text-2xl font-semibold text-blue-900">{{ fund.opening_balance|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-rose-200 bg-rose-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">Total expenses</p>
+    <p class="mt-1 text-2xl font-semibold text-rose-700">{{ fund.total_expenses|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Total reimbursements</p>
+    <p class="mt-1 text-2xl font-semibold text-emerald-700">{{ fund.total_reimbursements|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border p-4 shadow-sm
+              {% if fund.available_balance < low_balance_threshold %}border-amber-300 bg-amber-50/70{% else %}border-slate-200 bg-white{% endif %}">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available balance</p>
+    <p class="mt-1 text-3xl font-bold
+              {% if fund.available_balance < 0 %}text-rose-700
+              {% elif fund.available_balance < low_balance_threshold %}text-amber-700
+              {% else %}text-emerald-700{% endif %}">
+      {{ fund.available_balance|floatformat:2|intcomma }}
+    </p>
+    {% if fund.available_balance < low_balance_threshold %}
+      <p class="mt-1 text-[11px] font-medium text-amber-800">Low — consider a top-up.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ==================== TABS + ADD BUTTONS ==================== -->
+<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div class="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" role="tablist">
+    <button type="button" data-tab="expenses"
+            class="js-tab rounded-md px-4 py-1.5 text-sm font-medium transition
+                   {% if active_tab == 'expenses' %}bg-slate-900 text-white{% else %}text-slate-600 hover:text-slate-900{% endif %}">
+      Expenses
+      <span class="ml-1 text-[10px]">({{ expense_page.paginator.count }})</span>
+    </button>
+    <button type="button" data-tab="reimbursements"
+            class="js-tab rounded-md px-4 py-1.5 text-sm font-medium transition
+                   {% if active_tab == 'reimbursements' %}bg-slate-900 text-white{% else %}text-slate-600 hover:text-slate-900{% endif %}">
+      Reimbursements
+      <span class="ml-1 text-[10px]">({{ reimbursement_page.paginator.count }})</span>
+    </button>
+  </div>
+
+  <div class="flex gap-2">
+    <button type="button" id="open-expense-create"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Add Expense
+    </button>
+    <button type="button" id="open-reimbursement-create"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Add Reimbursement
+    </button>
+  </div>
+</div>
+
+<!-- ==================== EXPENSES TAB ==================== -->
+<div id="pane-expenses" class="tab-pane {% if active_tab != 'expenses' %}hidden{% endif %}">
+  {% include 'partials/pagination.html' with page_obj=expense_page %}
+
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200 text-sm">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Category</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Receipt No</th>
+            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Added By</th>
+            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for entry in expenses %}
+            <tr class="hover:bg-slate-50">
+              <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ entry.date|date:"j M Y" }}</td>
+              <td class="whitespace-nowrap px-4 py-3">
+                {# Same slate colour for every category — the shape of the badge does the work. #}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200">
+                  {{ entry.get_category_display }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-slate-900">
+                {{ entry.description }}
+                {% if entry.edit_date %}
+                  <span class="ml-1 text-[10px] italic text-slate-400" title="Last edited {{ entry.edit_date|date:'j M Y' }}: {{ entry.edit_reason }}">(edited)</span>
+                {% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-500">
+                {% if entry.receipt_no %}{{ entry.receipt_no }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-rose-700">
+                −{{ entry.amount|floatformat:2|intcomma }}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ entry.added_by.username }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right">
+                <button type="button"
+                        class="js-expense-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        data-id="{{ entry.pk }}"
+                        data-date="{{ entry.date|date:'Y-m-d' }}"
+                        data-description="{{ entry.description }}"
+                        data-category="{{ entry.category }}"
+                        data-amount="{{ entry.amount|stringformat:'.2f' }}"
+                        data-receipt-no="{{ entry.receipt_no }}"
+                        data-action="{% url 'core:petty_cash_expense_edit' entry.pk %}">
+                  Edit
+                </button>
+                <button type="button"
+                        class="js-expense-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                        data-label="{{ entry.get_category_display }} {{ entry.amount|floatformat:2 }} on {{ entry.date|date:'j M Y' }}"
+                        data-action="{% url 'core:petty_cash_expense_delete' entry.pk %}">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
+                No expenses in this period.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== REIMBURSEMENTS TAB ==================== -->
+<div id="pane-reimbursements" class="tab-pane {% if active_tab != 'reimbursements' %}hidden{% endif %}">
+  {% include 'partials/pagination.html' with page_obj=reimbursement_page %}
+
+  <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200 text-sm">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Given By</th>
+            <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Added By</th>
+            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for reimb in reimbursements %}
+            <tr class="hover:bg-slate-50">
+              <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ reimb.date|date:"j M Y" }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-emerald-700">
+                +{{ reimb.amount|floatformat:2|intcomma }}
+              </td>
+              <td class="px-4 py-3 text-slate-900">
+                {{ reimb.reason }}
+                {% if reimb.edit_date %}
+                  <span class="ml-1 text-[10px] italic text-slate-400" title="Last edited {{ reimb.edit_date|date:'j M Y' }}: {{ reimb.edit_reason }}">(edited)</span>
+                {% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-800">{{ reimb.given_by }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ reimb.added_by.username }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right">
+                <button type="button"
+                        class="js-reimb-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        data-date="{{ reimb.date|date:'Y-m-d' }}"
+                        data-amount="{{ reimb.amount|stringformat:'.2f' }}"
+                        data-reason="{{ reimb.reason }}"
+                        data-given-by="{{ reimb.given_by }}"
+                        data-action="{% url 'core:petty_cash_reimbursement_edit' reimb.pk %}">
+                  Edit
+                </button>
+                <button type="button"
+                        class="js-reimb-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                        data-label="Reimbursement of {{ reimb.amount|floatformat:2 }} on {{ reimb.date|date:'j M Y' }}"
+                        data-action="{% url 'core:petty_cash_reimbursement_delete' reimb.pk %}">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="px-4 py-12 text-center text-sm text-slate-500">
+                No reimbursements in this period.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== EXPENSE MODAL ==================== -->
+<div id="expense-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="expense-modal-title" class="text-base font-semibold text-slate-900">Add Expense</h3>
+      <button type="button" class="js-close-modal rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="expense-form" method="post"
+          action="{% url 'core:petty_cash_expense_create' %}"
+          class="mt-4 space-y-4">
+      {% csrf_token %}
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="expense-date" class="mb-1 block text-xs font-medium text-slate-600">Date</label>
+          <input type="date" id="expense-date" name="date" required class="{{ expense_form.date.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="expense-category" class="mb-1 block text-xs font-medium text-slate-600">Category</label>
+          <select id="expense-category" name="category" required class="{{ expense_form.category.field.widget.attrs.class }}">
+            {% for value, label in categories %}
+              <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label for="expense-description" class="mb-1 block text-xs font-medium text-slate-600">Description</label>
+        <input type="text" id="expense-description" name="description" required maxlength="500"
+               placeholder="e.g. Fuel for delivery run"
+               class="{{ expense_form.description.field.widget.attrs.class }}">
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="expense-amount" class="mb-1 block text-xs font-medium text-slate-600">Amount</label>
+          <input type="number" step="0.01" min="0.01" id="expense-amount" name="amount" required
+                 class="{{ expense_form.amount.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="expense-receipt-no" class="mb-1 block text-xs font-medium text-slate-600">Receipt no <span class="text-slate-300">(optional)</span></label>
+          <input type="text" id="expense-receipt-no" name="receipt_no" maxlength="100"
+                 class="{{ expense_form.receipt_no.field.widget.attrs.class }}">
+        </div>
+      </div>
+
+      <div id="expense-edit-reason-row" class="hidden">
+        <label for="expense-edit-reason" class="mb-1 block text-xs font-medium text-slate-600">Reason for edit</label>
+        <input type="text" id="expense-edit-reason" name="edit_reason" maxlength="500"
+               placeholder="Why this correction?"
+               class="{{ expense_form.amount.field.widget.attrs.class }}">
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close-modal rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Save
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== REIMBURSEMENT MODAL ==================== -->
+<div id="reimbursement-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="reimbursement-modal-title" class="text-base font-semibold text-slate-900">Add Reimbursement</h3>
+      <button type="button" class="js-close-modal rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="reimbursement-form" method="post"
+          action="{% url 'core:petty_cash_reimbursement_create' %}"
+          class="mt-4 space-y-4">
+      {% csrf_token %}
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="reimb-date" class="mb-1 block text-xs font-medium text-slate-600">Date</label>
+          <input type="date" id="reimb-date" name="date" required
+                 class="{{ reimbursement_form.date.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="reimb-amount" class="mb-1 block text-xs font-medium text-slate-600">Amount</label>
+          <input type="number" step="0.01" min="0.01" id="reimb-amount" name="amount" required
+                 class="{{ reimbursement_form.amount.field.widget.attrs.class }}">
+        </div>
+      </div>
+
+      <div>
+        <label for="reimb-reason" class="mb-1 block text-xs font-medium text-slate-600">Reason</label>
+        <input type="text" id="reimb-reason" name="reason" required maxlength="500"
+               placeholder="e.g. Weekly top-up from office cash"
+               class="{{ reimbursement_form.reason.field.widget.attrs.class }}">
+      </div>
+
+      <div>
+        <label for="reimb-given-by" class="mb-1 block text-xs font-medium text-slate-600">Given by</label>
+        <input type="text" id="reimb-given-by" name="given_by" required maxlength="150"
+               placeholder="Who handed over the cash"
+               class="{{ reimbursement_form.given_by.field.widget.attrs.class }}">
+      </div>
+
+      <div id="reimb-edit-reason-row" class="hidden">
+        <label for="reimb-edit-reason" class="mb-1 block text-xs font-medium text-slate-600">Reason for edit</label>
+        <input type="text" id="reimb-edit-reason" name="edit_reason" maxlength="500"
+               placeholder="Why this correction?"
+               class="{{ reimbursement_form.amount.field.widget.attrs.class }}">
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close-modal rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+          Save
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== DELETE MODAL (shared) ==================== -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div>
+        <h3 class="text-base font-semibold text-slate-900">Remove entry</h3>
+        <p class="mt-1 text-sm text-slate-600">
+          Delete <span id="delete-label" class="font-semibold text-slate-900"></span>? The fund's closing balance will be re-calculated.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close-modal rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form id="delete-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const CREATE_EXPENSE_ACTION = "{% url 'core:petty_cash_expense_create' %}";
+    const CREATE_REIMB_ACTION   = "{% url 'core:petty_cash_reimbursement_create' %}";
+    const TODAY = new Date().toISOString().slice(0, 10);
+
+    // ---- tabs ----
+    document.querySelectorAll('.js-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.tab-pane').forEach(function (p) {
+          p.classList.toggle('hidden', p.id !== 'pane-' + tab);
+        });
+        document.querySelectorAll('.js-tab').forEach(function (b) {
+          const on = b.dataset.tab === tab;
+          b.classList.toggle('bg-slate-900', on);
+          b.classList.toggle('text-white', on);
+          b.classList.toggle('text-slate-600', !on);
+        });
+      });
+    });
+
+    // ---- modal helpers ----
+    function openModal(id) {
+      const m = document.getElementById(id);
+      m.classList.remove('hidden');
+      m.classList.add('flex');
+    }
+    function closeModal(m) {
+      m.classList.add('hidden');
+      m.classList.remove('flex');
+    }
+    document.querySelectorAll('.js-close-modal').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const modal = btn.closest('[role="dialog"]');
+        if (modal) closeModal(modal);
+      });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) closeModal(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+        if (!m.classList.contains('hidden')) closeModal(m);
+      });
+    });
+
+    // ---- expense modal wiring ----
+    const expForm  = document.getElementById('expense-form');
+    const expTitle = document.getElementById('expense-modal-title');
+    const expEditRow = document.getElementById('expense-edit-reason-row');
+    const expDate = document.getElementById('expense-date');
+    const expCat = document.getElementById('expense-category');
+    const expDesc = document.getElementById('expense-description');
+    const expAmt = document.getElementById('expense-amount');
+    const expRcpt = document.getElementById('expense-receipt-no');
+    const expReason = document.getElementById('expense-edit-reason');
+
+    function openExpenseCreate() {
+      expTitle.textContent = 'Add Expense';
+      expForm.action = CREATE_EXPENSE_ACTION;
+      expDate.value = TODAY;
+      expCat.value = 'other';
+      expDesc.value = '';
+      expAmt.value = '';
+      expRcpt.value = '';
+      expEditRow.classList.add('hidden');
+      expReason.required = false;
+      expReason.value = '';
+      openModal('expense-modal');
+      setTimeout(function () { expAmt.focus(); }, 30);
+    }
+
+    function openExpenseEdit(btn) {
+      expTitle.textContent = 'Edit Expense';
+      expForm.action = btn.dataset.action;
+      expDate.value = btn.dataset.date;
+      expCat.value = btn.dataset.category;
+      expDesc.value = btn.dataset.description;
+      expAmt.value = btn.dataset.amount;
+      expRcpt.value = btn.dataset.receiptNo;
+      expReason.value = '';
+      expEditRow.classList.remove('hidden');
+      expReason.required = true;
+      openModal('expense-modal');
+      setTimeout(function () { expAmt.focus(); expAmt.select(); }, 30);
+    }
+
+    document.getElementById('open-expense-create').addEventListener('click', openExpenseCreate);
+    document.querySelectorAll('.js-expense-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () { openExpenseEdit(btn); });
+    });
+
+    // ---- reimbursement modal wiring ----
+    const reimbForm  = document.getElementById('reimbursement-form');
+    const reimbTitle = document.getElementById('reimbursement-modal-title');
+    const reimbEditRow = document.getElementById('reimb-edit-reason-row');
+    const reimbDate = document.getElementById('reimb-date');
+    const reimbAmt = document.getElementById('reimb-amount');
+    const reimbReason = document.getElementById('reimb-reason');
+    const reimbGivenBy = document.getElementById('reimb-given-by');
+    const reimbEditReason = document.getElementById('reimb-edit-reason');
+
+    function openReimbCreate() {
+      reimbTitle.textContent = 'Add Reimbursement';
+      reimbForm.action = CREATE_REIMB_ACTION;
+      reimbDate.value = TODAY;
+      reimbAmt.value = '';
+      reimbReason.value = '';
+      reimbGivenBy.value = '';
+      reimbEditRow.classList.add('hidden');
+      reimbEditReason.required = false;
+      reimbEditReason.value = '';
+      openModal('reimbursement-modal');
+      setTimeout(function () { reimbAmt.focus(); }, 30);
+    }
+
+    function openReimbEdit(btn) {
+      reimbTitle.textContent = 'Edit Reimbursement';
+      reimbForm.action = btn.dataset.action;
+      reimbDate.value = btn.dataset.date;
+      reimbAmt.value = btn.dataset.amount;
+      reimbReason.value = btn.dataset.reason;
+      reimbGivenBy.value = btn.dataset.givenBy;
+      reimbEditReason.value = '';
+      reimbEditRow.classList.remove('hidden');
+      reimbEditReason.required = true;
+      openModal('reimbursement-modal');
+      setTimeout(function () { reimbAmt.focus(); reimbAmt.select(); }, 30);
+    }
+
+    document.getElementById('open-reimbursement-create').addEventListener('click', openReimbCreate);
+    document.querySelectorAll('.js-reimb-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () { openReimbEdit(btn); });
+    });
+
+    // ---- delete modal wiring (shared) ----
+    const delForm  = document.getElementById('delete-form');
+    const delLabel = document.getElementById('delete-label');
+    function openDelete(btn) {
+      delForm.action = btn.dataset.action;
+      delLabel.textContent = '“' + btn.dataset.label + '”';
+      openModal('delete-modal');
+    }
+    document.querySelectorAll('.js-expense-delete, .js-reimb-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { openDelete(btn); });
+    });
+  })();
+</script>
+{% endblock %}

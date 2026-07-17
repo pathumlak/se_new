@@ -1,0 +1,164 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senovka Petty Cash — {{ fund.month|date:"F Y" }}</title>
+  {% comment %}
+  Standalone: no base.html, no CDN. WeasyPrint renders this with no network
+  and no JavaScript, so every style is inline. Doubles as the browser print
+  view when WeasyPrint's GTK libraries are not installed.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+      @bottom-left {
+        content: "Senovka Plastics — petty cash";
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+    }
+
+    body { font-family: "Helvetica", "Arial", sans-serif; font-size: 9pt; color: #0f172a; margin: 0; }
+    h1 { font-size: 15pt; margin: 0; }
+    h2 { font-size: 11pt; margin: 12pt 0 4pt; }
+
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 6pt; margin-bottom: 8pt; }
+    .muted { color: #64748b; font-size: 8pt; margin: 2pt 0 0; }
+
+    .cards { display: table; width: 100%; border-spacing: 4pt 0; margin: 8pt 0; }
+    .card {
+      display: table-cell; width: 25%;
+      border: 0.75pt solid #cbd5e1; border-radius: 3pt; padding: 6pt 8pt;
+    }
+    .card-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; }
+    .card-value { font-size: 12pt; font-weight: bold; margin-top: 2pt; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3pt;
+      color: #64748b; background: #f1f5f9; padding: 4pt 5pt; border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 4pt 5pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; font-weight: bold; background: #f8fafc; }
+
+    .red { color: #be123c; }
+    .green { color: #047857; }
+    .blue { color: #1d4ed8; }
+    .grey { color: #94a3b8; }
+    .empty { text-align: center; color: #64748b; padding: 12pt; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Senovka Plastics — Petty Cash</h1>
+  <p class="muted">
+    {{ fund.month|date:"F Y" }}
+    · Generated {{ generated_at|date:"j M Y, g:i a" }}
+  </p>
+</div>
+
+<!-- Summary -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Opening Balance</div>
+    <div class="card-value blue">{{ fund.opening_balance|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Expenses</div>
+    <div class="card-value red">{{ fund.total_expenses|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Reimbursements</div>
+    <div class="card-value green">{{ fund.total_reimbursements|floatformat:2|intcomma }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Closing Balance</div>
+    <div class="card-value {% if fund.closing_balance < 0 %}red{% else %}green{% endif %}">
+      {{ fund.closing_balance|floatformat:2|intcomma }}
+    </div>
+  </div>
+</div>
+
+<!-- Expenses -->
+<h2>Expenses ({{ expenses|length }})</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Category</th>
+      <th>Description</th>
+      <th>Receipt No</th>
+      <th>Added By</th>
+      <th class="r">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for entry in expenses %}
+      <tr>
+        <td>{{ entry.date|date:"j M Y" }}</td>
+        <td>{{ entry.get_category_display }}</td>
+        <td>{{ entry.description }}</td>
+        <td>{% if entry.receipt_no %}{{ entry.receipt_no }}{% else %}—{% endif %}</td>
+        <td>{{ entry.added_by.username }}</td>
+        <td class="r red">−{{ entry.amount|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="empty">No expenses this month.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if expenses %}
+    <tfoot>
+      <tr>
+        <td colspan="5" class="r">Total expenses</td>
+        <td class="r red">−{{ fund.total_expenses|floatformat:2|intcomma }}</td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+<!-- Reimbursements -->
+<h2>Reimbursements ({{ reimbursements|length }})</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Reason</th>
+      <th>Given By</th>
+      <th>Added By</th>
+      <th class="r">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for reimb in reimbursements %}
+      <tr>
+        <td>{{ reimb.date|date:"j M Y" }}</td>
+        <td>{{ reimb.reason }}</td>
+        <td>{{ reimb.given_by }}</td>
+        <td>{{ reimb.added_by.username }}</td>
+        <td class="r green">+{{ reimb.amount|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="empty">No reimbursements this month.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if reimbursements %}
+    <tfoot>
+      <tr>
+        <td colspan="4" class="r">Total reimbursements</td>
+        <td class="r green">+{{ fund.total_reimbursements|floatformat:2|intcomma }}</td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+</body>
+</html>

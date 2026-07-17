@@ -46,6 +46,10 @@ from .forms import (
     CustomerForm,
     CustomerPriceForm,
     CustomerSettlementForm,
+    MaterialForm,
+    MaterialPurchaseHeaderForm,
+    MaterialSupplierForm,
+    MaterialWeighEntryForm,
     PettyCashExpenseForm,
     PettyCashReimbursementForm,
     ProductForm,
@@ -67,6 +71,11 @@ from .models import (
     CustomerBalanceAdjustment,
     CustomerPrice,
     HeldBill,
+    Material,
+    MaterialPurchase,
+    MaterialPurchaseItem,
+    MaterialSupplier,
+    MaterialWeighEntry,
     Payment,
     PettyCashEntry,
     PettyCashFund,
@@ -4627,3 +4636,738 @@ def outstanding_report_pdf(request):
         _outstanding_context(request),
         f"senovka-outstanding-{stamp}.pdf",
     )
+
+
+# ------------------------------------------------------------- petty cash
+# One PettyCashFund per calendar month, auto-created with the previous
+# month's closing balance carried forward. Two kinds of movement:
+# PettyCashEntry (expense out of the tin) and PettyCashReimbursement (top-up
+# into the tin). The list page tabs between them and the fund's
+# closing_balance is rewritten on every write via fund.recalculate().
+
+
+def _petty_cash_context(request, active_tab="expenses"):
+    """Everything the petty-cash page needs, whichever tab is showing.
+
+    Called at page load and after every save so a POST error can re-render
+    the same page state without a redirect losing the form.
+    """
+    month_filter = get_month_filter(request)
+    # A specific month drives the fund; All time still needs *some* fund to
+    # front the page (the "current month" one, so the balance card reads
+    # sanely). The list below queries across all funds when in All Time.
+    display_month = month_filter.month or timezone.localdate().replace(day=1)
+    fund, carried_from = PettyCashFund.for_month(display_month)
+
+    if month_filter.is_all_time:
+        expense_qs = PettyCashEntry.objects.filter(
+            entry_type=PettyCashEntry.EntryType.EXPENSE
+        ).select_related("fund", "added_by").order_by("-date", "-id")
+        reimb_qs = PettyCashReimbursement.objects.select_related(
+            "fund", "added_by"
+        ).order_by("-date", "-id")
+    else:
+        expense_qs = fund.entries.filter(
+            entry_type=PettyCashEntry.EntryType.EXPENSE
+        ).select_related("added_by").order_by("-date", "-id")
+        reimb_qs = fund.reimbursements.select_related("added_by").order_by(
+            "-date", "-id"
+        )
+
+    # Two paginators because the tabs are independent — ?page= applies to
+    # whichever tab was clicked, so the two share the same page number and
+    # only one tab is ever seen at once.
+    expense_page = _paginate(request, expense_qs)
+    reimb_page = _paginate(request, reimb_qs)
+
+    return {
+        "fund": fund,
+        "carried_from": carried_from,
+        "month_filter": month_filter,
+        "expense_form": PettyCashExpenseForm(),
+        "reimbursement_form": PettyCashReimbursementForm(),
+        "categories": PettyCashEntry.Category.choices,
+        "expense_page": expense_page,
+        "expenses": expense_page.object_list,
+        "reimbursement_page": reimb_page,
+        "reimbursements": reimb_page.object_list,
+        "active_tab": active_tab,
+        "low_balance_threshold": Decimal("1000.00"),
+    }
+
+
+@login_required
+def petty_cash(request):
+    """The petty-cash page for one month (or all months when ?month=all).
+
+    The fund for the requested month is auto-created with the previous
+    month's closing balance if it does not exist yet — see
+    PettyCashFund.for_month. If that happened just now, `carried_from`
+    surfaces to the template so a notice can explain the seed balance.
+    """
+    return render(request, "core/petty_cash.html", _petty_cash_context(request))
+
+
+def _petty_cash_redirect(request):
+    """Where to land after a petty-cash write. Preserves ?month= so a
+    correction made against last month does not send the operator back to
+    the current month."""
+    month = request.GET.get("month") or request.POST.get("month") or ""
+    url = reverse("core:petty_cash")
+    return redirect(f"{url}?month={month}" if month else url)
+
+
+@require_POST
+@login_required
+def petty_cash_expense_create(request):
+    form = PettyCashExpenseForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Expense not saved: {form.first_error()}")
+        return _petty_cash_redirect(request)
+
+    entry_date = form.cleaned_data["date"]
+    with transaction.atomic():
+        fund, _ = PettyCashFund.for_month(entry_date)
+        entry = form.save(commit=False)
+        entry.fund = fund
+        entry.added_by = request.user
+        entry.entry_type = PettyCashEntry.EntryType.EXPENSE
+        entry.save()
+        fund.recalculate()
+
+    messages.success(
+        request,
+        f"Expense of {entry.amount:,.2f} recorded. "
+        f"Available: {fund.closing_balance:,.2f}.",
+    )
+    return _petty_cash_redirect(request)
+
+
+@require_POST
+@login_required
+def petty_cash_expense_edit(request, pk):
+    entry = get_object_or_404(
+        PettyCashEntry.objects.select_related("fund"),
+        pk=pk,
+        entry_type=PettyCashEntry.EntryType.EXPENSE,
+    )
+    form = PettyCashExpenseForm(request.POST, instance=entry, require_edit_reason=True)
+    if not form.is_valid():
+        messages.error(request, f"Edit not saved: {form.first_error()}")
+        return _petty_cash_redirect(request)
+
+    new_date = form.cleaned_data["date"]
+    with transaction.atomic():
+        old_fund = entry.fund
+        edited = form.save(commit=False)
+        edited.edit_date = timezone.localdate()
+
+        # The date can move an entry between months. Repoint it to the new
+        # month's fund and recalculate both funds so neither carries the
+        # other's amount by accident.
+        if new_date.replace(day=1) != old_fund.month:
+            new_fund, _ = PettyCashFund.for_month(new_date)
+            edited.fund = new_fund
+            edited.save()
+            old_fund.recalculate()
+            new_fund.recalculate()
+        else:
+            edited.save()
+            old_fund.recalculate()
+
+    messages.success(request, "Expense updated.")
+    return _petty_cash_redirect(request)
+
+
+@require_POST
+@login_required
+def petty_cash_expense_delete(request, pk):
+    entry = get_object_or_404(
+        PettyCashEntry.objects.select_related("fund"),
+        pk=pk,
+        entry_type=PettyCashEntry.EntryType.EXPENSE,
+    )
+    with transaction.atomic():
+        fund = entry.fund
+        entry.delete()
+        fund.recalculate()
+
+    messages.success(request, "Expense removed.")
+    return _petty_cash_redirect(request)
+
+
+@require_POST
+@login_required
+def petty_cash_reimbursement_create(request):
+    form = PettyCashReimbursementForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Reimbursement not saved: {form.first_error()}")
+        return _petty_cash_redirect(request)
+
+    entry_date = form.cleaned_data["date"]
+    with transaction.atomic():
+        fund, _ = PettyCashFund.for_month(entry_date)
+        reimb = form.save(commit=False)
+        reimb.fund = fund
+        reimb.added_by = request.user
+        reimb.save()
+        fund.recalculate()
+
+    messages.success(
+        request,
+        f"Reimbursement of {reimb.amount:,.2f} recorded. "
+        f"Available: {fund.closing_balance:,.2f}.",
+    )
+    return _petty_cash_redirect(request)
+
+
+@require_POST
+@login_required
+def petty_cash_reimbursement_edit(request, pk):
+    reimb = get_object_or_404(
+        PettyCashReimbursement.objects.select_related("fund"), pk=pk
+    )
+    form = PettyCashReimbursementForm(
+        request.POST, instance=reimb, require_edit_reason=True
+    )
+    if not form.is_valid():
+        messages.error(request, f"Edit not saved: {form.first_error()}")
+        return _petty_cash_redirect(request)
+
+    new_date = form.cleaned_data["date"]
+    with transaction.atomic():
+        old_fund = reimb.fund
+        edited = form.save(commit=False)
+        edited.edit_date = timezone.localdate()
+
+        if new_date.replace(day=1) != old_fund.month:
+            new_fund, _ = PettyCashFund.for_month(new_date)
+            edited.fund = new_fund
+            edited.save()
+            old_fund.recalculate()
+            new_fund.recalculate()
+        else:
+            edited.save()
+            old_fund.recalculate()
+
+    messages.success(request, "Reimbursement updated.")
+    return _petty_cash_redirect(request)
+
+
+@require_POST
+@login_required
+def petty_cash_reimbursement_delete(request, pk):
+    reimb = get_object_or_404(
+        PettyCashReimbursement.objects.select_related("fund"), pk=pk
+    )
+    with transaction.atomic():
+        fund = reimb.fund
+        reimb.delete()
+        fund.recalculate()
+
+    messages.success(request, "Reimbursement removed.")
+    return _petty_cash_redirect(request)
+
+
+@login_required
+def petty_cash_pdf(request):
+    """Print the current fund's month as a PDF summary + full lists."""
+    context = _petty_cash_context(request)
+    fund = context["fund"]
+    # The PDF is a complete statement of the month — no pagination there,
+    # so it needs the full lists rather than a page of them.
+    expense_qs = fund.entries.filter(
+        entry_type=PettyCashEntry.EntryType.EXPENSE
+    ).select_related("added_by").order_by("-date", "-id")
+    reimb_qs = fund.reimbursements.select_related("added_by").order_by(
+        "-date", "-id"
+    )
+    context.update({
+        "expenses": expense_qs,
+        "reimbursements": reimb_qs,
+        "generated_at": timezone.localtime(),
+    })
+    stamp = fund.month.strftime("%Y-%m")
+    return _pdf_response(
+        request,
+        "core/petty_cash_pdf.html",
+        context,
+        f"senovka-petty-cash-{stamp}.pdf",
+    )
+
+
+# =========================================================== material master
+# Suppliers we buy raw material from and the raw materials themselves. Both
+# CRUD flows are modal-based on the list page, POST-only edit/delete, and
+# super-admin only — a manager can view but not change master data. See
+# MaterialSupplier / Material for why these are separate from Customer and
+# Product.
+
+
+@super_admin_required
+def material_supplier_list(request):
+    suppliers = (
+        MaterialSupplier.objects.annotate(
+            purchase_count=Count("purchases", distinct=True)
+        ).order_by("name")
+    )
+    page_obj = _paginate(request, suppliers)
+    return render(
+        request,
+        "core/material_supplier_list.html",
+        {
+            "page_obj": page_obj,
+            "suppliers": page_obj.object_list,
+            "form": MaterialSupplierForm(),
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def material_supplier_create(request):
+    form = MaterialSupplierForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Supplier not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            supplier = form.save()
+        messages.success(request, f"Supplier '{supplier.name}' created.")
+    return redirect("core:material_supplier_list")
+
+
+@require_POST
+@super_admin_required
+def material_supplier_edit(request, pk):
+    supplier = get_object_or_404(MaterialSupplier, pk=pk)
+    form = MaterialSupplierForm(request.POST, instance=supplier)
+    if not form.is_valid():
+        messages.error(request, f"Supplier not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Supplier updated.")
+    return redirect("core:material_supplier_list")
+
+
+@require_POST
+@super_admin_required
+def material_supplier_delete(request, pk):
+    supplier = get_object_or_404(
+        MaterialSupplier.objects.annotate(
+            purchase_count=Count("purchases", distinct=True)
+        ),
+        pk=pk,
+    )
+    if supplier.purchase_count:
+        # PROTECT on the FK would raise anyway; say so first.
+        messages.error(
+            request,
+            f"Cannot delete '{supplier.name}' — {supplier.purchase_count} "
+            f"purchase{'' if supplier.purchase_count == 1 else 's'} still "
+            f"reference it. Deactivate instead.",
+        )
+        return redirect("core:material_supplier_list")
+    try:
+        supplier.delete()
+        messages.success(request, f"Supplier '{supplier.name}' deleted.")
+    except ProtectedError:
+        messages.error(
+            request,
+            f"Cannot delete '{supplier.name}' — other records reference it.",
+        )
+    return redirect("core:material_supplier_list")
+
+
+@super_admin_required
+def material_list(request):
+    materials = (
+        Material.objects.annotate(
+            purchase_count=Count("purchase_items", distinct=True)
+        ).order_by("name")
+    )
+    page_obj = _paginate(request, materials)
+    return render(
+        request,
+        "core/material_list.html",
+        {
+            "page_obj": page_obj,
+            "materials": page_obj.object_list,
+            "form": MaterialForm(),
+            "units": Material.Unit.choices,
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def material_create(request):
+    form = MaterialForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Material not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            material = form.save()
+        messages.success(request, f"Material '{material.name}' created.")
+    return redirect("core:material_list")
+
+
+@require_POST
+@super_admin_required
+def material_edit(request, pk):
+    material = get_object_or_404(Material, pk=pk)
+    form = MaterialForm(request.POST, instance=material)
+    if not form.is_valid():
+        messages.error(request, f"Material not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Material updated.")
+    return redirect("core:material_list")
+
+
+@require_POST
+@super_admin_required
+def material_delete(request, pk):
+    material = get_object_or_404(
+        Material.objects.annotate(
+            purchase_count=Count("purchase_items", distinct=True)
+        ),
+        pk=pk,
+    )
+    if material.purchase_count:
+        messages.error(
+            request,
+            f"Cannot delete '{material.name}' — {material.purchase_count} "
+            f"purchase line{'' if material.purchase_count == 1 else 's'} "
+            f"still reference it. Deactivate instead.",
+        )
+        return redirect("core:material_list")
+    try:
+        material.delete()
+        messages.success(request, f"Material '{material.name}' deleted.")
+    except ProtectedError:
+        messages.error(
+            request,
+            f"Cannot delete '{material.name}' — other records reference it.",
+        )
+    return redirect("core:material_list")
+
+
+# ======================================================== material purchases
+# The main flow. A purchase collects several MaterialPurchaseItems (ordered
+# quantities), which are then weighed in over one or more visits to the
+# scale — each visit is a MaterialWeighEntry, and MaterialPurchaseItem
+# caches the running weighed_qty via recalculate_weighed(). MaterialPurchase
+# caches status via refresh_status(). All model helpers.
+
+
+def _parse_purchase_items(raw_json):
+    """Read the items JSON off a purchase POST and return validated dicts.
+
+    Refuses malformed JSON, empty lists, unknown materials, and negative
+    numbers. Raises BillError (reused: the message pipeline is the same).
+    """
+    try:
+        rows = json.loads(raw_json or "[]")
+    except (ValueError, TypeError):
+        raise BillError("Item list is malformed.")
+    if not isinstance(rows, list) or not rows:
+        raise BillError("Add at least one item.")
+
+    material_ids = [
+        r.get("material_id") for r in rows if isinstance(r, dict)
+    ]
+    materials = {
+        m.pk: m for m in Material.objects.filter(pk__in=material_ids)
+    }
+
+    seen = set()
+    items = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise BillError(f"Item {index}: malformed row.")
+        material = materials.get(row.get("material_id"))
+        if material is None:
+            raise BillError(f"Item {index}: material no longer exists.")
+        if material.pk in seen:
+            raise BillError(f"{material.name} is on this purchase twice.")
+        seen.add(material.pk)
+
+        ordered = _decimal(row.get("ordered_qty"), f"Item {index} qty", 3)
+        if ordered <= ZERO:
+            raise BillError(f"Item {index}: quantity must be above 0.")
+        unit_price = _decimal(row.get("unit_price"), f"Item {index} price", 2)
+        line_total = (ordered * unit_price).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        items.append(
+            {
+                "material": material,
+                "ordered_qty": ordered,
+                "unit_price": unit_price,
+                "line_total": line_total,
+            }
+        )
+
+    return items
+
+
+@login_required
+def material_purchase_list(request):
+    """List of purchases, filtered by status and month."""
+    status = request.GET.get("status", "").strip()
+    valid_status = {v for v, _ in MaterialPurchase.Status.choices}
+    if status not in valid_status:
+        status = ""
+
+    month_filter = get_month_filter(request)
+
+    purchases = (
+        MaterialPurchase.objects.select_related("supplier", "created_by")
+        .annotate(item_count=Count("items", distinct=True))
+        .order_by("-purchase_date", "-id")
+    )
+    if status:
+        purchases = purchases.filter(status=status)
+    purchases = month_filter.apply(purchases, field="purchase_date")
+
+    page_obj = _paginate(request, purchases)
+
+    return render(
+        request,
+        "core/material_purchase_list.html",
+        {
+            "page_obj": page_obj,
+            "purchases": page_obj.object_list,
+            "status": status,
+            "statuses": MaterialPurchase.Status.choices,
+            "month_filter": month_filter,
+            "is_filtered": bool(status or not month_filter.is_all_time),
+        },
+    )
+
+
+def _material_form_context(request, form, items=None, is_edit=False, purchase=None):
+    return {
+        "form": form,
+        "materials": list(
+            Material.objects.filter(is_active=True).order_by("name")
+        ),
+        # For a live "add item" grid on the create page.
+        "materials_json": json.dumps([
+            {
+                "id": m.pk,
+                "name": m.name,
+                "unit": m.get_unit_display(),
+                "unit_price": f"{m.default_unit_price:.2f}",
+            }
+            for m in Material.objects.filter(is_active=True).order_by("name")
+        ]),
+        "initial_items_json": json.dumps(items or []),
+        "is_edit": is_edit,
+        "purchase": purchase,
+    }
+
+
+@login_required
+def material_purchase_create(request):
+    """GET renders the form, POST saves the purchase and its items."""
+    form = MaterialPurchaseHeaderForm(request.POST or None)
+
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                if not form.is_valid():
+                    raise BillError(form.first_error())
+                items = _parse_purchase_items(request.POST.get("items_json"))
+
+                purchase = form.save(commit=False)
+                purchase.created_by = request.user
+                purchase.save()
+                for item in items:
+                    MaterialPurchaseItem.objects.create(
+                        purchase=purchase,
+                        material=item["material"],
+                        ordered_qty=item["ordered_qty"],
+                        unit_price=item["unit_price"],
+                        line_total=item["line_total"],
+                    )
+                purchase.refresh_status()
+        except BillError as exc:
+            messages.error(request, f"Purchase not saved: {exc}")
+        else:
+            messages.success(
+                request,
+                f"Purchase #{purchase.pk} created ({len(items)} item"
+                f"{'' if len(items) == 1 else 's'}, "
+                f"{purchase.total_amount:,.2f}).",
+            )
+            return redirect("core:material_purchase_detail", pk=purchase.pk)
+
+    return render(
+        request,
+        "core/material_purchase_create.html",
+        _material_form_context(request, form),
+    )
+
+
+@login_required
+def material_purchase_edit(request, pk):
+    purchase = get_object_or_404(MaterialPurchase, pk=pk)
+
+    if request.method == "POST":
+        form = MaterialPurchaseHeaderForm(
+            request.POST, instance=purchase, require_edit_reason=True
+        )
+        try:
+            with transaction.atomic():
+                if not form.is_valid():
+                    raise BillError(form.first_error())
+                items = _parse_purchase_items(request.POST.get("items_json"))
+
+                # A rewrite: drop the old items (and their weigh entries via
+                # CASCADE) and re-create from the new list. Simpler than
+                # trying to diff — a purchase is small and this cannot leave
+                # a half-updated set of rows.
+                purchase.items.all().delete()
+                edited = form.save(commit=False)
+                edited.edit_date = timezone.localdate()
+                edited.save()
+                for item in items:
+                    MaterialPurchaseItem.objects.create(
+                        purchase=edited,
+                        material=item["material"],
+                        ordered_qty=item["ordered_qty"],
+                        unit_price=item["unit_price"],
+                        line_total=item["line_total"],
+                    )
+                edited.refresh_status()
+        except BillError as exc:
+            messages.error(request, f"Purchase not saved: {exc}")
+        else:
+            messages.success(request, f"Purchase #{purchase.pk} updated.")
+            return redirect("core:material_purchase_detail", pk=purchase.pk)
+    else:
+        form = MaterialPurchaseHeaderForm(instance=purchase, require_edit_reason=True)
+
+    initial_items = [
+        {
+            "material_id": item.material_id,
+            "material_name": item.material.name,
+            "unit": item.material.get_unit_display(),
+            "ordered_qty": f"{item.ordered_qty:.3f}",
+            "unit_price": f"{item.unit_price:.2f}",
+        }
+        for item in purchase.items.select_related("material")
+    ]
+
+    return render(
+        request,
+        "core/material_purchase_create.html",
+        _material_form_context(
+            request, form, items=initial_items, is_edit=True, purchase=purchase
+        ),
+    )
+
+
+@require_POST
+@super_admin_required
+def material_purchase_delete(request, pk):
+    purchase = get_object_or_404(MaterialPurchase, pk=pk)
+    label = f"Purchase #{purchase.pk} · {purchase.supplier.name}"
+    with transaction.atomic():
+        # CASCADE takes items and weigh entries with it.
+        purchase.delete()
+    messages.success(request, f"{label} deleted.")
+    return redirect("core:material_purchase_list")
+
+
+@login_required
+def material_purchase_detail(request, pk):
+    purchase = get_object_or_404(
+        MaterialPurchase.objects.select_related("supplier", "created_by"),
+        pk=pk,
+    )
+    items = (
+        purchase.items.select_related("material")
+        .prefetch_related("weigh_entries__submitted_by")
+    )
+    return render(
+        request,
+        "core/material_purchase_detail.html",
+        {
+            "purchase": purchase,
+            "items": items,
+            "weigh_form": MaterialWeighEntryForm(),
+        },
+    )
+
+
+@require_POST
+@login_required
+def material_purchase_weigh_add(request, item_pk):
+    item = get_object_or_404(
+        MaterialPurchaseItem.objects.select_related("purchase"), pk=item_pk
+    )
+    form = MaterialWeighEntryForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Weigh entry not saved: {form.first_error()}")
+        return redirect("core:material_purchase_detail", pk=item.purchase_id)
+
+    with transaction.atomic():
+        entry = form.save(commit=False)
+        entry.purchase_item = item
+        entry.submitted_by = request.user
+        entry.save()
+        item.recalculate_weighed()
+        item.purchase.refresh_status()
+
+    messages.success(
+        request,
+        f"Weighed {entry.weighed_qty} on {entry.weigh_date:%d %b %Y} · "
+        f"{item.weighed_qty}/{item.ordered_qty} done.",
+    )
+    return redirect("core:material_purchase_detail", pk=item.purchase_id)
+
+
+@require_POST
+@login_required
+def material_purchase_weigh_edit(request, pk):
+    entry = get_object_or_404(
+        MaterialWeighEntry.objects.select_related("purchase_item__purchase"),
+        pk=pk,
+    )
+    form = MaterialWeighEntryForm(request.POST, instance=entry)
+    if not form.is_valid():
+        messages.error(request, f"Weigh entry not saved: {form.first_error()}")
+        return redirect(
+            "core:material_purchase_detail", pk=entry.purchase_item.purchase_id
+        )
+
+    with transaction.atomic():
+        edited = form.save()
+        edited.purchase_item.recalculate_weighed()
+        edited.purchase_item.purchase.refresh_status()
+
+    messages.success(request, "Weigh entry updated.")
+    return redirect(
+        "core:material_purchase_detail", pk=entry.purchase_item.purchase_id
+    )
+
+
+@require_POST
+@login_required
+def material_purchase_weigh_delete(request, pk):
+    entry = get_object_or_404(
+        MaterialWeighEntry.objects.select_related("purchase_item__purchase"),
+        pk=pk,
+    )
+    with transaction.atomic():
+        item = entry.purchase_item
+        entry.delete()
+        item.recalculate_weighed()
+        item.purchase.refresh_status()
+
+    messages.success(request, "Weigh entry removed.")
+    return redirect("core:material_purchase_detail", pk=item.purchase_id)

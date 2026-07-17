@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{% if is_edit %}Edit Purchase #{{ purchase.pk }}{% else %}New Material Purchase{% endif %} · Senovka Plastics{% endblock %}
+{% block header %}{% if is_edit %}Edit Purchase #{{ purchase.pk }}{% else %}New Material Purchase{% endif %}{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% if is_edit %}{% url 'core:material_purchase_detail' purchase.pk %}{% else %}{% url 'core:material_purchase_list' %}{% endif %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    {% if is_edit %}Back to Purchase{% else %}Back to Purchases{% endif %}
+  </a>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="items_json" id="items-json" value="{{ initial_items_json }}">
+
+  <div class="grid gap-5 lg:grid-cols-3">
+    <!-- ============================ HEADER + PICKER ============================ -->
+    <div class="lg:col-span-2 space-y-5">
+
+      <!-- Header -->
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        {% if form.non_field_errors %}
+          <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+            {{ form.non_field_errors|join:" " }}
+          </div>
+        {% endif %}
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.supplier.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Supplier <span class="text-rose-500">*</span></label>
+            {{ form.supplier }}
+            {% for e in form.supplier.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ form.purchase_date.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Purchase date <span class="text-rose-500">*</span></label>
+            {{ form.purchase_date }}
+            {% for e in form.purchase_date.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+          <div class="sm:col-span-2">
+            <label for="{{ form.invoice_no.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Invoice no <span class="text-slate-300">(optional)</span></label>
+            {{ form.invoice_no }}
+          </div>
+          <div class="sm:col-span-2">
+            <label for="{{ form.notes.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Notes</label>
+            {{ form.notes }}
+          </div>
+          {% if is_edit and form.edit_reason %}
+            <div class="sm:col-span-2">
+              <label for="{{ form.edit_reason.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Reason for edit <span class="text-rose-500">*</span></label>
+              {{ form.edit_reason }}
+              {% for e in form.edit_reason.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Material picker cards -->
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="mb-3 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-slate-900">Add materials</h3>
+          <input type="search" id="material-search" placeholder="Search materials…"
+                 class="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div id="material-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+        <p id="material-empty" class="hidden py-8 text-center text-sm text-slate-500">
+          No materials match that search.
+        </p>
+      </div>
+    </div>
+
+    <!-- ============================ ITEMS PANEL ============================ -->
+    <div class="lg:col-span-1">
+      <div class="sticky top-20 rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-900">
+            Items <span id="items-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
+          </h3>
+        </div>
+
+        <div id="items-list" class="max-h-96 divide-y divide-slate-100 overflow-y-auto"></div>
+        <p id="items-empty" class="px-4 py-8 text-center text-sm text-slate-400">
+          Click a material card to add it.
+        </p>
+
+        <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
+          <div class="flex items-baseline justify-between">
+            <span class="text-sm font-semibold text-slate-900">Grand total</span>
+            <span id="grand-total" class="text-xl font-semibold text-slate-900">0.00</span>
+          </div>
+
+          <button type="submit" id="save-purchase" disabled
+                  class="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition
+                         hover:bg-slate-800 disabled:opacity-50">
+            {% if is_edit %}Save Changes{% else %}Save Purchase{% endif %}
+          </button>
+          <p id="save-note" class="mt-1.5 text-center text-xs text-slate-400">
+            Add at least one item.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<template id="item-row-tmpl">
+  <div class="js-item p-3 hover:bg-slate-50">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <p class="js-name truncate text-sm font-medium text-slate-900"></p>
+        <p class="js-unit text-xs text-slate-500"></p>
+      </div>
+      <button type="button" class="js-remove shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-300 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove">&times;</button>
+    </div>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Qty</span>
+        <input type="number" step="0.001" min="0.001" required
+               class="js-qty block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Unit price</span>
+        <input type="number" step="0.01" min="0" required
+               class="js-price block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+    </div>
+    <p class="mt-1 text-right text-xs text-slate-500">
+      Line total: <span class="js-line-total font-semibold text-slate-900">0.00</span>
+    </p>
+  </div>
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script id="materials-data" type="application/json">{{ materials_json|safe }}</script>
+<script id="initial-items-data" type="application/json">{{ initial_items_json|safe }}</script>
+<script>
+  (function () {
+    const MATERIALS = JSON.parse(document.getElementById('materials-data').textContent || '[]');
+    const INITIAL   = JSON.parse(document.getElementById('initial-items-data').textContent || '[]');
+
+    const grid       = document.getElementById('material-grid');
+    const gridEmpty  = document.getElementById('material-empty');
+    const search     = document.getElementById('material-search');
+    const itemsList  = document.getElementById('items-list');
+    const itemsEmpty = document.getElementById('items-empty');
+    const itemsCount = document.getElementById('items-count');
+    const grandTotal = document.getElementById('grand-total');
+    const saveBtn    = document.getElementById('save-purchase');
+    const saveNote   = document.getElementById('save-note');
+    const jsonEl     = document.getElementById('items-json');
+    const rowTmpl    = document.getElementById('item-row-tmpl');
+
+    // material_id -> DOM row for O(1) lookups on repeat clicks.
+    const rows = new Map();
+
+    const MONEY = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const QTY   = new Intl.NumberFormat('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    function money(n) { return MONEY.format(n); }
+    function round(n, d) { const f = Math.pow(10, d); return Math.round((n + Number.EPSILON) * f) / f; }
+    function num(v) { const n = parseFloat(v); return isFinite(n) ? n : NaN; }
+
+    // ---- material grid ----
+    function buildCard(material) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.dataset.id = material.id;
+      card.className = 'js-card rounded-xl border-2 border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 hover:shadow-sm';
+      card.innerHTML =
+        '<p class="truncate text-sm font-semibold text-slate-900">' + material.name + '</p>' +
+        '<p class="mt-0.5 text-xs text-slate-500">' + material.unit + ' · ' + material.unit_price + '</p>';
+      card.addEventListener('click', function () { addOrFocus(material); });
+      return card;
+    }
+    function renderGrid() {
+      const term = search.value.trim().toLowerCase();
+      grid.replaceChildren();
+      let count = 0;
+      MATERIALS.forEach(function (m) {
+        if (term && m.name.toLowerCase().indexOf(term) === -1) return;
+        grid.appendChild(buildCard(m));
+        count++;
+      });
+      gridEmpty.classList.toggle('hidden', count > 0);
+      // Highlight cards that are already on the panel.
+      paintCards();
+    }
+    function paintCards() {
+      grid.querySelectorAll('.js-card').forEach(function (card) {
+        const on = rows.has(parseInt(card.dataset.id, 10));
+        card.classList.toggle('border-emerald-500', on);
+        card.classList.toggle('bg-emerald-50/40', on);
+      });
+    }
+    search.addEventListener('input', renderGrid);
+
+    // ---- items panel ----
+    function addOrFocus(material) {
+      if (rows.has(material.id)) {
+        rows.get(material.id).querySelector('.js-qty').focus();
+        return;
+      }
+      addRow({
+        material_id: material.id,
+        material_name: material.name,
+        unit: material.unit,
+        ordered_qty: '1',
+        unit_price: material.unit_price,
+      });
+    }
+
+    function addRow(item) {
+      const node = rowTmpl.content.firstElementChild.cloneNode(true);
+      node.dataset.id = item.material_id;
+      node.querySelector('.js-name').textContent = item.material_name;
+      node.querySelector('.js-unit').textContent = item.unit;
+      const qtyEl   = node.querySelector('.js-qty');
+      const priceEl = node.querySelector('.js-price');
+      const totalEl = node.querySelector('.js-line-total');
+      qtyEl.value = item.ordered_qty;
+      priceEl.value = item.unit_price;
+
+      function recalc() {
+        const q = num(qtyEl.value);
+        const p = num(priceEl.value);
+        const t = (isNaN(q) || isNaN(p)) ? 0 : round(q * p, 2);
+        totalEl.textContent = money(t);
+        pushTotals();
+      }
+      qtyEl.addEventListener('input', recalc);
+      priceEl.addEventListener('input', recalc);
+      node.querySelector('.js-remove').addEventListener('click', function () {
+        rows.delete(item.material_id);
+        node.remove();
+        paintCards();
+        pushTotals();
+      });
+
+      itemsList.appendChild(node);
+      rows.set(item.material_id, node);
+      recalc();
+      paintCards();
+    }
+
+    function pushTotals() {
+      let total = 0;
+      let bad = 0;
+      const payload = [];
+      rows.forEach(function (node, id) {
+        const q = num(node.querySelector('.js-qty').value);
+        const p = num(node.querySelector('.js-price').value);
+        if (!(q > 0) || !(p >= 0)) { bad++; return; }
+        total += q * p;
+        payload.push({
+          material_id: id,
+          ordered_qty: q.toFixed(3),
+          unit_price: p.toFixed(2),
+        });
+      });
+      itemsCount.textContent = rows.size;
+      itemsEmpty.classList.toggle('hidden', rows.size > 0);
+      grandTotal.textContent = money(round(total, 2));
+      jsonEl.value = JSON.stringify(payload);
+
+      const canSave = rows.size > 0 && bad === 0;
+      saveBtn.disabled = !canSave;
+      saveNote.textContent = rows.size === 0
+        ? 'Add at least one item.'
+        : (bad > 0 ? 'Fill in qty and price on every row.' : ' ');
+    }
+
+    // ---- init ----
+    renderGrid();
+    INITIAL.forEach(function (item) {
+      addRow({
+        material_id: item.material_id,
+        material_name: item.material_name,
+        unit: item.unit,
+        ordered_qty: item.ordered_qty,
+        unit_price: item.unit_price,
+      });
+    });
+    pushTotals();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Purchase #{{ purchase.pk }} · Senovka Plastics{% endblock %}
+{% block header %}Material Purchase #{{ purchase.pk }}{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div>
+    <a href="{% url 'core:material_purchase_list' %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      Material Purchases
+    </a>
+
+    <h2 class="mt-2 text-xl font-semibold text-slate-900">
+      {{ purchase.supplier.name }}
+      <span class="ml-2 text-sm font-normal text-slate-500">
+        · {{ purchase.purchase_date|date:"j M Y" }}
+        {% if purchase.invoice_no %} · Invoice {{ purchase.invoice_no }}{% endif %}
+      </span>
+    </h2>
+
+    <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      {% if purchase.status == 'fully_weighed' %}
+        <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Fully weighed</span>
+      {% elif purchase.status == 'partially_weighed' %}
+        <span class="rounded-full bg-amber-50 px-2.5 py-0.5 font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Partially weighed</span>
+      {% else %}
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Pending</span>
+      {% endif %}
+      <span class="text-slate-500">Total: <span class="font-semibold text-slate-900">{{ purchase.total_amount|floatformat:2|intcomma }}</span></span>
+      <span class="text-slate-500">Created by {{ purchase.created_by.username }}</span>
+      {% if purchase.edit_date %}
+        <span class="italic text-slate-400" title="{{ purchase.edit_reason }}">Edited {{ purchase.edit_date|date:"j M Y" }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="flex shrink-0 flex-wrap gap-2">
+    <a href="{% url 'core:material_purchase_edit' purchase.pk %}"
+       class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Edit
+    </a>
+    {% if is_super_admin %}
+      <button type="button" id="open-delete"
+              class="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
+        Delete
+      </button>
+    {% endif %}
+  </div>
+</div>
+
+{% if purchase.notes %}
+  <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+    {{ purchase.notes|linebreaksbr }}
+  </div>
+{% endif %}
+
+<!-- Items + weigh entries -->
+<div class="space-y-4">
+  {% for item in items %}
+    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="border-b border-slate-100 p-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div class="min-w-0">
+            <p class="text-base font-semibold text-slate-900">
+              {{ item.material.name }}
+              <span class="text-xs font-normal text-slate-500">({{ item.material.get_unit_display }})</span>
+            </p>
+            <div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+              <span>Ordered: <span class="font-medium text-slate-900">{{ item.ordered_qty|floatformat:"-3" }}</span></span>
+              <span>Weighed: <span class="font-medium text-slate-900">{{ item.weighed_qty|floatformat:"-3" }}</span></span>
+              <span>Remaining: <span class="font-medium {% if item.remaining_qty > 0 %}text-amber-700{% else %}text-emerald-700{% endif %}">{{ item.remaining_qty|floatformat:"-3" }}</span></span>
+              <span>@ {{ item.unit_price|floatformat:2|intcomma }} · line {{ item.line_total|floatformat:2|intcomma }}</span>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="mt-2 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100">
+              <div class="h-full rounded-full {% if item.is_weighed %}bg-emerald-500{% else %}bg-amber-400{% endif %}"
+                   style="width: {{ item.weigh_percent }}%"></div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            {% if item.is_weighed %}
+              <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Weighed</span>
+            {% elif item.weighed_qty > 0 %}
+              <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">In progress</span>
+            {% else %}
+              <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Pending</span>
+            {% endif %}
+            <button type="button"
+                    class="js-add-weigh inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    data-item-pk="{{ item.pk }}"
+                    data-material="{{ item.material.name }}"
+                    data-unit="{{ item.material.get_unit_display }}"
+                    data-remaining="{{ item.remaining_qty|stringformat:'.3f' }}"
+                    data-action="{% url 'core:material_purchase_weigh_add' item.pk %}">
+              + Weigh in
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {% if item.weigh_entries.all %}
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-xs">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2 text-left font-semibold uppercase tracking-wide text-slate-500">Date</th>
+                <th class="px-4 py-2 text-right font-semibold uppercase tracking-wide text-slate-500">Weighed</th>
+                <th class="px-4 py-2 text-left font-semibold uppercase tracking-wide text-slate-500">Checked by</th>
+                <th class="px-4 py-2 text-left font-semibold uppercase tracking-wide text-slate-500">Submitted by</th>
+                <th class="px-4 py-2 text-right font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {% for entry in item.weigh_entries.all %}
+                <tr>
+                  <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ entry.weigh_date|date:"j M Y" }}</td>
+                  <td class="whitespace-nowrap px-4 py-2 text-right font-medium text-slate-900">{{ entry.weighed_qty|floatformat:"-3" }}</td>
+                  <td class="whitespace-nowrap px-4 py-2 text-slate-800">{{ entry.checked_by }}</td>
+                  <td class="whitespace-nowrap px-4 py-2 text-slate-500">{{ entry.submitted_by.username }}</td>
+                  <td class="whitespace-nowrap px-4 py-2 text-right">
+                    <button type="button"
+                            class="js-edit-weigh rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            data-action="{% url 'core:material_purchase_weigh_edit' entry.pk %}"
+                            data-date="{{ entry.weigh_date|date:'Y-m-d' }}"
+                            data-qty="{{ entry.weighed_qty|stringformat:'.3f' }}"
+                            data-checked-by="{{ entry.checked_by }}">
+                      Edit
+                    </button>
+                    <button type="button"
+                            class="js-del-weigh ml-1 rounded-md border border-rose-200 px-2 py-0.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                            data-action="{% url 'core:material_purchase_weigh_delete' entry.pk %}"
+                            data-label="{{ entry.weighed_qty }} on {{ entry.weigh_date|date:'j M Y' }}">
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="px-4 py-3 text-xs italic text-slate-400">
+          No weigh entries yet — click <em>Weigh in</em> above.
+        </p>
+      {% endif %}
+    </div>
+  {% empty %}
+    <div class="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+      This purchase has no items.
+    </div>
+  {% endfor %}
+</div>
+
+<!-- ===================== WEIGH-IN MODAL (add + edit) ===================== -->
+<div id="weigh-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 id="weigh-title" class="text-base font-semibold text-slate-900">Weigh in</h3>
+        <p id="weigh-subtitle" class="mt-0.5 text-xs text-slate-500"></p>
+      </div>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="weigh-form" method="post" action="" class="mt-4 space-y-4">
+      {% csrf_token %}
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="w-date" class="mb-1 block text-xs font-medium text-slate-600">Date</label>
+          <input type="date" id="w-date" name="weigh_date" required class="{{ weigh_form.weigh_date.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="w-qty" class="mb-1 block text-xs font-medium text-slate-600">Weighed qty</label>
+          <input type="number" step="0.001" min="0.001" id="w-qty" name="weighed_qty" required class="{{ weigh_form.weighed_qty.field.widget.attrs.class }}">
+          <p id="w-remaining-hint" class="mt-1 text-xs text-slate-400"></p>
+        </div>
+      </div>
+      <div>
+        <label for="w-checked-by" class="mb-1 block text-xs font-medium text-slate-600">Checked by</label>
+        <input type="text" id="w-checked-by" name="checked_by" maxlength="150" required class="{{ weigh_form.checked_by.field.widget.attrs.class }}">
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== DELETE MODAL (weigh entries + purchase) ===================== -->
+<div id="del-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 id="del-title" class="text-base font-semibold text-slate-900">Delete</h3>
+    <p id="del-body" class="mt-2 text-sm text-slate-600"></p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="del-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const modal   = document.getElementById('weigh-modal');
+    const form    = document.getElementById('weigh-form');
+    const title   = document.getElementById('weigh-title');
+    const sub     = document.getElementById('weigh-subtitle');
+    const dateEl  = document.getElementById('w-date');
+    const qtyEl   = document.getElementById('w-qty');
+    const chkEl   = document.getElementById('w-checked-by');
+    const hintEl  = document.getElementById('w-remaining-hint');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) { if (!m.classList.contains('hidden')) close(m); });
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    document.querySelectorAll('.js-add-weigh').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Weigh in — ' + btn.dataset.material;
+        sub.textContent = 'Remaining: ' + btn.dataset.remaining + ' ' + btn.dataset.unit;
+        hintEl.textContent = 'Suggested: up to ' + btn.dataset.remaining + ' — but overweight is allowed.';
+        form.action = btn.dataset.action;
+        dateEl.value = today;
+        qtyEl.value = btn.dataset.remaining;
+        chkEl.value = '';
+        open(modal);
+        setTimeout(function () { qtyEl.focus(); qtyEl.select(); }, 30);
+      });
+    });
+
+    document.querySelectorAll('.js-edit-weigh').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Edit weigh entry';
+        sub.textContent = '';
+        hintEl.textContent = '';
+        form.action = btn.dataset.action;
+        dateEl.value = btn.dataset.date;
+        qtyEl.value = btn.dataset.qty;
+        chkEl.value = btn.dataset.checkedBy;
+        open(modal);
+        setTimeout(function () { qtyEl.focus(); qtyEl.select(); }, 30);
+      });
+    });
+
+    // ---- delete modal (weigh + purchase share it) ----
+    const delModal = document.getElementById('del-modal');
+    const delTitle = document.getElementById('del-title');
+    const delBody  = document.getElementById('del-body');
+    const delForm  = document.getElementById('del-form');
+
+    document.querySelectorAll('.js-del-weigh').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delTitle.textContent = 'Delete weigh entry';
+        delBody.innerHTML = 'Remove <strong>' + btn.dataset.label + '</strong>? The item\'s weighed total will be re-calculated.';
+        delForm.action = btn.dataset.action;
+        open(delModal);
+      });
+    });
+
+    const delPurchaseBtn = document.getElementById('open-delete');
+    if (delPurchaseBtn) {
+      delPurchaseBtn.addEventListener('click', function () {
+        delTitle.textContent = 'Delete purchase';
+        delBody.innerHTML = 'Delete <strong>Purchase #{{ purchase.pk }}</strong> and every item and weigh entry on it? This can\'t be undone.';
+        delForm.action = "{% url 'core:material_purchase_delete' purchase.pk %}";
+        open(delModal);
+      });
+    }
+  })();
+</script>
+{% endblock %}

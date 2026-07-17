@@ -167,4 +167,112 @@ urlpatterns = [
         views.outstanding_report_pdf,
         name="outstanding_report_pdf",
     ),
+
+    # ---- Petty cash. One fund per month, auto-carried; two independent
+    # movement types (expenses / reimbursements). All writes are POST-only
+    # so a browser back-button never re-fires them.
+    path("petty-cash/", views.petty_cash, name="petty_cash"),
+    path(
+        "petty-cash/expenses/create/",
+        views.petty_cash_expense_create,
+        name="petty_cash_expense_create",
+    ),
+    path(
+        "petty-cash/expenses/<int:pk>/edit/",
+        views.petty_cash_expense_edit,
+        name="petty_cash_expense_edit",
+    ),
+    path(
+        "petty-cash/expenses/<int:pk>/delete/",
+        views.petty_cash_expense_delete,
+        name="petty_cash_expense_delete",
+    ),
+    path(
+        "petty-cash/reimbursements/create/",
+        views.petty_cash_reimbursement_create,
+        name="petty_cash_reimbursement_create",
+    ),
+    path(
+        "petty-cash/reimbursements/<int:pk>/edit/",
+        views.petty_cash_reimbursement_edit,
+        name="petty_cash_reimbursement_edit",
+    ),
+    path(
+        "petty-cash/reimbursements/<int:pk>/delete/",
+        views.petty_cash_reimbursement_delete,
+        name="petty_cash_reimbursement_delete",
+    ),
+    path("petty-cash/pdf/", views.petty_cash_pdf, name="petty_cash_pdf"),
+
+    # ---- Material master data. Super-admin only, enforced per view.
+    path(
+        "material-suppliers/",
+        views.material_supplier_list,
+        name="material_supplier_list",
+    ),
+    path(
+        "material-suppliers/create/",
+        views.material_supplier_create,
+        name="material_supplier_create",
+    ),
+    path(
+        "material-suppliers/<int:pk>/edit/",
+        views.material_supplier_edit,
+        name="material_supplier_edit",
+    ),
+    path(
+        "material-suppliers/<int:pk>/delete/",
+        views.material_supplier_delete,
+        name="material_supplier_delete",
+    ),
+    path("materials/", views.material_list, name="material_list"),
+    path("materials/create/", views.material_create, name="material_create"),
+    path("materials/<int:pk>/edit/", views.material_edit, name="material_edit"),
+    path(
+        "materials/<int:pk>/delete/",
+        views.material_delete,
+        name="material_delete",
+    ),
+
+    # ---- Material purchases. The main flow. Delete is super-admin only.
+    path(
+        "material-purchases/",
+        views.material_purchase_list,
+        name="material_purchase_list",
+    ),
+    path(
+        "material-purchases/create/",
+        views.material_purchase_create,
+        name="material_purchase_create",
+    ),
+    path(
+        "material-purchases/<int:pk>/",
+        views.material_purchase_detail,
+        name="material_purchase_detail",
+    ),
+    path(
+        "material-purchases/<int:pk>/edit/",
+        views.material_purchase_edit,
+        name="material_purchase_edit",
+    ),
+    path(
+        "material-purchases/<int:pk>/delete/",
+        views.material_purchase_delete,
+        name="material_purchase_delete",
+    ),
+    path(
+        "material-purchases/items/<int:item_pk>/weigh/",
+        views.material_purchase_weigh_add,
+        name="material_purchase_weigh_add",
+    ),
+    path(
+        "material-purchases/weigh/<int:pk>/edit/",
+        views.material_purchase_weigh_edit,
+        name="material_purchase_weigh_edit",
+    ),
+    path(
+        "material-purchases/weigh/<int:pk>/delete/",
+        views.material_purchase_weigh_delete,
+        name="material_purchase_weigh_delete",
+    ),
 ]

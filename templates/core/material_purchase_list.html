@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Material Purchases · Senovka Plastics{% endblock %}
+{% block header %}Material Purchases{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <form method="get" class="flex flex-wrap items-end gap-2 text-sm">
+    <div>
+      <label for="status" class="mb-1 block text-xs font-medium text-slate-500">Status</label>
+      <select id="status" name="status"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">All statuses</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="month" class="mb-1 block text-xs font-medium text-slate-500">Month</label>
+      <input type="month" id="month" name="month"
+             value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+             class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:material_purchase_list' %}?month=all"
+         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </form>
+
+  <a href="{% url 'core:material_purchase_create' %}"
+     class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Purchase
+  </a>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Purchase</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Invoice No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Supplier</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Items</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for purchase in purchases %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+              <a href="{% url 'core:material_purchase_detail' purchase.pk %}" class="hover:underline">
+                #{{ purchase.pk }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ purchase.purchase_date|date:"j M Y" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if purchase.invoice_no %}{{ purchase.invoice_no }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ purchase.supplier.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ purchase.item_count }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">{{ purchase.total_amount|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if purchase.status == 'fully_weighed' %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Fully weighed</span>
+              {% elif purchase.status == 'partially_weighed' %}
+                <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Partially weighed</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Pending</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <a href="{% url 'core:material_purchase_detail' purchase.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8" class="px-4 py-12 text-center text-sm text-slate-500">
+              {% if is_filtered %}No purchases match these filters.{% else %}No material purchases yet.{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

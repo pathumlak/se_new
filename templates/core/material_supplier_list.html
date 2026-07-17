@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Material Suppliers · Senovka Plastics{% endblock %}
+{% block header %}Material Suppliers{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <p class="text-sm text-slate-500">
+    Who raw material is bought from. Separate from sales-side Customers — see
+    the model note for why.
+  </p>
+  <button type="button" id="open-create"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Material Supplier
+  </button>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Address</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Purchases</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for supplier in suppliers %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{{ supplier.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if supplier.phone %}{{ supplier.phone }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="px-4 py-3 text-slate-600">
+              {% if supplier.address %}{{ supplier.address|linebreaksbr }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ supplier.purchase_count }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if supplier.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Active</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <button type="button"
+                      class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      data-action="{% url 'core:material_supplier_edit' supplier.pk %}"
+                      data-name="{{ supplier.name }}"
+                      data-phone="{{ supplier.phone }}"
+                      data-address="{{ supplier.address }}"
+                      data-active="{{ supplier.is_active|yesno:'1,' }}">
+                Edit
+              </button>
+              <button type="button"
+                      class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      data-action="{% url 'core:material_supplier_delete' supplier.pk %}"
+                      data-label="{{ supplier.name }}"
+                      {% if supplier.purchase_count %}data-blocked="1"{% endif %}>
+                Delete
+              </button>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="px-4 py-12 text-center text-sm text-slate-500">No material suppliers yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Create / edit modal -->
+<div id="form-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="form-modal-title" class="text-base font-semibold text-slate-900">New Material Supplier</h3>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <form id="form-form" method="post" action="{% url 'core:material_supplier_create' %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+      <div>
+        <label for="ms-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+        <input type="text" id="ms-name" name="name" maxlength="150" required class="{{ form.name.field.widget.attrs.class }}">
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="ms-phone" class="mb-1 block text-xs font-medium text-slate-600">Phone</label>
+          <input type="text" id="ms-phone" name="phone" maxlength="30" class="{{ form.phone.field.widget.attrs.class }}">
+        </div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" id="ms-active" name="is_active" class="{{ form.is_active.field.widget.attrs.class }}">
+            <span>Active</span>
+          </label>
+        </div>
+      </div>
+      <div>
+        <label for="ms-address" class="mb-1 block text-xs font-medium text-slate-600">Address</label>
+        <textarea id="ms-address" name="address" rows="2" class="{{ form.address.field.widget.attrs.class }}"></textarea>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Delete supplier</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <span id="del-label" class="font-semibold text-slate-900"></span>?
+    </p>
+    <p id="del-blocked" class="mt-2 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      This supplier has purchases — deactivate instead.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="del-form" method="post">
+        {% csrf_token %}
+        <button id="del-submit" type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const CREATE = "{% url 'core:material_supplier_create' %}";
+    const modal    = document.getElementById('form-modal');
+    const form     = document.getElementById('form-form');
+    const title    = document.getElementById('form-modal-title');
+    const nameEl   = document.getElementById('ms-name');
+    const phoneEl  = document.getElementById('ms-phone');
+    const addrEl   = document.getElementById('ms-address');
+    const activeEl = document.getElementById('ms-active');
+
+    function openModal(m) { m.classList.remove('hidden'); m.classList.add('flex'); }
+    function closeModal(m) { m.classList.add('hidden'); m.classList.remove('flex'); }
+
+    document.querySelectorAll('.js-close').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const m = btn.closest('[role="dialog"]');
+        if (m) closeModal(m);
+      });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) closeModal(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+        if (!m.classList.contains('hidden')) closeModal(m);
+      });
+    });
+
+    document.getElementById('open-create').addEventListener('click', function () {
+      title.textContent = 'New Material Supplier';
+      form.action = CREATE;
+      nameEl.value = ''; phoneEl.value = ''; addrEl.value = ''; activeEl.checked = true;
+      openModal(modal);
+      setTimeout(function () { nameEl.focus(); }, 30);
+    });
+
+    document.querySelectorAll('.js-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Edit Material Supplier';
+        form.action = btn.dataset.action;
+        nameEl.value = btn.dataset.name;
+        phoneEl.value = btn.dataset.phone;
+        addrEl.value = btn.dataset.address;
+        activeEl.checked = btn.dataset.active === '1';
+        openModal(modal);
+        setTimeout(function () { nameEl.focus(); nameEl.select(); }, 30);
+      });
+    });
+
+    const delModal  = document.getElementById('delete-modal');
+    const delForm   = document.getElementById('del-form');
+    const delLabel  = document.getElementById('del-label');
+    const delBlock  = document.getElementById('del-blocked');
+    const delSubmit = document.getElementById('del-submit');
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delForm.action = btn.dataset.action;
+        delLabel.textContent = '“' + btn.dataset.label + '”';
+        const blocked = btn.dataset.blocked === '1';
+        delBlock.classList.toggle('hidden', !blocked);
+        delSubmit.disabled = blocked;
+        openModal(delModal);
+      });
+    });
+  })();
+</script>
+{% endblock %}

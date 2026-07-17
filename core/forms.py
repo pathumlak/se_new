@@ -2,6 +2,7 @@ import json
 from decimal import Decimal, InvalidOperation
 
 from django import forms
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -11,6 +12,10 @@ from .models import (
     Cheque,
     Customer,
     CustomerBalanceAdjustment,
+    Material,
+    MaterialPurchase,
+    MaterialSupplier,
+    MaterialWeighEntry,
     Payment,
     PettyCashEntry,
     PettyCashReimbursement,
@@ -1304,6 +1309,159 @@ class PettyCashReimbursementForm(forms.ModelForm):
         if "edit_reason" in self.fields and not reason:
             raise forms.ValidationError("Give a reason for this edit.")
         return reason
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class MaterialSupplierForm(forms.ModelForm):
+    class Meta:
+        model = MaterialSupplier
+        fields = ["name", "phone", "address", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Sunil Resin Traders"}),
+            "phone": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. 077 123 4567"}),
+            "address": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Name is required.")
+        return name
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class MaterialForm(forms.ModelForm):
+    class Meta:
+        model = Material
+        fields = ["name", "unit", "default_unit_price", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. HDPE resin"}),
+            "unit": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "default_unit_price": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}
+            ),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Name is required.")
+        return name
+
+    def clean_default_unit_price(self):
+        price = self.cleaned_data.get("default_unit_price") or Decimal("0")
+        if price < 0:
+            raise forms.ValidationError("Price cannot be negative.")
+        return price
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class MaterialPurchaseHeaderForm(forms.ModelForm):
+    """Just the header fields of a purchase — items ride in as JSON in the
+    same POST and are handled by the view. `created_by` is set by the view."""
+
+    class Meta:
+        model = MaterialPurchase
+        fields = ["supplier", "purchase_date", "invoice_no", "notes", "edit_reason"]
+        widgets = {
+            "supplier": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "purchase_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "invoice_no": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Supplier's invoice reference (optional)"}
+            ),
+            "notes": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}),
+            "edit_reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Why this correction?", "maxlength": 500}
+            ),
+        }
+
+    def __init__(self, *args, require_edit_reason=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not require_edit_reason:
+            self.fields.pop("edit_reason", None)
+        # Active suppliers only, unless editing a purchase whose supplier has
+        # since been deactivated — the operator should still be able to save
+        # corrections without losing the row's own supplier.
+        active = MaterialSupplier.objects.filter(is_active=True)
+        if self.instance and self.instance.pk and self.instance.supplier_id:
+            active = MaterialSupplier.objects.filter(
+                Q(is_active=True) | Q(pk=self.instance.supplier_id)
+            )
+        self.fields["supplier"].queryset = active
+        if not self.initial.get("purchase_date") and not self.instance.pk:
+            self.initial["purchase_date"] = timezone.localdate()
+
+    def clean_purchase_date(self):
+        purchase_date = self.cleaned_data["purchase_date"]
+        if purchase_date > timezone.localdate():
+            raise forms.ValidationError("Purchase can't be dated in the future.")
+        return purchase_date
+
+    def clean_edit_reason(self):
+        reason = (self.cleaned_data.get("edit_reason") or "").strip()
+        if "edit_reason" in self.fields and not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class MaterialWeighEntryForm(forms.ModelForm):
+    """One trip to the scale. `purchase_item` and `submitted_by` are set by
+    the view."""
+
+    class Meta:
+        model = MaterialWeighEntry
+        fields = ["weigh_date", "weighed_qty", "checked_by"]
+        widgets = {
+            "weigh_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "weighed_qty": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.001", "min": "0.001", "placeholder": "0.000"}
+            ),
+            "checked_by": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Store hand at the scale"}
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.initial.get("weigh_date") and not self.instance.pk:
+            self.initial["weigh_date"] = timezone.localdate()
+
+    def clean_weighed_qty(self):
+        qty = self.cleaned_data.get("weighed_qty") or Decimal("0")
+        if qty <= 0:
+            raise forms.ValidationError("Weighed quantity must be above 0.")
+        return qty
+
+    def clean_checked_by(self):
+        checked_by = (self.cleaned_data.get("checked_by") or "").strip()
+        if not checked_by:
+            raise forms.ValidationError("Say who checked the weight.")
+        return checked_by
 
     def first_error(self):
         for messages in self.errors.values():
