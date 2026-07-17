@@ -102,3 +102,7 @@ cd /var/www/senovka_erp/senovka_erp# git pull
 python manage.py seed_users
 source /var/www/senovka_erp/venv/bin/activate
 systemctl restart erp
+
+
+
+ok
