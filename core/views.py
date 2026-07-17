@@ -450,6 +450,7 @@ def product_list(request):
             "query": query,
             "selected_category": selected_category,
             "is_filtered": bool(query or selected_category),
+            "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
         },
     )
 
@@ -1332,6 +1333,8 @@ def bill_products(request, customer_id):
         Q(is_active=True) | Q(pk__in=list(held))
     ).select_related("category")
 
+    threshold = Decimal(str(settings.LOW_STOCK_THRESHOLD))
+
     products = []
     for product in sellable:
         override = overrides.get(product.pk)
@@ -1344,8 +1347,17 @@ def bill_products(request, customer_id):
                 "name": product.name,
                 "size": product.size,
                 "qty": _qty_text(available),
+                # Numeric copy so the JS does not have to re-parse for the
+                # live "Available: N" reflection — the string is kept for the
+                # existing "N in stock" label.
+                "qty_number": float(available),
                 "unit_price": f"{unit_price:.2f}",
                 "has_custom_price": override is not None,
+                # Server-computed flags so every UI reads off the same
+                # threshold. Zero and negative are both "out of stock"; the
+                # card refuses selection either way.
+                "is_out_of_stock": available <= ZERO,
+                "is_low_stock": ZERO < available <= threshold,
                 # Drives the category tabs over the grid. The id is what the
                 # tabs match on — names are operator-entered and change.
                 "category_id": product.category_id,
@@ -1353,8 +1365,15 @@ def bill_products(request, customer_id):
             }
         )
 
-    # safe=False: the agreed contract is a bare array.
-    return JsonResponse(products, safe=False)
+    # Wrapped now: the array is joined by the low-stock threshold, so both the
+    # client-side card grid and the item-panel oversell warning read from one
+    # response instead of the JS having to know the setting a second way.
+    return JsonResponse(
+        {
+            "products": products,
+            "low_stock_threshold": float(threshold),
+        }
+    )
 
 
 class BillError(Exception):
@@ -1964,18 +1983,15 @@ def _write_bill(bill, user, payload):
             unit_price=item["unit_price"],
             line_total=item["line_total"],
         )
-        # Guarded update rather than read-then-write: the filter and the
-        # decrement land in one statement, so two tills can't both sell the
-        # last unit. Zero rows updated means the stock moved under us.
-        moved = Product.objects.filter(
-            pk=item["product"].pk, qty__gte=item["qty"]
-        ).update(qty=F("qty") - item["qty"])
-        if not moved:
-            product = Product.objects.get(pk=item["product"].pk)
-            raise BillError(
-                f"Not enough stock for {product} — {product.qty:.3f} left, "
-                f"{item['qty']:.3f} needed."
-            )
+        # Unconditional decrement: overselling is allowed by design — a bill
+        # may take more than the shelf holds, driving Product.qty negative,
+        # and the stock ledger flags the shortfall as an OVERSELL row. Two
+        # tills selling the last unit at the same time still each land a
+        # decrement here; the ledger simply shows both, and the negative
+        # balance is what tells the operator to reconcile.
+        Product.objects.filter(pk=item["product"].pk).update(
+            qty=F("qty") - item["qty"]
+        )
 
     # 3. money. Payment/Cheque/CashDrawer rows don't need a customer — a
     # walk-in still hits the till and the drawer exactly like any other cash

@@ -72,9 +72,10 @@ class BillFormBackendTests(TestCase):
         """The grid draws out-of-stock products as dimmed cards, so it has to
         be told about them."""
         r = self.client.get(reverse("core:bill_products", args=[self.customer.pk]))
-        rows = {p["name"]: p for p in r.json()}
+        rows = {p["name"]: p for p in r.json()["products"]}
         self.assertIn("Pipe Z", rows)
         self.assertEqual(rows["Pipe Z"]["qty"], "0")
+        self.assertTrue(rows["Pipe Z"]["is_out_of_stock"])
         self.assertEqual(rows["Pipe A"]["category"], "Pipes")
         self.assertEqual(rows["Pipe A"]["category_id"], self.cat.pk)
 
@@ -83,7 +84,7 @@ class BillFormBackendTests(TestCase):
             name="Gone", category=self.cat, qty=Decimal("5"), is_active=False
         )
         r = self.client.get(reverse("core:bill_products", args=[self.customer.pk]))
-        self.assertNotIn("Gone", [p["name"] for p in r.json()])
+        self.assertNotIn("Gone", [p["name"] for p in r.json()["products"]])
 
     def test_out_of_stock_cannot_actually_be_billed(self):
         """The card is unclickable, but the page is not the guard."""

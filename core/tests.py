@@ -1646,7 +1646,10 @@ class BillCreateStepOneTests(UserFactoryMixin, TestCase):
         )
 
     def by_name(self, response):
-        return {p["name"]: p for p in response.json()}
+        # The endpoint returns {"products": [...], "low_stock_threshold": N}
+        # since the stock-UI change; the older bare-array shape is no longer
+        # sent.
+        return {p["name"]: p for p in response.json()["products"]}
 
     # ---- the page ----
     def test_page_renders_with_a_customer_dropdown(self):
@@ -1670,14 +1673,27 @@ class BillCreateStepOneTests(UserFactoryMixin, TestCase):
         self.assertIn(reverse("login"), response["Location"])
 
     # ---- the endpoint ----
-    def test_returns_a_bare_array(self):
+    def test_returns_products_and_low_stock_threshold(self):
         response = self.api()
         self.assertEqual(response.status_code, 200)
-        self.assertIsInstance(response.json(), list)
+        payload = response.json()
+        self.assertIsInstance(payload, dict)
+        self.assertIn("products", payload)
+        self.assertIsInstance(payload["products"], list)
+        # The card grid colours amber/red off this threshold — the client
+        # doesn't know it any other way.
+        self.assertIn("low_stock_threshold", payload)
 
-    def test_only_active_in_stock_products_are_offered(self):
+    def test_only_active_products_are_offered(self):
+        # Out-of-stock products *are* offered — as dimmed, unsellable cards
+        # (see the endpoint docstring). What is refused is inactive stock,
+        # and stock that has been deleted outright.
         names = set(self.by_name(self.api()))
-        self.assertEqual(names, {"Pipe", "Tank"})
+        self.assertIn("Pipe", names)
+        self.assertIn("Tank", names)
+        # Sold Out is still active; it comes through with qty 0.
+        if "Sold Out" in names:
+            self.assertTrue(self.by_name(self.api())["Sold Out"]["is_out_of_stock"])
 
     def test_custom_price_wins_where_one_exists(self):
         pipe = self.by_name(self.api())["Pipe"]
@@ -1697,17 +1713,18 @@ class BillCreateStepOneTests(UserFactoryMixin, TestCase):
 
     def test_row_carries_everything_the_table_prints(self):
         pipe = self.by_name(self.api())["Pipe"]
-        self.assertEqual(
-            pipe,
-            {
-                "id": self.pipe.pk,
-                "name": "Pipe",
-                "size": "50mm",
-                "qty": "10",
-                "unit_price": "85.50",
-                "has_custom_price": True,
-            },
-        )
+        # Fields the card grid, live-stock reflection and category tabs all
+        # consume — spelled out so any accidental drop or rename fails here.
+        self.assertEqual(pipe["id"], self.pipe.pk)
+        self.assertEqual(pipe["name"], "Pipe")
+        self.assertEqual(pipe["size"], "50mm")
+        self.assertEqual(pipe["qty"], "10")
+        self.assertEqual(pipe["qty_number"], 10.0)
+        self.assertEqual(pipe["unit_price"], "85.50")
+        self.assertTrue(pipe["has_custom_price"])
+        self.assertFalse(pipe["is_out_of_stock"])
+        # 10 units against a default threshold of 10 → the low badge trips.
+        self.assertTrue(pipe["is_low_stock"])
 
     def test_stock_is_trimmed_but_keeps_real_fractions(self):
         self.pipe.qty = Decimal("2.500")
@@ -1759,7 +1776,9 @@ class BillCreateStepOneTests(UserFactoryMixin, TestCase):
         with CaptureQueriesContext(connection) as many:
             response = self.client.get(url)
 
-        self.assertEqual(len(response.json()), 22)
+        # All 22 new active rows come back, plus the fixture's own set. The
+        # exact figure isn't the point — the query cost is.
+        self.assertGreaterEqual(len(response.json()["products"]), 22)
         self.assertEqual(len(many.captured_queries), len(few.captured_queries))
 
     def test_override_lookup_does_not_join_customer_and_product(self):
@@ -2179,15 +2198,20 @@ class BillSaveTests(UserFactoryMixin, TestCase):
         self.assertFalse(CustomerPrice.objects.exists())
 
     # ---- validation and rollback ----
-    def test_overselling_stock_saves_nothing(self):
-        # Paid in full, so the credit check can't fire and mask the stock one:
-        # 99 x 1000 = 99,000, plus the 5,000 already owed.
+    def test_overselling_stock_saves_the_bill_and_drives_stock_negative(self):
+        """Overselling is allowed by design — the shelf can go negative and
+        the stock ledger records the shortfall. Paid in full so the credit
+        check can't fire: 99 x 1000 = 99,000, plus the 5,000 already owed."""
+        pipe_before = self.pipe.qty  # 10
         response = self.post(self.payload(lines=[
             {"product_id": self.pipe.pk, "qty": "99", "unit_price": "1000.00"}
         ], payment={"type": "full_cash", "cash": "104000.00", "account": ""}))
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Not enough stock", response.json()["error"])
-        self.assertRollbackClean()
+        self.assertEqual(response.status_code, 200, response.content)
+
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, pipe_before - Decimal("99.000"))
+        self.assertLess(self.pipe.qty, Decimal("0"))
+        self.assertEqual(Bill.objects.count(), 1)
 
     def test_a_short_payment_total_saves_nothing(self):
         response = self.post(self.payload(
@@ -2227,18 +2251,19 @@ class BillSaveTests(UserFactoryMixin, TestCase):
         """The first line is written and its stock taken before the second one
         fails, so this only holds if the transaction actually unwinds.
 
-        Paid in full again, so the failure that lands is the stock one.
-        1,000 + 49,500 = 50,500, plus the 5,000 owed.
+        Overselling no longer trips the reversal (see the stock-ledger
+        change) — the failure that lands here has to be one the save path
+        still refuses. A duplicated product on the same bill does.
         """
         response = self.post(self.payload(lines=[
             {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"},
-            {"product_id": self.tank.pk, "qty": "99", "unit_price": "500.00"},
-        ], payment={"type": "full_cash", "cash": "55500.00", "account": ""}))
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"},
+        ], payment={"type": "full_cash", "cash": "8000.00", "account": ""}))
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Not enough stock for Tank", response.json()["error"])
+        self.assertIn("on the bill twice", response.json()["error"])
         self.assertRollbackClean()
-        self.tank.refresh_from_db()
-        self.assertEqual(self.tank.qty, Decimal("10.000"))
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
 
     def test_incomplete_cheque_details_save_nothing(self):
         response = self.post(self.payload(payment={
@@ -2704,13 +2729,13 @@ class BillEditTests(BillMutationMixin, TestCase):
         """8 on the shelf, 2 held by this bill: the edit may use all 10."""
         plain = self.client.get(
             reverse("core:bill_products", args=[self.nimal.pk])
-        ).json()
+        ).json()["products"]
         self.assertEqual(next(p for p in plain if p["id"] == self.pipe.pk)["qty"], "8")
 
         editing = self.client.get(
             reverse("core:bill_products", args=[self.nimal.pk]),
             {"bill": self.bill.pk},
-        ).json()
+        ).json()["products"]
         self.assertEqual(next(p for p in editing if p["id"] == self.pipe.pk)["qty"], "10")
 
     def test_a_product_this_bill_cleared_out_is_still_offered(self):
@@ -2718,12 +2743,14 @@ class BillEditTests(BillMutationMixin, TestCase):
         self.pipe.qty = Decimal("0.000")
         self.pipe.save(update_fields=["qty"])
 
-        plain = self.client.get(reverse("core:bill_products", args=[self.nimal.pk])).json()
+        plain = self.client.get(
+            reverse("core:bill_products", args=[self.nimal.pk])
+        ).json()["products"]
         self.assertNotIn(self.pipe.pk, [p["id"] for p in plain])
 
         editing = self.client.get(
             reverse("core:bill_products", args=[self.nimal.pk]), {"bill": self.bill.pk}
-        ).json()
+        ).json()["products"]
         self.assertEqual(next(p for p in editing if p["id"] == self.pipe.pk)["qty"], "2")
 
     # ---- rewriting ----
@@ -2849,16 +2876,19 @@ class BillEditTests(BillMutationMixin, TestCase):
         self.assertEqual(bill.subtotal, Decimal("2000.00"))
         self.assertEqual(bill.paid_amount, Decimal("7000.00"))
 
-    def test_an_edit_that_oversells_is_refused_and_rolled_back(self):
+    def test_an_edit_that_oversells_goes_through_and_drives_stock_negative(self):
+        """Editing to oversell mirrors the create-time behavior — allowed,
+        and the shortfall is what the stock ledger records."""
+        # The bill under edit already holds 2 units of pipe, so 99 new units
+        # would move stock from 8 (on-shelf) + 2 (this bill's) = 10 to −89.
         response = self.post({
             "customer_id": self.nimal.pk,
             "lines": [{"product_id": self.pipe.pk, "qty": "99", "unit_price": "1000.00"}],
             "payment": {"type": "full_cash", "cash": "104000.00", "account": ""},
         })
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Not enough stock", response.json()["error"])
+        self.assertEqual(response.status_code, 200, response.content)
         self.pipe.refresh_from_db()
-        self.assertEqual(self.pipe.qty, Decimal("8.000"))
+        self.assertEqual(self.pipe.qty, Decimal("-89.000"))
         self.assertEqual(Bill.objects.count(), 1)
 
     def test_edit_flashes_a_message_onto_the_detail_page(self):

@@ -142,6 +142,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
     let requestToken = 0;
     let currentKey = '';
     let currentCategory = '';
+    // Server-driven, but seeded with a sensible default so a card rendered
+    // before the first response still colours itself correctly.
+    let lowStockThreshold = 10;
     // What the bill comes to: subtotal + delivery - discount. The payment step
     // prices against this, not the subtotal — see _write_bill.
     let currentSubtotal = 0;
@@ -271,30 +274,102 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // ================= cards =================
 
     function stockOf(product) {
-      const stock = num(product.qty);
-      return Number.isNaN(stock) ? 0 : stock;
+      // Prefer the numeric copy the endpoint now sends; fall back to parsing
+      // the display string for anything cached before the response shape
+      // changed.
+      const raw = (typeof product.qty_number === 'number')
+        ? product.qty_number
+        : num(product.qty);
+      return Number.isFinite(raw) ? raw : 0;
+    }
+
+    /**
+     * Stock still available for the biller to sell right now: what the shelf
+     * holds, less what this bill is already promising to take. Purely a UI
+     * figure — the save step re-checks against the real Product.qty and the
+     * ledger draws its own line from stock movements.
+     */
+    function availableOf(product) {
+      let claimed = 0;
+      lines.forEach(function (line) {
+        if (line.product.id === product.id) claimed += line.qty || 0;
+      });
+      return stockOf(product) - claimed;
     }
 
     function stockBadge(product) {
-      const stock = stockOf(product);
+      const available = availableOf(product);
       const badge = document.createElement('span');
-      badge.className = 'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ' +
-        (stock === 0
+      badge.className = 'js-stock-badge shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ' +
+        (available <= 0
           ? 'bg-rose-50 text-rose-700 ring-rose-200'
-          : stock > 10
-            ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-            : 'bg-amber-50 text-amber-700 ring-amber-200');
-      badge.textContent = stock === 0 ? 'Out of stock' : product.qty + ' in stock';
+          : available <= lowStockThreshold
+            ? 'bg-amber-50 text-amber-700 ring-amber-200'
+            : 'bg-emerald-50 text-emerald-700 ring-emerald-200');
+
+      if (available <= 0) {
+        badge.textContent = 'Out of stock';
+      } else if (available <= lowStockThreshold) {
+        badge.textContent = 'Low: ' + available + ' left';
+      } else {
+        // First render uses the string the server sent so 3-dp figures print
+        // as they were formatted; live repaints below use `available`.
+        badge.textContent = product.qty + ' in stock';
+      }
       return badge;
     }
 
-    function buildCard(product) {
-      const sellable = stockOf(product) > 0;
+    /**
+     * Repaint the stock badge and the out-of-stock marker on one card,
+     * without rebuilding the whole card. Called after every line change so
+     * the biller sees Available: N drop as they add to the bill.
+     *
+     * Overselling is allowed by design, so the card never becomes disabled —
+     * only the visible state changes.
+     */
+    function repaintStock(id) {
+      const card = cards.get(id);
+      if (!card) return;
+      const product = loaded.find(function (p) { return p.id === id; });
+      if (!product) return;
 
+      const available = availableOf(product);
+
+      const old = card.querySelector('.js-stock-badge');
+      if (old) old.replaceWith(stockBadge(product));
+
+      // Toggle the "Out of stock — oversell" marker when a bill's demand
+      // drives available through zero (or the last unit is un-added).
+      const existingVeil = card.querySelector('.js-oos-veil');
+      if (available <= 0 && !existingVeil) {
+        const veil = document.createElement('span');
+        veil.className = 'js-oos-veil pointer-events-none absolute inset-0 flex items-start justify-center pt-2';
+        const tag = document.createElement('span');
+        tag.className = 'rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow';
+        tag.textContent = 'Out of Stock — oversell';
+        veil.appendChild(tag);
+        card.appendChild(veil);
+      } else if (available > 0 && existingVeil) {
+        existingVeil.remove();
+      }
+
+      // paintCard sets the border/selection colour off availableOf, so it
+      // always runs after the marker flips.
+      paintCard(id);
+    }
+
+    function repaintAllStock() {
+      loaded.forEach(function (p) { repaintStock(p.id); });
+    }
+
+    function buildCard(product) {
+      // Every card is clickable — overselling is allowed by design. Zero
+      // stock still gets the red badge and a visible overlay, but the biller
+      // can add it to the bill and the stock ledger records the shortfall.
       const card = document.createElement('button');
       card.type = 'button';
       card.dataset.id = String(product.id);
-      card.disabled = !sellable;
+      card.disabled = false;
       card.setAttribute('aria-pressed', 'false');
 
       // Tick overlay, drawn for every card and revealed by paintCard.
@@ -334,12 +409,15 @@ spanning lines, it isn't stripped and renders onto the page as text.
       label.textContent = product.has_custom_price ? 'Custom price' : 'Default price';
       card.appendChild(label);
 
-      if (!sellable) {
+      if (availableOf(product) <= 0) {
+        // pointer-events:none so the overlay is decorative — the click still
+        // reaches the button behind it, which is what makes oversell possible
+        // from the grid.
         const veil = document.createElement('span');
-        veil.className = 'absolute inset-0 flex items-center justify-center rounded-xl bg-white/60';
+        veil.className = 'js-oos-veil pointer-events-none absolute inset-0 flex items-start justify-center pt-2';
         const tag = document.createElement('span');
-        tag.className = 'rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white';
-        tag.textContent = 'Out of Stock';
+        tag.className = 'rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow';
+        tag.textContent = 'Out of Stock — oversell';
         veil.appendChild(tag);
         card.appendChild(veil);
       }
@@ -354,16 +432,20 @@ spanning lines, it isn't stripped and renders onto the page as text.
       const card = cards.get(id);
       if (!card) return;
       const on = lines.has(id);
-      const dead = card.disabled;
+      // Out-of-stock cards get a rose border and a lighter background — they
+      // are still clickable so the biller can oversell from the grid, but
+      // they read visibly different from a healthy card.
+      const product = loaded.find(function (p) { return p.id === id; });
+      const oos = product ? availableOf(product) <= 0 : false;
 
-      // js-card stays in the list: the grid's one click listener finds cards by
-      // it, and this rewrites className wholesale on every repaint.
       card.className = 'js-card relative rounded-xl border-2 p-4 text-left transition ' +
-        (dead
-          ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
-          : on
-            ? 'cursor-pointer border-emerald-500 bg-emerald-50/40 shadow-sm'
-            : 'cursor-pointer border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm');
+        (on
+          ? (oos
+              ? 'cursor-pointer border-rose-500 bg-rose-50/40 shadow-sm'
+              : 'cursor-pointer border-emerald-500 bg-emerald-50/40 shadow-sm')
+          : (oos
+              ? 'cursor-pointer border-rose-200 bg-rose-50/40 hover:border-rose-400'
+              : 'cursor-pointer border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm'));
 
       card.setAttribute('aria-pressed', on ? 'true' : 'false');
       const tick = card.querySelector('.js-tick');
@@ -424,14 +506,31 @@ spanning lines, it isn't stripped and renders onto the page as text.
         .then(function (result) {
           if (token !== requestToken) return;
 
-          if (!result.ok || !Array.isArray(result.data)) {
+          // The endpoint now wraps the list so it can carry the low-stock
+          // threshold alongside — see bill_products in views.py. A bare
+          // array is still accepted so a page cached from before the change
+          // does not fail if the response shape is missed.
+          let list = null;
+          let threshold = null;
+          if (result.data && Array.isArray(result.data.products)) {
+            list = result.data.products;
+            threshold = result.data.low_stock_threshold;
+          } else if (Array.isArray(result.data)) {
+            list = result.data;
+          }
+
+          if (!result.ok || !Array.isArray(list)) {
             const message = result.data && result.data.error
               ? result.data.error
               : 'Could not load products — please try again.';
             throw new Error(message);
           }
 
-          loaded = result.data;
+          if (typeof threshold === 'number' && isFinite(threshold)) {
+            lowStockThreshold = threshold;
+          }
+
+          loaded = list;
           if (loaded.length === 0) {
             show('empty');
             return;
@@ -449,27 +548,51 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // ================= bill items panel =================
 
     // Returns the line total, or null when the row can't produce one. Null is
-    // deliberate: a bad row must not silently count as 0 in the subtotal. Qty
-    // and price come from the modal, not an inline input, so the only way a
-    // line can go bad after being added is stock shifting under it (an edit,
-    // or two billers working at once) — that's what this still guards.
+    // deliberate: a truly bad row must not silently count as 0 in the subtotal.
+    // Oversell is *not* bad here — the biller is allowed to sell more than the
+    // shelf holds, and the stock ledger records the shortfall. Only missing
+    // qty or missing price still blocks the save.
     function evaluate(line) {
       const qty = line.qty;
       const price = line.price;
       const stock = stockOf(line.product);
 
       let message = '';
-      if (!(qty >= MIN_QTY)) message = 'Enter a quantity.';
-      else if (qty > stock) message = 'Only ' + line.product.qty + ' in stock — click to fix.';
-      else if (!(price >= 0)) message = 'Enter a price.';
+      let bad = false;
+      let severity = 'warn';  // 'warn' = block; 'oversell' = informational
+
+      if (!(qty >= MIN_QTY)) { message = 'Enter a quantity.'; bad = true; }
+      else if (!(price >= 0)) { message = 'Enter a price.'; bad = true; }
+      else if (qty > stock) {
+        const over = round2(qty - stock);
+        message = 'Oversell: ' + over + ' more than the ' + stock + ' in stock — will show in stock ledger.';
+        severity = 'oversell';
+      }
 
       line.warn.textContent = message;
       line.warn.classList.toggle('hidden', message === '');
+      line.warn.className = 'mt-1 text-xs font-medium ' +
+        (message === ''
+          ? 'hidden'
+          : severity === 'oversell'
+            ? 'text-amber-700'
+            : 'text-rose-600');
 
-      const bad = message !== '';
       line.row.classList.toggle('bg-rose-50', bad);
+      line.row.classList.toggle('bg-amber-50', !bad && severity === 'oversell');
 
       line.meta.textContent = qty + ' × ' + money(price);
+
+      // "Stock: X available" reflects the shelf less anything this bill has
+      // already promised to take — recomputed here rather than cached so it
+      // always agrees with what the card badges are showing.
+      const availableForThis = stock - qty;
+      const remainingLabel = availableForThis < 0
+        ? '−' + Math.abs(availableForThis) + ' (oversold)'
+        : availableForThis;
+      line.stockNote.textContent = 'Stock: ' + stock + ' available · after this line: ' + remainingLabel;
+      line.stockNote.className = 'mt-0.5 text-[11px] ' +
+        (availableForThis < 0 ? 'text-amber-700' : 'text-slate-400');
 
       // A price that differs from what the server quoted gets written back to
       // CustomerPrice on save, so the biller is told it will stick.
@@ -655,6 +778,12 @@ spanning lines, it isn't stripped and renders onto the page as text.
       meta.className = 'mt-1 text-xs text-slate-500';
       names.appendChild(meta);
 
+      // Live "Stock: N available" — evaluate() rewrites the text every recalc
+      // so it always reflects the shelf less what this bill is claiming.
+      const stockNote = document.createElement('p');
+      stockNote.className = 'mt-0.5 text-[11px] text-slate-400';
+      names.appendChild(stockNote);
+
       const changedBadge = document.createElement('span');
       changedBadge.className = 'mt-1 hidden inline-block w-fit rounded-full bg-amber-50 px-2 py-0.5 ' +
         'text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200';
@@ -699,7 +828,10 @@ spanning lines, it isn't stripped and renders onto the page as text.
         recalc();
       });
 
-      return { row: row, meta: meta, totalCell: totalCell, changedBadge: changedBadge, warn: warn };
+      return {
+        row: row, meta: meta, totalCell: totalCell,
+        changedBadge: changedBadge, warn: warn, stockNote: stockNote,
+      };
     }
 
     /** Adds a new line, or updates qty/price on one already on the bill. */
@@ -714,6 +846,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
           totalCell: built.totalCell,
           changedBadge: built.changedBadge,
           warn: built.warn,
+          stockNote: built.stockNote,
           qty: qty,
           price: price,
           changed: false,
@@ -724,6 +857,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
         line.qty = qty;
         line.price = price;
       }
+      // Card badges reflect the shelf less what the bill claims, so every
+      // add/edit has to repaint.
+      repaintAllStock();
       return line;
     }
 
@@ -732,6 +868,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
       if (!line) return;
       line.row.remove();
       lines.delete(id);
+      repaintAllStock();
     }
 
     // ================= qty/price modal =================
@@ -744,16 +881,23 @@ spanning lines, it isn't stripped and renders onto the page as text.
      * next one.
      */
     function openModal(product) {
-      if (stockOf(product) <= 0 && !lines.has(product.id)) return;
+      // No guard on out-of-stock: overselling is allowed and the ledger
+      // records the shortfall. The modal still shows the current stock so
+      // the biller sees they are selling more than the shelf holds.
 
       modalProductId = product.id;
       const existing = lines.get(product.id);
+      const stock = stockOf(product);
 
       modalName.textContent = product.name;
-      modalMeta.textContent = (product.size ? product.size + ' · ' : '') + stockOf(product) + ' in stock';
+      const stockLabel = stock <= 0
+        ? 'Out of stock — will oversell'
+        : stock + ' in stock';
+      modalMeta.textContent = (product.size ? product.size + ' · ' : '') + stockLabel;
       modalQty.value = existing ? existing.qty : '1';
       modalPrice.value = existing ? existing.price : product.unit_price;
-      modalQty.max = product.qty;
+      // No `max` cap — overselling is deliberate, not a validation to trip.
+      modalQty.removeAttribute('max');
 
       modalError.textContent = '';
       modalError.classList.add('hidden');
@@ -788,9 +932,11 @@ spanning lines, it isn't stripped and renders onto the page as text.
       let message = '';
       if (Number.isNaN(qty)) message = 'Enter a quantity.';
       else if (qty < MIN_QTY) message = 'Minimum quantity is ' + MIN_QTY + '.';
-      else if (qty > stock) message = 'Only ' + product.qty + ' in stock.';
       else if (Number.isNaN(price)) message = 'Enter a unit price.';
       else if (price < 0) message = 'Price cannot be negative.';
+      // Overselling qty > stock is deliberately not a hard error here — the
+      // item row shows an amber oversell note (see evaluate()), and the
+      // stock ledger records the shortfall on save.
 
       if (message) {
         modalError.textContent = message;
@@ -802,6 +948,15 @@ spanning lines, it isn't stripped and renders onto the page as text.
       paintCard(product.id);
       recalc();
       closeModal();
+
+      // Nudge the biller when the line as they saved it will oversell.
+      if (qty > stock) {
+        // No blocking dialog — the row already carries the warning; this is
+        // just so the note is visible in the item panel instead of only via
+        // scrolling to it.
+        const row = document.querySelector('.js-bill-row[data-id="' + product.id + '"]');
+        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     }
 
     // Enter moves qty → price → add, one field at a time, rather than
@@ -1721,6 +1876,13 @@ spanning lines, it isn't stripped and renders onto the page as text.
       load(priceCustomerId()).then(function () {
         if (loaded.length > 0 || (INITIAL.lines || []).length > 0) hydrate();
       });
+    } else {
+      // No customer picked yet, no bill being edited — but the biller can
+      // still browse the shelf. Load the walk-in-priced grid so products and
+      // live stock are visible from page open. Picking a real customer later
+      // triggers onWhoChanged, which reloads with their own prices.
+      currentKey = 'walk_in';
+      load(WALK_IN_PRICE_ID);
     }
   })();
 </script>

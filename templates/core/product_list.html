@@ -83,10 +83,29 @@
             </td>
             <td class="whitespace-nowrap px-5 py-3 text-slate-600">{{ product.category.name }}</td>
 
-            {# Out of stock is the number an operator needs to spot at a glance. #}
-            <td class="whitespace-nowrap px-5 py-3 text-right font-medium
-                       {% if product.qty <= 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
-              {{ product.qty|floatformat:"-3" }}
+            {# One stock cell for four states, spotted at a glance:
+                 negative → oversold, red bold
+                 zero     → out of stock, red badge
+                 low      → amber badge
+                 healthy  → green figure. #}
+            <td class="whitespace-nowrap px-5 py-3 text-right font-medium">
+              {% if product.qty < 0 %}
+                <span class="font-bold text-rose-600">{{ product.qty|floatformat:"-3" }}</span>
+                <span class="ml-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+                  Oversold
+                </span>
+              {% elif product.qty == 0 %}
+                <span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+                  Out of Stock
+                </span>
+              {% elif product.qty <= low_stock_threshold %}
+                <span class="text-amber-700">{{ product.qty|floatformat:"-3" }}</span>
+                <span class="ml-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+                  Low Stock
+                </span>
+              {% else %}
+                <span class="text-emerald-700">{{ product.qty|floatformat:"-3" }}</span>
+              {% endif %}
             </td>
 
             <td class="whitespace-nowrap px-5 py-3 text-right text-slate-900">{{ product.default_price|floatformat:2 }}</td>
