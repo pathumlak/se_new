@@ -441,6 +441,51 @@ class ChequeForm(forms.ModelForm):
         return cleaned
 
 
+class BillEditReasonForm(forms.Form):
+    """The gate in front of the bill edit form: when, and why.
+
+    Asked before the bill is on screen rather than alongside it, so the reason
+    is what the biller came to do rather than something typed to get past a
+    validation error on the way out.
+    """
+
+    edit_date = forms.DateField(
+        label="Edit Date",
+        error_messages={
+            "required": "Enter the date of this edit.",
+            "invalid": "Enter a valid date.",
+        },
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"type": "date", "class": INPUT_CLASSES},
+        ),
+    )
+    reason = forms.CharField(
+        label="Reason for Edit",
+        max_length=500,
+        error_messages={
+            "required": "Give a reason for this edit.",
+            "max_length": "Keep the reason under 500 characters.",
+        },
+        widget=forms.TextInput(
+            attrs={
+                "class": INPUT_CLASSES,
+                "placeholder": "e.g. Wrong qty entered, Price correction",
+                "autofocus": True,
+                "maxlength": 500,
+            }
+        ),
+    )
+
+    def clean_reason(self):
+        """A reason of spaces is no reason. CharField already strips, so this
+        only has to reject what stripping leaves empty."""
+        reason = self.cleaned_data["reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+
 class CustomerPriceForm(forms.Form):
     """Validates one price save from a price table's AJAX call.
 

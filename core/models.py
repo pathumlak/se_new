@@ -254,6 +254,41 @@ class BillSettlement(models.Model):
             )
 
 
+class BillEditAudit(models.Model):
+    """A note that a bill was rewritten, and why.
+
+    Deliberately not a BillSettlement: a settlement moves money, and its save()
+    posts an amount to the bill and the customer. An edit note moves nothing —
+    the edit itself already reversed and re-applied every figure. This carries
+    no amount at all, so it can never touch a balance.
+
+    One row per edit rather than one per bill: Bill.edit_date/edit_reason hold
+    only the most recent edit, and the ledger has to show each one on the day it
+    happened. Nothing here cascades a balance, so a row surviving its own
+    correction is only ever a note.
+    """
+
+    bill = models.ForeignKey(
+        Bill,
+        on_delete=models.CASCADE,
+        related_name="edit_audits",
+    )
+    edit_date = models.DateField()
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="bill_edit_audits",
+    )
+
+    class Meta:
+        ordering = ["-edit_date", "-id"]
+
+    def __str__(self):
+        return f"Bill #{self.bill_id} edited {self.edit_date} · {self.reason}"
+
+
 class Payment(models.Model):
     class Method(models.TextChoices):
         CASH = "cash", "Cash"

@@ -23,6 +23,12 @@
         read as they would if it had never been saved. The bill date stays
         {{ bill.bill_date|date:"j M Y" }}.
       </p>
+      <p class="mt-2 text-xs text-amber-800">
+        Recorded against this edit on save:
+        <span class="font-medium">{{ edit_date|date:"j M Y" }}</span> —
+        <span class="italic">{{ edit_reason }}</span>
+        <a href="{% url 'core:bill_edit' bill.pk %}?change=1" class="ml-1 font-medium underline">Change</a>
+      </p>
     </div>
   </div>
 </div>

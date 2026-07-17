@@ -19,6 +19,7 @@ from django.utils import timezone
 from core import views
 from core.models import (
     Bill,
+    BillEditAudit,
     BillItem,
     CashDrawer,
     CashTransfer,
@@ -997,7 +998,8 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         bill(1, "7777.00", customer=cls.other)
 
     def setUp(self):
-        self.client.force_login(self.make_manager())
+        self.user = self.make_manager()
+        self.client.force_login(self.user)
 
     def rows(self, **params):
         response = self.client.get(
@@ -1043,6 +1045,75 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
 
     def test_another_customers_activity_is_excluded(self):
         self.assertNotIn(Decimal("7777.00"), [r["sale"] for r in self.rows()])
+
+    # ---- edit notes ----
+    def audit(self, bill, day, reason="Wrong qty entered"):
+        return BillEditAudit.objects.create(
+            bill=bill,
+            edit_date=date(2026, 6, day),
+            reason=reason,
+            created_by=self.user,
+        )
+
+    def test_an_edit_note_carries_the_balance_through_untouched(self):
+        """The note explains a figure; it must not move one. 4 Jun closes at
+        600, so a note that day leaves the ledger closing at 600."""
+        self.audit(self.june1, 4, reason="Price correction")
+        rows = self.rows()
+
+        note = rows[-1]
+        self.assertEqual(
+            self.shape([note]),
+            [(
+                date(2026, 6, 4),
+                f"Bill #{self.june1.pk} edited: Price correction",
+                None,
+                None,
+                Decimal("600.00"),
+            )],
+        )
+        self.assertTrue(note["is_note"])
+        self.assertEqual(self.response.context["closing_balance"], Decimal("600.00"))
+
+    def test_an_edit_note_is_not_counted_in_the_totals(self):
+        self.rows()
+        totals = (
+            self.response.context["total_sale"],
+            self.response.context["total_credit"],
+        )
+        self.audit(self.june1, 3)
+        self.rows()
+        self.assertEqual(
+            (self.response.context["total_sale"], self.response.context["total_credit"]),
+            totals,
+        )
+
+    def test_an_edit_note_lands_last_on_its_day(self):
+        """It annotates rows already read; sorting it into the middle of the
+        day's money would imply it split them."""
+        self.audit(self.june3, 3)
+        june3 = [r["description"] for r in self.rows() if r["date"] == date(2026, 6, 3)]
+        self.assertEqual(june3[-1], f"Bill #{self.june3.pk} edited: Wrong qty entered")
+
+    def test_a_cancelled_bills_edit_notes_are_excluded(self):
+        cancelled = Bill.objects.create(
+            customer=self.customer,
+            bill_date=date(2026, 6, 1),
+            total_amount=Decimal("1234.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.CANCELLED,
+        )
+        self.audit(cancelled, 4, reason="Should not show")
+        self.assertNotIn(
+            "Should not show", [r["description"] for r in self.rows()]
+        )
+
+    def test_the_note_renders_italic_and_dashed(self):
+        self.audit(self.june1, 4, reason="Price correction")
+        self.rows()
+        self.assertContains(self.response, "Price correction")
+        self.assertContains(self.response, "italic")
+        self.assertContains(self.response, "—")
 
     def test_supplier_bill_notes_land_in_the_description(self):
         SupplierBill.objects.create(
@@ -2117,13 +2188,39 @@ class BillSaveTests(UserFactoryMixin, TestCase):
         self.assertIn("Not enough stock", response.json()["error"])
         self.assertRollbackClean()
 
-    def test_a_wrong_payment_total_saves_nothing(self):
+    def test_a_short_payment_total_saves_nothing(self):
         response = self.post(self.payload(
             payment={"type": "full_cash", "cash": "5000.00", "account": ""}
         ))
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Payment must total 6000.00", response.json()["error"])
+        self.assertIn("Payment must be at least 6000.00", response.json()["error"])
         self.assertRollbackClean()
+
+    def test_full_cash_over_the_target_is_kept_as_credit(self):
+        """Paying ahead is allowed: 6,000 settles the bill and the 5,000 owed,
+        so 7,000 leaves 1,000 of credit rather than being refused."""
+        response = self.post(self.payload(
+            payment={"type": "full_cash", "cash": "7000.00", "account": ""}
+        ))
+        self.assertEqual(response.status_code, 200)
+
+        bill = Bill.objects.get()
+        self.assertEqual(bill.status, Bill.Status.PAID)
+        self.assertEqual(bill.paid_amount, Decimal("7000.00"))
+        # balance_change = paid - total, which carries the excess to the account.
+        self.assertEqual(bill.balance_change, Decimal("6000.00"))
+
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("1000.00"))  # we owe them
+
+    def test_full_cheque_over_the_target_is_kept_as_credit(self):
+        response = self.post(self.payload(payment={
+            "type": "full_cheque",
+            "cheques": [self.cheque(amount="7000.00")],
+        }))
+        self.assertEqual(response.status_code, 200)
+        self.nimal.refresh_from_db()
+        self.assertEqual(self.nimal.balance, Decimal("1000.00"))
 
     def test_a_bad_second_line_rolls_back_the_first(self):
         """The first line is written and its stock taken before the second one
@@ -2525,6 +2622,17 @@ class BillDeleteTests(BillMutationMixin, TestCase):
 class BillEditTests(BillMutationMixin, TestCase):
     def setUp(self):
         self.build()
+        # Every test below is about the rewrite itself, so they start on the
+        # far side of the reason gate. BillEditReasonGateTests covers the gate.
+        self.pass_gate()
+
+    def pass_gate(self, edit_date="2026-07-17", reason="Wrong qty entered"):
+        session = self.client.session
+        session[f"bill_edit_gate:{self.bill.pk}"] = {
+            "edit_date": edit_date,
+            "reason": reason,
+        }
+        session.save()
 
     def url(self):
         return reverse("core:bill_edit", args=[self.bill.pk])
@@ -2724,7 +2832,7 @@ class BillEditTests(BillMutationMixin, TestCase):
             "payment": {"type": "full_cash", "cash": "1.00", "account": ""},
         })
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Payment must total 7000.00", response.json()["error"])
+        self.assertIn("Payment must be at least 7000.00", response.json()["error"])
 
         # Everything exactly as the save left it.
         self.pipe.refresh_from_db()
@@ -2777,6 +2885,164 @@ class BillEditTests(BillMutationMixin, TestCase):
         self.assertEqual(
             self.client.get(reverse("core:bill_edit", args=[9999])).status_code, 404
         )
+
+    # ---- the audit trail ----
+    def test_a_saved_edit_records_its_date_and_reason(self):
+        self.pass_gate(edit_date="2026-07-17", reason="Price correction")
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.edit_date, date(2026, 7, 17))
+        self.assertEqual(self.bill.edit_reason, "Price correction")
+
+        audit = BillEditAudit.objects.get()
+        self.assertEqual(audit.bill_id, self.bill.pk)
+        self.assertEqual(audit.edit_date, date(2026, 7, 17))
+        self.assertEqual(audit.reason, "Price correction")
+
+    def test_a_refused_edit_records_no_audit_row(self):
+        """The audit is written in the same transaction as the rewrite, so a
+        bill that didn't change must not carry a note saying it did."""
+        response = self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "1.00", "account": ""},
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(BillEditAudit.objects.exists())
+        self.bill.refresh_from_db()
+        self.assertIsNone(self.bill.edit_date)
+
+    def test_each_edit_leaves_its_own_note(self):
+        for reason in ("Wrong qty entered", "Price correction"):
+            self.pass_gate(reason=reason)
+            self.post({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+            })
+
+        self.assertEqual(
+            list(BillEditAudit.objects.order_by("id").values_list("reason", flat=True)),
+            ["Wrong qty entered", "Price correction"],
+        )
+
+    def test_the_detail_page_shows_the_last_edit(self):
+        self.pass_gate(reason="Wrong qty entered")
+        self.post({
+            "customer_id": self.nimal.pk,
+            "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+            "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+        })
+        response = self.client.get(reverse("core:bill_detail", args=[self.bill.pk]))
+        self.assertContains(response, "Last edited:")
+        self.assertContains(response, "Wrong qty entered")
+
+
+class BillEditReasonGateTests(BillMutationMixin, TestCase):
+    """Step 1 of an edit: when, and why, before the form is on screen."""
+
+    def setUp(self):
+        self.build()
+
+    def url(self):
+        return reverse("core:bill_edit", args=[self.bill.pk])
+
+    def test_the_form_is_gated_until_a_reason_is_given(self):
+        response = self.client.get(self.url())
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Why is this bill being edited?")
+        self.assertContains(response, "Confirm and Continue")
+        self.assertNotContains(response, 'id="bill-initial"')
+
+    def test_the_gate_defaults_to_today(self):
+        form = self.client.get(self.url()).context["form"]
+        self.assertEqual(form.initial["edit_date"], timezone.localdate())
+
+    def test_confirming_opens_the_edit_form(self):
+        response = self.client.post(
+            self.url(), {"edit_date": "2026-07-17", "reason": "Wrong qty entered"}
+        )
+        self.assertRedirects(response, self.url())
+        self.assertContains(self.client.get(self.url()), 'id="bill-initial"')
+
+    def test_a_blank_reason_is_refused(self):
+        response = self.client.post(
+            self.url(), {"edit_date": "2026-07-17", "reason": "   "}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Give a reason for this edit.")
+        self.assertNotIn(f"bill_edit_gate:{self.bill.pk}", self.client.session)
+
+    def test_a_missing_date_is_refused(self):
+        response = self.client.post(self.url(), {"edit_date": "", "reason": "Typo"})
+        self.assertContains(response, "Enter the date of this edit.")
+        self.assertNotIn(f"bill_edit_gate:{self.bill.pk}", self.client.session)
+
+    def test_a_save_that_skipped_the_gate_is_refused(self):
+        """The page posts JSON to the same URL, so the gate has to hold on the
+        save and not only on the way in."""
+        response = self.client.post(
+            self.url(),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("needs a date and reason", response.json()["error"])
+        self.assertFalse(BillEditAudit.objects.exists())
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.total_amount, Decimal("1000.00"))
+
+    def test_the_gate_is_spent_once_the_edit_saves(self):
+        """The next edit is a new one and has to say why for itself."""
+        self.client.post(self.url(), {"edit_date": "2026-07-17", "reason": "Typo"})
+        self.client.post(
+            self.url(),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "7000.00", "account": ""},
+            }),
+            content_type="application/json",
+        )
+        self.assertNotIn(f"bill_edit_gate:{self.bill.pk}", self.client.session)
+        self.assertContains(self.client.get(self.url()), "Why is this bill being edited?")
+
+    def test_a_refused_save_keeps_the_gate(self):
+        """The biller is going back to fix a figure, not to re-justify the
+        same edit."""
+        self.client.post(self.url(), {"edit_date": "2026-07-17", "reason": "Typo"})
+        self.client.post(
+            self.url(),
+            json.dumps({
+                "customer_id": self.nimal.pk,
+                "lines": [{"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"}],
+                "payment": {"type": "full_cash", "cash": "1.00", "account": ""},
+            }),
+            content_type="application/json",
+        )
+        self.assertIn(f"bill_edit_gate:{self.bill.pk}", self.client.session)
+
+    def test_gates_are_kept_per_bill(self):
+        """Two tabs on two bills must not wear each other's reason."""
+        other = Bill.objects.create(
+            customer=self.nimal,
+            bill_date=date(2026, 7, 1),
+            subtotal=Decimal("500.00"),
+            total_amount=Decimal("500.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+        )
+        self.client.post(self.url(), {"edit_date": "2026-07-17", "reason": "Typo"})
+        response = self.client.get(reverse("core:bill_edit", args=[other.pk]))
+        self.assertContains(response, "Why is this bill being edited?")
 
 
 class BillListTests(UserFactoryMixin, TestCase):

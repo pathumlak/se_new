@@ -48,6 +48,13 @@
       <span>{{ bill.get_payment_type_display }}</span>
     </div>
 
+    {% if bill.edit_date %}
+      {# Only the latest edit. Every one of them is in the customer's ledger. #}
+      <p class="mt-1.5 text-xs italic text-slate-400">
+        Last edited: {{ bill.edit_date|date:"j M Y" }}{% if bill.edit_reason %} — {{ bill.edit_reason }}{% endif %}
+      </p>
+    {% endif %}
+
     <div class="mt-2">
       {% if bill.status == 'paid' %}
         <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Paid</span>

@@ -57,6 +57,7 @@
     .green { color: #047857; }
     .grey { color: #94a3b8; }
     .empty { text-align: center; color: #64748b; padding: 12pt; font-style: italic; }
+    .note td { color: #94a3b8; font-style: italic; }
 
     .closing {
       margin-top: 10pt; border: 1pt solid #0f172a; border-radius: 3pt;
@@ -129,13 +130,19 @@
     </tr>
   </thead>
   <tbody>
+    {# A note row moves no money — italic grey, dashes for figures, and the
+       balance above carried in unchanged. #}
     {% for row in rows %}
-      <tr>
+      <tr{% if row.is_note %} class="note"{% endif %}>
         <td>{{ row.date|date:"j M Y" }}</td>
         <td>{{ row.description }}</td>
-        <td class="r">{% if row.sale is not None %}{{ row.sale|floatformat:2|intcomma }}{% endif %}</td>
-        <td class="r">{% if row.credit is not None %}{{ row.credit|floatformat:2|intcomma }}{% endif %}</td>
-        <td class="r {% if row.balance > 0 %}red{% elif row.balance < 0 %}green{% else %}grey{% endif %}">
+        <td class="r">
+          {% if row.sale is not None %}{{ row.sale|floatformat:2|intcomma }}{% elif row.is_note %}—{% endif %}
+        </td>
+        <td class="r">
+          {% if row.credit is not None %}{{ row.credit|floatformat:2|intcomma }}{% elif row.is_note %}—{% endif %}
+        </td>
+        <td class="r {% if row.is_note %}grey{% elif row.balance > 0 %}red{% elif row.balance < 0 %}green{% else %}grey{% endif %}">
           {{ row.balance|floatformat:2|intcomma }}
         </td>
       </tr>

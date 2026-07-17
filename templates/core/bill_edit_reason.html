@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
+{% block header %}Edit Bill #{{ bill.pk }}{% endblock %}
+
+{% block content %}
+
+<div class="mx-auto max-w-xl">
+  <a href="{% url 'core:bill_detail' bill.pk %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    Bill #{{ bill.pk }}
+  </a>
+
+  <h2 class="mt-2 text-xl font-semibold text-slate-900">Why is this bill being edited?</h2>
+  <p class="mt-1 text-sm text-slate-500">
+    Bill #{{ bill.pk }} from {{ bill.bill_date|date:"j M Y" }}
+    for
+    {% if bill.is_walk_in %}
+      <span class="italic">{{ bill.walk_in_name }} (walk-in)</span>
+    {% else %}
+      {{ bill.customer.name }}
+    {% endif %}
+  </p>
+
+  <div class="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <p class="mb-5 text-sm text-slate-600">
+      An edit rewrites the stock, balance and payments this bill already posted.
+      The reason is kept on the bill and shown in
+      {% if not bill.is_walk_in %}{{ bill.customer.name }}'s{% else %}the{% endif %}
+      ledger, so the account explains a figure that changed after it was read.
+    </p>
+
+    {% if form.non_field_errors %}
+      <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="mb-4">
+        <label for="{{ form.edit_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+          {{ form.edit_date.label }}
+        </label>
+        {{ form.edit_date }}
+        {% for error in form.edit_date.errors %}
+          <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+        {% endfor %}
+      </div>
+
+      <div class="mb-5">
+        <label for="{{ form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+          {{ form.reason.label }}
+        </label>
+        {{ form.reason }}
+        {% for error in form.reason.errors %}
+          <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+        {% endfor %}
+        <p class="mt-1.5 text-xs text-slate-500">
+          Written to the ledger word for word — say what was wrong, not that something was.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          Confirm and Continue
+        </button>
+        <a href="{% url 'core:bill_detail' bill.pk %}"
+           class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

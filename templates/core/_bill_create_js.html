@@ -1037,22 +1037,22 @@ spanning lines, it isn't stripped and renders onto the page as text.
       // For partial types, how much is being taken now vs left on account.
       let partialRemaining = 0;
 
+      // The full types take target or more. Over is not an error: the excess
+      // is the customer paying ahead, and it lands on their balance as credit
+      // that the next bill prices against. Short is still an error — that is
+      // what the partial types are for.
       if (type === 'full_cash') {
         paid = readCashInput($('fullcash-amount'), 'Amount received', errors, false);
-        if (!Number.isNaN(paid) && paid !== target) {
-          const diff = round2(target - paid);
-          errors.push(diff > 0
-            ? 'Short by ' + money(diff) + ' — must total ' + money(target) + '.'
-            : 'Over by ' + money(Math.abs(diff)) + ' — must total ' + money(target) + '.');
+        if (!Number.isNaN(paid) && paid < target) {
+          errors.push('Short by ' + money(round2(target - paid)) + ' — must be at least ' +
+            money(target) + '. Use Partial Cash to collect less.');
         }
       } else if (type === 'full_cheque') {
         const chequeTotal = validateChequeList('fullchq', errors);
         paid = Number.isNaN(chequeTotal) ? NaN : chequeTotal;
-        if (!Number.isNaN(paid) && paid !== target) {
-          const diff = round2(target - paid);
-          errors.push(diff > 0
-            ? 'Cheques short by ' + money(diff) + ' — must total ' + money(target) + '.'
-            : 'Cheques over by ' + money(Math.abs(diff)) + ' — must total ' + money(target) + '.');
+        if (!Number.isNaN(paid) && paid < target) {
+          errors.push('Cheques short by ' + money(round2(target - paid)) + ' — must total at least ' +
+            money(target) + '. Use Partial Cheque to collect less.');
         }
       } else if (type === 'partial_cash') {
         const cash = readCashInput($('partcash-amount'), 'Cash amount', errors, false);
@@ -1156,6 +1156,31 @@ spanning lines, it isn't stripped and renders onto the page as text.
       ['fullchq', 'partchq', 'mixchq'].forEach(chequeSum);
 
       const result = validatePayment();
+
+      // Overpay notes: the full types accept more than target, so the panel
+      // says where the excess goes before the biller takes the money rather
+      // than leaving them to read it off the balance preview.
+      function showChange(noteId, over) {
+        const note = $(noteId);
+        if (!note) return;
+        if (over > 0) {
+          note.textContent = 'Over by ' + money(over) + ' — kept as credit on the customer’s balance.';
+          note.classList.remove('hidden');
+        } else {
+          note.textContent = '';
+          note.classList.add('hidden');
+        }
+      }
+
+      const fullcashCash = num($('fullcash-amount').value);
+      showChange(
+        'fullcash-change',
+        type === 'full_cash' && !Number.isNaN(fullcashCash) ? round2(fullcashCash - target) : 0
+      );
+      showChange(
+        'fullchq-change',
+        type === 'full_cheque' ? round2(chequeSum('fullchq') - target) : 0
+      );
 
       // Partial-remaining notes: the panels tell the biller what will be
       // added to outstanding, so refreshing them here keeps text and figures

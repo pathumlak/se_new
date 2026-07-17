@@ -34,6 +34,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .decorators import super_admin_required
 from .forms import (
+    BillEditReasonForm,
     CashDrawerOutForm,
     CategoryForm,
     ChequeForm,
@@ -46,6 +47,7 @@ from .forms import (
 )
 from .models import (
     Bill,
+    BillEditAudit,
     BillItem,
     CashDrawer,
     CashTransfer,
@@ -726,10 +728,15 @@ def _parse_date(raw):
 def _ledger_rows(customer, from_date=None, to_date=None):
     """Every ledger line for one customer, oldest first, with a running balance.
 
-    Three sources land in one column layout:
+    Four sources land in one column layout:
       Sale      — a bill, what they now owe us            -> SALE
       Payment   — cash/cheque taken against a bill        -> CHE/CASH
       Purchase  — a supplier bill, what we owe them back  -> CHE/CASH
+      Edit note — a bill was rewritten, and why           -> neither
+
+    The edit note is the odd one out: it carries no amount, because an edit's
+    figures are already in the sale row it rewrote. It is here so the ledger
+    can account for a figure changing under a reader who saw the old one.
 
     The running balance is accumulated here rather than in the template: each
     row depends on every row before it, which a template cannot express
@@ -759,6 +766,32 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "description": description,
                 "sale": bill.total_amount,
                 "credit": None,
+                "is_note": False,
+            }
+        )
+
+    # Cancelled bills are excluded above and their notes go with them: a
+    # cancelled sale isn't in the ledger, so the story of how it was corrected
+    # has nothing left to annotate.
+    audits = BillEditAudit.objects.filter(bill__customer=customer).exclude(
+        bill__status=Bill.Status.CANCELLED
+    )
+    for audit in audits:
+        entries.append(
+            {
+                "date": audit.edit_date,
+                # Last on its day: the note explains rows already read, and
+                # sorting it into the middle of them would imply it split the
+                # day's money in two.
+                "kind": 3,
+                "pk": audit.pk,
+                "description": f"Bill #{audit.bill_id} edited: {audit.reason}",
+                # Both None is what makes this a note. The running balance
+                # below adds 0 and carries the previous row's figure forward,
+                # which is exactly what a note should do to an account.
+                "sale": None,
+                "credit": None,
+                "is_note": True,
             }
         )
 
@@ -774,6 +807,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "description": f"Purchase - {note}" if note else "Purchase",
                 "sale": None,
                 "credit": supplier_bill.total_amount,
+                "is_note": False,
             }
         )
 
@@ -798,6 +832,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "description": f"{payment.get_method_display()} received",
                 "sale": None,
                 "credit": payment.amount,
+                "is_note": False,
             }
         )
 
@@ -1201,25 +1236,35 @@ def _read_payment(raw, total, customer):
 
     # target is what the customer needs to hand over to settle everything:
     # this bill plus any debt, less any credit. Full-payment types collect it
-    # exactly; partial types collect less than it; Pay Later collects none.
+    # or more; partial types collect less than it; Pay Later collects none.
     target = (total - customer.balance).quantize(Decimal("0.01"))
 
+    # Anything handed over above target is not refused: the customer is paying
+    # ahead, and the excess lands on their balance as credit the next bill
+    # prices against. balance_change = paid - total carries it there on its
+    # own, so there is nothing to do here but let the figure through — see
+    # _write_bill. Only the full types take it. A partial that reached target
+    # isn't partial, and a mixed one is a split of an exact figure.
     if kind == Bill.PaymentType.FULL_CASH:
         parts["cash"] = _decimal(raw.get("cash"), "Amount received", 2)
         parts["cash_account"] = _read_cash_account(raw.get("account"))
         if target <= ZERO:
             raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
-        if parts["cash"] != target:
-            raise BillError(f"Payment must total {target:.2f} — got {parts['cash']:.2f}.")
+        if parts["cash"] < target:
+            raise BillError(
+                f"Payment must be at least {target:.2f} — got {parts['cash']:.2f}. "
+                f"Use Partial Cash to collect less."
+            )
 
     elif kind == Bill.PaymentType.FULL_CHEQUE:
         cheques, cheque_total = _read_cheques(raw.get("cheques"))
         parts["cheques"] = cheques
         if target <= ZERO:
             raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
-        if cheque_total != target:
+        if cheque_total < target:
             raise BillError(
-                f"Cheques must total {target:.2f} — got {cheque_total:.2f}."
+                f"Cheques must total at least {target:.2f} — got {cheque_total:.2f}. "
+                f"Use Partial Cheque to collect less."
             )
 
     elif kind == Bill.PaymentType.PARTIAL_CASH:
@@ -1447,15 +1492,32 @@ def _save_bill(user, payload):
 
 
 @transaction.atomic
-def _update_bill(bill, user, payload):
-    """Rewrite a bill as if it had always said this.
+def _update_bill(bill, user, payload, edit_date, edit_reason):
+    """Rewrite a bill as if it had always said this, and record that it was.
 
     The reversal has to come first: the new lines are validated against stock
     and a balance that no longer carry this bill's own effects, so re-saving an
     unchanged bill is a no-op rather than a double charge.
+
+    The audit note is written in the same transaction as the rewrite, so a bill
+    that failed to save has no note claiming it did, and a bill that saved can
+    never be missing the reason it changed.
     """
     _reverse_bill(bill)
-    return _write_bill(bill, user, payload)
+
+    # Set before the write rather than saved after it: _write_bill saves the
+    # header itself, so a second save() here would only be another round trip.
+    bill.edit_date = edit_date
+    bill.edit_reason = edit_reason
+    bill = _write_bill(bill, user, payload)
+
+    BillEditAudit.objects.create(
+        bill=bill,
+        edit_date=edit_date,
+        reason=edit_reason,
+        created_by=user,
+    )
+    return bill
 
 
 def _write_bill(bill, user, payload):
@@ -1847,11 +1909,64 @@ def _payment_initial(bill):
     return payment
 
 
+def _edit_gate_key(pk):
+    return f"bill_edit_gate:{pk}"
+
+
+def _read_edit_gate(request, pk):
+    """The date and reason this edit was gated on, or None if it wasn't.
+
+    Kept in the session rather than posted with the bill: a hidden field is
+    editable by whoever is on the page, and the whole point of the gate is that
+    the reason recorded is the one that was confirmed. Keyed by bill, so two
+    tabs editing two bills don't wear each other's reason.
+    """
+    gate = request.session.get(_edit_gate_key(pk))
+    if not isinstance(gate, dict):
+        return None
+
+    edit_date = _parse_date(gate.get("edit_date"))
+    reason = str(gate.get("reason") or "").strip()[:500]
+    if edit_date is None or not reason:
+        # Half a gate is no gate — an old or hand-made session value gets sent
+        # back through the form rather than saved as a blank reason.
+        return None
+    return {"edit_date": edit_date, "reason": reason}
+
+
 @login_required
 def bill_edit(request, pk):
     bill = get_object_or_404(Bill.objects.select_related("customer"), pk=pk)
+    gate = _read_edit_gate(request, pk)
+
+    # Step 1. The reason gate stands in front of the form: it is a normal HTML
+    # POST, where the save below is the form's JSON one, which is what tells
+    # the two apart on the one URL.
+    if request.method == "POST" and request.content_type != "application/json":
+        form = BillEditReasonForm(request.POST)
+        if form.is_valid():
+            request.session[_edit_gate_key(pk)] = {
+                "edit_date": form.cleaned_data["edit_date"].isoformat(),
+                "reason": form.cleaned_data["reason"],
+            }
+            return redirect("core:bill_edit", pk=pk)
+        return render(
+            request, "core/bill_edit_reason.html", {"bill": bill, "form": form}
+        )
 
     if request.method == "POST":
+        # Step 2. The save. The gate is enforced here and not only on the way
+        # in: the page posts JSON to this URL, so a save that skipped the gate
+        # would otherwise be a bill edited for no recorded reason.
+        if gate is None:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": "This edit needs a date and reason. Reload the page and confirm them.",
+                },
+                status=400,
+            )
+
         try:
             payload = json.loads(request.body or b"{}")
         except json.JSONDecodeError:
@@ -1860,10 +1975,21 @@ def bill_edit(request, pk):
             return JsonResponse({"success": False, "error": MALFORMED}, status=400)
 
         try:
-            bill = _update_bill(bill, request.user, payload)
+            bill = _update_bill(
+                bill,
+                request.user,
+                payload,
+                gate["edit_date"],
+                gate["reason"],
+            )
         except BillError as exc:
             # _update_bill is atomic, so the reversal it started is undone too.
+            # The gate stays put: the biller is being sent back to the same
+            # form to fix the figure, not to re-justify the same edit.
             return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        # Spent. The next edit of this bill is a new one and asks again.
+        request.session.pop(_edit_gate_key(pk), None)
 
         messages.success(request, f"Bill #{bill.pk} was updated.")
         return JsonResponse(
@@ -1872,6 +1998,24 @@ def bill_edit(request, pk):
                 "bill_id": bill.pk,
                 "redirect": reverse("core:bill_detail", args=[bill.pk]),
             }
+        )
+
+    if gate is None or "change" in request.GET:
+        # Nothing confirmed yet, or the biller asked to revisit what they said.
+        return render(
+            request,
+            "core/bill_edit_reason.html",
+            {
+                "bill": bill,
+                "form": BillEditReasonForm(
+                    initial={
+                        "edit_date": (
+                            gate["edit_date"] if gate else timezone.localdate()
+                        ),
+                        "reason": gate["reason"] if gate else "",
+                    }
+                ),
+            },
         )
 
     # The page prices this bill as though it had never been saved, so the
@@ -1898,6 +2042,8 @@ def bill_edit(request, pk):
             "save_url": reverse("core:bill_edit", args=[bill.pk]),
             "initial": _bill_initial(bill),
             "is_edit": True,
+            "edit_date": gate["edit_date"],
+            "edit_reason": gate["reason"],
         }
     )
     return render(request, "core/bill_edit.html", context)
