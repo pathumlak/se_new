@@ -4,6 +4,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
@@ -35,6 +36,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .decorators import super_admin_required
 from .forms import (
     BillEditReasonForm,
+    CashDrawerEditForm,
     CashDrawerOutForm,
     CategoryForm,
     ChequeForm,
@@ -44,6 +46,8 @@ from .forms import (
     ProductionEntryForm,
     ProductQuickForm,
     SupplierQuickForm,
+    UserCreateForm,
+    UserEditForm,
 )
 from .models import (
     Bill,
@@ -62,6 +66,7 @@ from .models import (
     SupplierBill,
     SupplierBillItem,
     User,
+    generate_password,
 )
 
 #: A cheque is "maturing soon" this many days out.
@@ -187,6 +192,135 @@ def dashboard(request):
             "today": today,
         },
     )
+
+
+# --------------------------------------------------------------------- users
+# Super-admin only. There is no self-registration: every account is created
+# here, and its first password is generated rather than chosen.
+
+#: Where a generated password waits between the POST that made it and the page
+#: that shows it. The session, not a message, because it is popped exactly once
+#: and must not survive into a second render.
+CREDENTIALS_KEY = "new_credentials"
+
+
+def _stash_credentials(request, username, password):
+    request.session[CREDENTIALS_KEY] = {"username": username, "password": password}
+
+
+def _pop_credentials(request):
+    """The generated password, once.
+
+    pop rather than read: refreshing the list, or coming back to it later, must
+    not put the password back on screen. Once it has been rendered it is gone —
+    the stored hash is all that is left, and a lost password is reset, not
+    recovered.
+    """
+    return request.session.pop(CREDENTIALS_KEY, None)
+
+
+@super_admin_required
+def user_list(request):
+    users = User.objects.order_by("username")
+    page_obj = _paginate(request, users)
+    return render(
+        request,
+        "core/user_list.html",
+        {
+            "page_obj": page_obj,
+            "users": page_obj.object_list,
+            "credentials": _pop_credentials(request),
+        },
+    )
+
+
+@super_admin_required
+def user_create(request):
+    form = UserCreateForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        password = generate_password()
+        user = form.save(commit=False)
+        # set_password hashes it. The plain text exists only in this request,
+        # long enough to be shown once.
+        user.set_password(password)
+        user.save()
+
+        _stash_credentials(request, user.username, password)
+        messages.success(request, f"{user.username} was created.")
+        return redirect("core:user_list")
+
+    return render(request, "core/user_form.html", {"form": form, "target": None})
+
+
+@super_admin_required
+def user_edit(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    # A super admin editing themselves gets a reduced form: no role, no active
+    # switch. See UserEditForm — the fields are dropped, not just hidden.
+    is_self = target.pk == request.user.pk
+
+    form = UserEditForm(request.POST or None, instance=target, is_self=is_self)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"{target.username} was updated.")
+        return redirect("core:user_list")
+
+    return render(
+        request,
+        "core/user_form.html",
+        {"form": form, "target": target, "is_self": is_self},
+    )
+
+
+@require_POST
+@super_admin_required
+def user_reset_password(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    password = generate_password()
+    target.set_password(password)
+    target.save(update_fields=["password"])
+
+    # Changing a password rotates the session auth hash, which would sign the
+    # super admin out of their own session mid-reset. Re-stamp it so resetting
+    # your own password doesn't bounce you to the login page.
+    if target.pk == request.user.pk:
+        update_session_auth_hash(request, target)
+
+    _stash_credentials(request, target.username, password)
+    messages.success(request, f"{target.username}'s password was reset.")
+    return redirect("core:user_list")
+
+
+@require_POST
+@super_admin_required
+def user_deactivate(request, pk):
+    target = get_object_or_404(User, pk=pk)
+
+    # Also the reason no "last super admin" check is needed: the only person
+    # who can deactivate accounts is a super admin, and they cannot be the one
+    # going inactive — so an active super admin always remains.
+    if target.pk == request.user.pk:
+        messages.error(request, "You can't deactivate your own account.")
+        return redirect("core:user_list")
+
+    target.is_active = False
+    target.save(update_fields=["is_active"])
+    messages.success(
+        request,
+        f"{target.username} was deactivated and can no longer sign in. "
+        f"The records they created are unchanged.",
+    )
+    return redirect("core:user_list")
+
+
+@require_POST
+@super_admin_required
+def user_activate(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    target.is_active = True
+    target.save(update_fields=["is_active"])
+    messages.success(request, f"{target.username} can sign in again.")
+    return redirect("core:user_list")
 
 
 # ---------------------------------------------------------------- categories
@@ -2525,25 +2659,31 @@ def _account_banked(account):
     )["total"]
 
 
-@login_required
-def cash_drawer(request):
-    balance = _cash_drawer_balance()
+def _is_manual(entry):
+    """Whether this row was typed by hand rather than written by a bill.
 
-    form = CashDrawerOutForm(
-        request.POST or None,
-        drawer_balance=balance,
-        initial={"txn_date": timezone.localdate()},
-    )
-    if request.method == "POST":
-        if form.is_valid():
-            entry = form.save()
-            messages.success(
-                request,
-                f"{entry.reason} — {entry.amount:,.2f} out of the drawer. "
-                f"{_cash_drawer_balance():,.2f} left.",
-            )
-            return redirect("core:cash_drawer")
-        messages.error(request, "That entry couldn't be saved — see the form.")
+    A bill-linked row belongs to that bill's payment: editing or deleting it
+    here would put the drawer out of step with the bill it came from, and the
+    bill would go on insisting the cash arrived. Those are corrected by editing
+    the bill.
+    """
+    return entry.bill_id is None
+
+
+def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None):
+    """Render the drawer log.
+
+    Shared by the list and by cash_drawer_edit, which re-renders this whole page
+    when a correction fails validation — the running balance, the totals and the
+    filters all have to come back with it, and rebuilding them is this function.
+    """
+    # The edit modal is one form reused by every row, filled in by JS from the
+    # row's data attributes. Even with nothing being edited it has to render its
+    # widgets, or there would be no fields for that script to fill.
+    if edit_form is None:
+        edit_form = CashDrawerEditForm()
+
+    balance = _cash_drawer_balance()
 
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
@@ -2581,6 +2721,8 @@ def cash_drawer(request):
                 "entry": entry,
                 "is_in": is_in,
                 "running": running,
+                # Drives the Actions column: only a hand-typed row gets buttons.
+                "is_manual": _is_manual(entry),
             }
         )
 
@@ -2589,13 +2731,19 @@ def cash_drawer(request):
     # describe the whole filtered range — so the sums are taken over all of it
     # and only the display is cut into pages. Slicing the queryset instead
     # would restart the running balance at each page and make the column lie.
-    page_obj = _paginate(request, rows)
+    #
+    # Fifty to a page, not the usual twenty-five: the drawer takes a row for
+    # every cash bill, so its log is long, and it is read as a run of figures
+    # down the running-balance column rather than scanned for a single row.
+    page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
 
     return render(
         request,
         "core/cash_drawer.html",
         {
-            "form": form,
+            "form": out_form,
+            "edit_form": edit_form,
+            "edit_entry": edit_entry,
             # The drawer as it stands now, whatever the filter shows.
             "balance": balance,
             "senovka_banked": _account_banked(CashTransfer.Account.SENOVKA),
@@ -2612,6 +2760,102 @@ def cash_drawer(request):
             "kind_choices": CashDrawerOutForm.KIND_CHOICES,
         },
     )
+
+
+@login_required
+def cash_drawer(request):
+    form = CashDrawerOutForm(
+        request.POST or None,
+        drawer_balance=_cash_drawer_balance(),
+        initial={"txn_date": timezone.localdate()},
+    )
+    if request.method == "POST":
+        if form.is_valid():
+            entry = form.save()
+            messages.success(
+                request,
+                f"{entry.reason} — {entry.amount:,.2f} out of the drawer. "
+                f"{_cash_drawer_balance():,.2f} left.",
+            )
+            return redirect("core:cash_drawer")
+        messages.error(request, "That entry couldn't be saved — see the form.")
+
+    return _cash_drawer_page(request, form)
+
+
+def _drawer_balance_without(entry):
+    """The drawer as it would stand if `entry` had never been written.
+
+    What an edited entry has to be judged against: raising a 500 withdrawal to
+    5000 is only affordable if the original 500 is put back first.
+    """
+    return _cash_drawer_balance(CashDrawer.objects.exclude(pk=entry.pk))
+
+
+@login_required
+def cash_drawer_edit(request, pk):
+    entry = get_object_or_404(CashDrawer, pk=pk)
+    if not _is_manual(entry):
+        messages.error(
+            request,
+            f"That entry came from Bill #{entry.bill_id} and is part of its "
+            f"payment. Edit the bill instead.",
+        )
+        return redirect("core:cash_drawer")
+
+    # The form lives in a modal on the list, so there is nothing to GET.
+    if request.method != "POST":
+        return redirect("core:cash_drawer")
+
+    form = CashDrawerEditForm(
+        request.POST,
+        instance=entry,
+        drawer_balance=_drawer_balance_without(entry),
+    )
+    if form.is_valid():
+        edited = form.save(commit=False)
+        edited.edited_at = timezone.now()
+        edited.edited_by = request.user
+        edited.save()
+
+        messages.success(
+            request,
+            f"The {edited.txn_date:%d %b %Y} entry was updated. "
+            f"The drawer now holds {_cash_drawer_balance():,.2f}.",
+        )
+        return redirect("core:cash_drawer")
+
+    # Straight back to the list with the modal open on the errors, rather than
+    # a redirect that would throw away what was typed.
+    messages.error(request, "That correction couldn't be saved — see the form.")
+    return _cash_drawer_page(
+        request, CashDrawerOutForm(drawer_balance=_cash_drawer_balance()), form, entry
+    )
+
+
+@require_POST
+@login_required
+def cash_drawer_delete(request, pk):
+    entry = get_object_or_404(CashDrawer, pk=pk)
+    if not _is_manual(entry):
+        messages.error(
+            request,
+            f"That entry came from Bill #{entry.bill_id} and is part of its "
+            f"payment. Delete the bill instead.",
+        )
+        return redirect("core:cash_drawer")
+
+    label = f"{entry.get_txn_type_display()} of {entry.amount:,.2f} on {entry.txn_date:%d %b %Y}"
+    # No balance to reverse: nothing stores the drawer total — every figure on
+    # the page is summed from the rows on each render, so a row that is gone is
+    # simply no longer counted.
+    entry.delete()
+
+    messages.success(
+        request,
+        f"{label} was deleted. The drawer now holds {_cash_drawer_balance():,.2f}.",
+    )
+    return redirect("core:cash_drawer")
 
 
 # ----------------------------------------------------------- supplier bills
@@ -3050,13 +3294,25 @@ def _save_production(payload):
         if product.pk in seen:
             raise ProductionError(f"{product} is on the sheet twice.")
         seen.add(product.pk)
-        entries.append((product, qty))
+
+        # Required on any row that produced something — a quantity with nothing
+        # to explain it is what the reason field exists to prevent. Rows left at
+        # zero were skipped above and are never asked for one.
+        reason = str(raw.get("reason") or "").strip()
+        if not reason:
+            raise ProductionError(f"Give a reason for the {product} production.")
+        if len(reason) > 500:
+            raise ProductionError(
+                f"The reason for {product} is too long — keep it under 500 characters."
+            )
+
+        entries.append((product, qty, reason))
 
     if not entries:
         raise ProductionError("Enter a quantity against at least one product.")
 
     written = []
-    for product, qty in entries:
+    for product, qty, reason in entries:
         # Read inside the transaction: the snapshot has to be the shelf as this
         # entry found it, not as the page rendered it some minutes ago.
         product.refresh_from_db()
@@ -3067,6 +3323,7 @@ def _save_production(payload):
                 product=product,
                 production_date=production_date,
                 qty_produced=qty,
+                reason=reason,
                 stock_before=before,
                 stock_after=before + qty,
             )
@@ -3077,7 +3334,7 @@ def _save_production(payload):
 
 
 @transaction.atomic
-def _update_production(entry, qty):
+def _update_production(entry, qty, reason, production_date):
     """Correct one entry, moving the shelf by the difference.
 
     The stored quantity is re-read rather than taken off `entry`: a bound
@@ -3090,10 +3347,14 @@ def _update_production(entry, qty):
     _move_stock(stored.product, diff)
 
     entry.qty_produced = qty
+    entry.reason = reason
+    entry.production_date = production_date
     # stock_before stays: it is what this entry found, and no correction now
     # changes what was on the shelf then. What it left behind does change.
     entry.stock_after = stored.stock_before + qty
-    entry.save(update_fields=["qty_produced", "stock_after"])
+    entry.save(
+        update_fields=["qty_produced", "reason", "production_date", "stock_after"]
+    )
     return entry
 
 
@@ -3145,10 +3406,20 @@ def production_edit(request, pk):
         ProductionEntry.objects.select_related("product"), pk=pk
     )
 
+    # The shelf as it stands before any of this is applied, for the read-only
+    # panel on the form. Read now: _update_production moves it.
+    stock_now = entry.product.qty
+    was_qty = entry.qty_produced
+
     form = ProductionEntryForm(request.POST or None, instance=entry)
     if request.method == "POST" and form.is_valid():
         try:
-            _update_production(entry, form.cleaned_data["qty_produced"])
+            _update_production(
+                entry,
+                form.cleaned_data["qty_produced"],
+                form.cleaned_data["reason"],
+                form.cleaned_data["production_date"],
+            )
         except BillError as exc:
             form.add_error("qty_produced", str(exc))
         else:
@@ -3163,7 +3434,16 @@ def production_edit(request, pk):
             return redirect("core:production_list")
 
     return render(
-        request, "core/production_edit.html", {"form": form, "entry": entry}
+        request,
+        "core/production_edit.html",
+        {
+            "form": form,
+            "entry": entry,
+            "stock_now": stock_now,
+            # A bound form has already written the submitted qty onto `entry`,
+            # so the template can't read the stored one off it.
+            "was_qty": was_qty,
+        },
     )
 
 

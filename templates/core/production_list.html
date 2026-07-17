@@ -101,6 +101,7 @@
                   <tr>
                     <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
                     <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Qty Produced</th>
+                    <th class="px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
                     <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Stock Before</th>
                     <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Stock After</th>
                     <th class="px-2 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
@@ -112,6 +113,14 @@
                       <td class="whitespace-nowrap px-2 py-2 text-slate-900">{{ entry.product }}</td>
                       <td class="whitespace-nowrap px-2 py-2 text-right font-medium text-emerald-600">
                         +{{ entry.qty_produced|floatformat:"-3" }}
+                      </td>
+                      {% comment %}
+                      Entries written before the reason field was captured have
+                      none, so this stays soft rather than shout about rows
+                      nobody can go back and explain.
+                      {% endcomment %}
+                      <td class="px-2 py-2 text-slate-600">
+                        {% if entry.reason %}{{ entry.reason }}{% else %}<span class="text-slate-300">—</span>{% endif %}
                       </td>
                       {# Snapshots from when the entry was written, not today's shelf. #}
                       <td class="whitespace-nowrap px-2 py-2 text-right text-slate-500">
@@ -132,6 +141,7 @@
                                     data-product="{{ entry.product }}"
                                     data-qty="{{ entry.qty_produced|floatformat:'-3' }}"
                                     data-date="{{ entry.production_date|date:'j M Y' }}"
+                                    data-reason="{{ entry.reason }}"
                                     class="js-delete rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-100">
                               Delete
                             </button>
@@ -185,6 +195,9 @@
         <p class="mt-1 text-sm text-slate-600">
           <span id="delete-modal-product" class="font-semibold text-slate-900"></span>
           on <span id="delete-modal-date" class="font-semibold text-slate-900"></span>
+        </p>
+        <p id="delete-modal-reason-line" class="mt-1 hidden text-sm text-slate-500">
+          “<span id="delete-modal-reason"></span>”
         </p>
         <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <span id="delete-modal-qty" class="font-semibold"></span> comes back off the shelf.
@@ -246,11 +259,13 @@
     const modal = document.getElementById('delete-modal');
     if (!modal) return;
 
-    const form      = document.getElementById('delete-modal-form');
-    const productEl = document.getElementById('delete-modal-product');
-    const dateEl    = document.getElementById('delete-modal-date');
-    const qtyEl     = document.getElementById('delete-modal-qty');
-    const cancel    = document.getElementById('delete-modal-cancel');
+    const form       = document.getElementById('delete-modal-form');
+    const productEl  = document.getElementById('delete-modal-product');
+    const dateEl     = document.getElementById('delete-modal-date');
+    const qtyEl      = document.getElementById('delete-modal-qty');
+    const reasonEl   = document.getElementById('delete-modal-reason');
+    const reasonLine = document.getElementById('delete-modal-reason-line');
+    const cancel     = document.getElementById('delete-modal-cancel');
     let lastFocus = null;
 
     function open(btn) {
@@ -259,6 +274,12 @@
       productEl.textContent = btn.dataset.product;
       dateEl.textContent = btn.dataset.date;
       qtyEl.textContent = btn.dataset.qty;
+
+      // Entries predating the reason field have none; an empty quoted string
+      // would read as though the reason were blank on purpose.
+      const reason = btn.dataset.reason || '';
+      reasonEl.textContent = reason;
+      reasonLine.classList.toggle('hidden', reason === '');
       modal.classList.remove('hidden');
       modal.classList.add('flex');
       cancel.focus();

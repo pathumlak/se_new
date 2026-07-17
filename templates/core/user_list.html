@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block title %}Users · Senovka Plastics{% endblock %}
+{% block header %}Users{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <p class="text-sm text-slate-500">
+    Staff accounts. There is no self-registration — every account is created here.
+  </p>
+  <a href="{% url 'core:user_create' %}"
+     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+            text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    Create User
+  </a>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- Users -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Username</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Full Name</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Role</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Last Login</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+
+      <tbody class="divide-y divide-slate-100">
+        {% for row in users %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+              {{ row.username }}
+              {% if row.pk == request.user.pk %}
+                <span class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">You</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if row.full_name %}{{ row.full_name }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if row.role == 'super_admin' %}
+                <span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                  {{ row.get_role_display }}
+                </span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                  {{ row.get_role_display }}
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if row.last_login %}
+                {{ row.last_login|date:"j M Y, g:i a" }}
+              {% else %}
+                <span class="text-slate-300">Never</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if row.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Inactive</span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <div class="flex justify-end gap-1">
+                <a href="{% url 'core:user_edit' row.pk %}"
+                   class="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Edit
+                </a>
+
+                <button type="button"
+                        data-url="{% url 'core:user_reset_password' row.pk %}"
+                        data-username="{{ row.username }}"
+                        class="js-reset rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Reset Password
+                </button>
+
+                {% comment %}
+                No deactivate button on your own row: user_deactivate refuses it
+                anyway, and offering a button that always errors is a worse way
+                of saying so than not offering it.
+                {% endcomment %}
+                {% if row.pk == request.user.pk %}
+                  <span class="cursor-default rounded-md px-2 py-1 text-xs font-medium text-slate-300"
+                        title="You can't deactivate your own account.">
+                    Deactivate
+                  </span>
+                {% elif row.is_active %}
+                  <button type="button"
+                          data-url="{% url 'core:user_deactivate' row.pk %}"
+                          data-username="{{ row.username }}"
+                          class="js-deactivate rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Deactivate
+                  </button>
+                {% else %}
+                  <form method="post" action="{% url 'core:user_activate' row.pk %}" class="inline">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="rounded-md px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                      Activate
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="px-4 py-12 text-center">
+              <p class="text-sm text-slate-500">No users yet.</p>
+              <a href="{% url 'core:user_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                Create the first one
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ====================== Password modal ====================== -->
+{% comment %}
+Shown once, straight after a create or a reset. The view popped it out of the
+session to render this, so a refresh will not bring it back.
+{% endcomment %}
+<div id="password-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round"
+                d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+        </svg>
+      </span>
+      <div class="min-w-0 flex-1">
+        <h3 id="password-modal-title" class="text-base font-semibold text-slate-900">
+          New password for <span id="password-modal-username"></span>
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          Copy this now — it will not be shown again.
+        </p>
+
+        <div class="mt-3 flex items-center gap-2">
+          <code id="password-modal-value"
+                class="flex-1 select-all rounded-lg bg-slate-900 px-3 py-2.5 text-center font-mono
+                       text-lg tracking-widest text-white"></code>
+          <button type="button" id="password-modal-copy"
+                  class="shrink-0 rounded-lg border border-slate-300 px-3 py-2.5 text-xs font-semibold
+                         text-slate-700 hover:bg-slate-50">
+            Copy
+          </button>
+        </div>
+
+        <p class="mt-3 text-xs text-slate-500">
+          Only the hash is stored, so nobody can look this up later. If it's
+          lost, reset the password and hand out a new one.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end">
+      <button type="button" id="password-modal-done"
+              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        I've copied it
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ====================== Deactivate modal ====================== -->
+<div id="deactivate-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="deactivate-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="deactivate-modal-title" class="text-base font-semibold text-slate-900">
+          Deactivate <span id="deactivate-modal-username"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">They will not be able to sign in.</p>
+        <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          The records they created — bills, production, drawer entries — are not
+          affected. You can activate the account again at any time.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="deactivate-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="deactivate-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Deactivate
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ====================== Reset password modal ====================== -->
+<div id="reset-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="reset-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="reset-modal-title" class="text-base font-semibold text-slate-900">
+          Reset password for <span id="reset-modal-username"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          A new password is generated and shown to you once.
+        </p>
+        <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Their current password stops working immediately. Make sure you can
+          pass the new one on before you do this.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="reset-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="reset-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          Reset password
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{{ credentials|json_script:"credentials-data" }}
+<script>
+  // ---- a modal that a row's button opens, with the row's details in it ----
+  function wireConfirm(prefix, onOpen) {
+    const modal = document.getElementById(prefix + '-modal');
+    if (!modal) return;
+
+    const form   = document.getElementById(prefix + '-modal-form');
+    const cancel = document.getElementById(prefix + '-modal-cancel');
+    const nameEl = document.getElementById(prefix + '-modal-username');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.url;
+      nameEl.textContent = btn.dataset.username;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-' + prefix).forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  }
+
+  wireConfirm('deactivate');
+  wireConfirm('reset');
+
+  // ---- show a freshly generated password, once ----
+  (function () {
+    const data = JSON.parse(document.getElementById('credentials-data').textContent);
+    if (!data) return;
+
+    const modal = document.getElementById('password-modal');
+    const value = document.getElementById('password-modal-value');
+    const copy  = document.getElementById('password-modal-copy');
+    const done  = document.getElementById('password-modal-done');
+
+    document.getElementById('password-modal-username').textContent = data.username;
+    value.textContent = data.password;
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    copy.focus();
+
+    copy.addEventListener('click', function () {
+      // navigator.clipboard is absent on an insecure origin, which a LAN
+      // install over plain http is. Fall back to selecting the text so the
+      // button still leads somewhere rather than failing silently.
+      function ok() {
+        copy.textContent = 'Copied';
+        copy.classList.add('border-emerald-300', 'text-emerald-700');
+        setTimeout(function () {
+          copy.textContent = 'Copy';
+          copy.classList.remove('border-emerald-300', 'text-emerald-700');
+        }, 2000);
+      }
+      function selectIt() {
+        const range = document.createRange();
+        range.selectNodeContents(value);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        copy.textContent = 'Press Ctrl+C';
+      }
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(data.password).then(ok).catch(selectIt);
+      } else {
+        selectIt();
+      }
+    });
+
+    // Closing is deliberate only — no Escape, no backdrop click. This is the
+    // one time the password is on screen, and dismissing it by accident means
+    // resetting it again.
+    done.addEventListener('click', function () {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    });
+  })();
+</script>
+{% endblock %}

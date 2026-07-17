@@ -1,6 +1,23 @@
+import secrets
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models, transaction
 from django.db.models import F
+
+#: Deliberately missing I, l, 1, O and 0. A generated password is read off a
+#: screen and typed in by hand by someone who has never seen it before, so a
+#: character that can be mistaken for another one is a support call.
+PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+PASSWORD_LENGTH = 8
+
+
+def generate_password():
+    """A fresh password for a new or reset account.
+
+    `secrets`, not `random`: this is a credential, and random's Mersenne
+    Twister is predictable from enough prior output.
+    """
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(PASSWORD_LENGTH))
 
 
 class User(AbstractUser):
@@ -14,6 +31,12 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"
+
+    @property
+    def full_name(self):
+        """For the user list, which has a column to fill even when the name
+        fields are blank."""
+        return self.get_full_name() or ""
 
 
 class Category(models.Model):

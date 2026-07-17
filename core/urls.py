@@ -13,6 +13,17 @@ urlpatterns = [
         name="home",
     ),
     path("dashboard/", views.dashboard, name="dashboard"),
+    # Super-admin only, enforced per view. There is no self-registration.
+    path("users/", views.user_list, name="user_list"),
+    path("users/create/", views.user_create, name="user_create"),
+    path("users/<int:pk>/edit/", views.user_edit, name="user_edit"),
+    path(
+        "users/<int:pk>/reset-password/",
+        views.user_reset_password,
+        name="user_reset_password",
+    ),
+    path("users/<int:pk>/deactivate/", views.user_deactivate, name="user_deactivate"),
+    path("users/<int:pk>/activate/", views.user_activate, name="user_activate"),
     path("categories/", views.category_list, name="category_list"),
     path("categories/create/", views.category_create, name="category_create"),
     path("categories/<int:pk>/edit/", views.category_update, name="category_update"),
@@ -70,6 +81,14 @@ urlpatterns = [
     path("cheques/<int:pk>/edit/", views.cheque_edit, name="cheque_edit"),
     path("cheques/<int:pk>/delete/", views.cheque_delete, name="cheque_delete"),
     path("cash-drawer/", views.cash_drawer, name="cash_drawer"),
+    # Manual entries only — both views refuse a bill-linked row. The form is a
+    # modal on the list, so edit is POST-only and a GET bounces back to it.
+    path("cash-drawer/<int:pk>/edit/", views.cash_drawer_edit, name="cash_drawer_edit"),
+    path(
+        "cash-drawer/<int:pk>/delete/",
+        views.cash_drawer_delete,
+        name="cash_drawer_delete",
+    ),
     path("supplier-bills/", views.supplier_bill_list, name="supplier_bill_list"),
     # GET renders the form; POST saves it.
     path(

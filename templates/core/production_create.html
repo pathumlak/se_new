@@ -27,6 +27,16 @@
   <p id="backdate-note" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
 </div>
 
+{% comment %}
+Suggestions, not a fixed list: the reason is free text, and a datalist offers
+the usual ones without stopping anyone typing something else.
+{% endcomment %}
+<datalist id="reason-suggestions">
+  <option value="Morning production run"></option>
+  <option value="Evening batch"></option>
+  <option value="Recount correction"></option>
+</datalist>
+
 <!-- Sheet -->
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
   <div class="overflow-x-auto">
@@ -37,6 +47,7 @@
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Current Stock</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Qty Produced</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">New Stock</th>
         </tr>
       </thead>
@@ -59,13 +70,26 @@
               <p class="js-error mt-1 hidden text-right text-xs text-rose-600"></p>
             </td>
 
+            {# Required only once this row has a quantity on it — see refresh(). #}
+            <td class="px-4 py-3">
+              <input type="text" maxlength="500" list="reason-suggestions"
+                     placeholder="Why this was made"
+                     aria-label="Reason for {{ product }} production"
+                     class="js-reason w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm
+                            text-slate-900 shadow-sm placeholder:text-slate-400
+                            focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900
+                            disabled:cursor-not-allowed disabled:bg-slate-50 disabled:placeholder:text-slate-300"
+                     disabled>
+              <p class="js-reason-error mt-1 hidden text-xs text-rose-600"></p>
+            </td>
+
             <td class="js-new whitespace-nowrap px-4 py-3 text-right text-slate-400">
               {{ product.qty|floatformat:"-3" }}
             </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="5" class="px-4 py-12 text-center">
+            <td colspan="6" class="px-4 py-12 text-center">
               <p class="text-sm text-slate-500">No active products.</p>
               <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                 Create one first
@@ -144,6 +168,8 @@
       rows.forEach(function (row) {
         const input = row.querySelector('.js-qty');
         const error = row.querySelector('.js-error');
+        const reason = row.querySelector('.js-reason');
+        const reasonError = row.querySelector('.js-reason-error');
         const newCell = row.querySelector('.js-new');
         const stock = Number(row.dataset.stock);
         const qty = num(input.value);
@@ -154,17 +180,30 @@
 
         error.textContent = message;
         error.classList.toggle('hidden', message === '');
-        row.classList.toggle('bg-rose-50', message !== '');
+
+        // Only a row with something on it is going anywhere — and only such a
+        // row needs a reason. The rest of the table is just the shelf at zero,
+        // so its reason box stays shut rather than nag about a row nobody is
+        // saving.
+        const producing = message === '' && qty > 0;
+        reason.disabled = !producing;
+        if (!producing) reason.value = '';
+
+        const needsReason = producing && reason.value.trim() === '';
+        reasonError.textContent = needsReason ? 'Give a reason.' : '';
+        reasonError.classList.toggle('hidden', !needsReason);
+        reason.classList.toggle('border-rose-400', needsReason);
+
+        row.classList.toggle('bg-rose-50', message !== '' || needsReason);
 
         if (message !== '') {
           bad += 1;
           newCell.textContent = '—';
           return;
         }
+        if (needsReason) bad += 1;
 
         newCell.textContent = trim(stock + qty);
-        // Only a row with something on it is going anywhere.
-        const producing = qty > 0;
         newCell.classList.toggle('text-slate-400', !producing);
         newCell.classList.toggle('font-medium', producing);
         newCell.classList.toggle('text-emerald-600', producing);
@@ -204,6 +243,7 @@
     rows.forEach(function (row) {
       // 'input' fires on keyup, paste and the spinner arrows alike.
       row.querySelector('.js-qty').addEventListener('input', refresh);
+      row.querySelector('.js-reason').addEventListener('input', refresh);
     });
     dateInput.addEventListener('change', checkDate);
 
@@ -221,6 +261,7 @@
           lines.push({
             product_id: Number(row.dataset.productId),
             qty_produced: String(qty),
+            reason: row.querySelector('.js-reason').value.trim(),
           });
         }
       });

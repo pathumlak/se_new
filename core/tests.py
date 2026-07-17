@@ -39,6 +39,7 @@ User = get_user_model()
 # Every sidebar destination, and whether a manager may open it.
 NAV_URL_NAMES = [
     ("core:dashboard", True),
+    ("core:user_list", False),  # super_admin only
     ("core:category_list", False),  # super_admin only
     ("core:product_list", True),
     ("core:customer_list", True),
@@ -4046,6 +4047,181 @@ class CashDrawerPageTests(UserFactoryMixin, TestCase):
         })
         self.assertEqual(CashDrawer.objects.count(), 3)
 
+    # ---- editing ----
+    def edit(self, entry, **overrides):
+        data = {
+            "txn_date": entry.txn_date.isoformat(),
+            "txn_type": entry.txn_type,
+            "amount": str(entry.amount),
+            "reason": entry.reason,
+            "edit_reason": "Wrong amount keyed",
+            **overrides,
+        }
+        return self.client.post(
+            reverse("core:cash_drawer_edit", args=[entry.pk]), data
+        )
+
+    def test_editing_a_manual_entry_updates_it(self):
+        response = self.edit(self.out_entry, amount="900.00", txn_date="2026-06-06")
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.amount, Decimal("900.00"))
+        self.assertEqual(self.out_entry.txn_date, date(2026, 6, 6))
+
+    def test_editing_stamps_who_changed_it_and_why(self):
+        self.edit(self.out_entry, amount="900.00", edit_reason="Recount")
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.edit_reason, "Recount")
+        self.assertEqual(self.out_entry.edited_by.username, "t_admin")
+        self.assertIsNotNone(self.out_entry.edited_at)
+
+    def test_an_edit_re_reckons_the_running_balance(self):
+        """Nothing is reversed on save: the column is summed from the rows on
+        every render, so the corrected figure simply counts differently."""
+        self.edit(self.out_entry, amount="200.00")
+        ctx = self.page()
+        # 5000 in, 200 out, 800 transferred.
+        self.assertEqual(ctx["balance"], Decimal("4000.00"))
+        self.assertEqual(ctx["closing"], Decimal("4000.00"))
+
+    def test_the_type_can_be_corrected(self):
+        self.edit(self.out_entry, txn_type=CashDrawer.TxnType.TRANSFER)
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.txn_type, CashDrawer.TxnType.TRANSFER)
+
+    def test_an_edit_needs_a_reason(self):
+        response = self.edit(self.out_entry, amount="900.00", edit_reason="   ")
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["edit_form"], "edit_reason",
+            "Give a reason for this edit.",
+        )
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.amount, Decimal("1200.00"))
+
+    def test_an_edit_cannot_take_out_more_than_the_drawer_would_hold(self):
+        """Judged against the drawer without this entry — putting the original
+        1200 back leaves 4200 available."""
+        response = self.edit(self.out_entry, amount="4300.00")
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["edit_form"], "amount",
+            "Only 4,200.00 would be in the drawer without this entry.",
+        )
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.amount, Decimal("1200.00"))
+
+    def test_raising_a_withdrawal_within_the_drawer_is_allowed(self):
+        self.edit(self.out_entry, amount="4200.00")
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.amount, Decimal("4200.00"))
+        self.assertEqual(self.page()["balance"], Decimal("0.00"))
+
+    def test_a_failed_edit_comes_back_with_the_page_intact(self):
+        """It re-renders the whole log, so the running balance and the filters
+        have to come back with it rather than 500."""
+        response = self.edit(self.out_entry, edit_reason="")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["edit_entry"], self.out_entry)
+        self.assertEqual(len(response.context["rows"]), 3)
+        self.assertEqual(response.context["balance"], Decimal("3000.00"))
+
+    def test_a_bill_linked_entry_cannot_be_edited(self):
+        response = self.edit(self.in_entry, amount="1.00")
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+        self.in_entry.refresh_from_db()
+        self.assertEqual(self.in_entry.amount, Decimal("5000.00"))
+
+    def test_edit_refuses_a_get(self):
+        response = self.client.get(
+            reverse("core:cash_drawer_edit", args=[self.out_entry.pk])
+        )
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+
+    def test_editing_requires_login(self):
+        self.client.logout()
+        self.edit(self.out_entry, amount="1.00")
+        self.out_entry.refresh_from_db()
+        self.assertEqual(self.out_entry.amount, Decimal("1200.00"))
+
+    # ---- deleting ----
+    def test_deleting_a_manual_entry_removes_it(self):
+        response = self.client.post(
+            reverse("core:cash_drawer_delete", args=[self.out_entry.pk])
+        )
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+        self.assertFalse(CashDrawer.objects.filter(pk=self.out_entry.pk).exists())
+
+    def test_deleting_re_reckons_the_balance_with_no_reversal(self):
+        self.client.post(
+            reverse("core:cash_drawer_delete", args=[self.out_entry.pk])
+        )
+        # 5000 in, 800 transferred — the 1200 withdrawal simply stops counting.
+        self.assertEqual(self.page()["balance"], Decimal("4200.00"))
+
+    def test_a_bill_linked_entry_cannot_be_deleted(self):
+        response = self.client.post(
+            reverse("core:cash_drawer_delete", args=[self.in_entry.pk])
+        )
+        self.assertRedirects(response, reverse("core:cash_drawer"))
+        self.assertTrue(CashDrawer.objects.filter(pk=self.in_entry.pk).exists())
+
+    def test_deleting_a_drawer_entry_leaves_its_bill_alone(self):
+        self.client.post(
+            reverse("core:cash_drawer_delete", args=[self.transfer_entry.pk])
+        )
+        self.assertTrue(Bill.objects.filter(pk=self.bill.pk).exists())
+
+    def test_delete_refuses_a_get(self):
+        response = self.client.get(
+            reverse("core:cash_drawer_delete", args=[self.out_entry.pk])
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_deleting_requires_login(self):
+        self.client.logout()
+        self.client.post(
+            reverse("core:cash_drawer_delete", args=[self.out_entry.pk])
+        )
+        self.assertTrue(CashDrawer.objects.filter(pk=self.out_entry.pk).exists())
+
+    # ---- the actions column ----
+    def test_only_manual_rows_are_marked_editable(self):
+        rows = {r["entry"].pk: r["is_manual"] for r in self.page()["rows"]}
+        self.assertFalse(rows[self.in_entry.pk])
+        self.assertTrue(rows[self.out_entry.pk])
+        self.assertTrue(rows[self.transfer_entry.pk])
+
+    def test_a_bill_linked_row_offers_no_buttons(self):
+        self.page()
+        html = self.response.content.decode()
+        self.assertNotIn(
+            reverse("core:cash_drawer_edit", args=[self.in_entry.pk]), html
+        )
+        self.assertNotIn(
+            reverse("core:cash_drawer_delete", args=[self.in_entry.pk]), html
+        )
+        self.assertIn(f"From Bill #{self.bill.pk}", html)
+
+    def test_a_manual_row_offers_both_buttons(self):
+        self.page()
+        html = self.response.content.decode()
+        self.assertIn(reverse("core:cash_drawer_edit", args=[self.out_entry.pk]), html)
+        self.assertIn(reverse("core:cash_drawer_delete", args=[self.out_entry.pk]), html)
+
+    def test_an_edited_row_shows_the_badge_and_its_reason(self):
+        self.edit(self.out_entry, amount="900.00", edit_reason="Recount")
+        self.page()
+        html = self.response.content.decode()
+        self.assertIn("Edited", html)
+        self.assertIn("Recount", html)
+
+    def test_the_log_takes_fifty_to_a_page(self):
+        self.assertEqual(
+            self.page()["page_obj"].paginator.per_page, settings.PAGINATE_BY_REPORTS
+        )
+
 
 class CashDrawerBillIntegrationTests(UserFactoryMixin, TestCase):
     """The page has to agree with what 5D writes when a bill is saved."""
@@ -4589,13 +4765,23 @@ class ProductionTests(UserFactoryMixin, TestCase):
         self.today = timezone.localdate()
 
     def payload(self, lines=None, production_date=None):
+        if lines is None:
+            lines = [{"product_id": self.pipe.pk, "qty_produced": "5"}]
+
+        # A reason is required on any row that produced something, so give every
+        # line one unless the test is saying something about the reason itself.
+        lines = [
+            {"reason": "Morning production run", **line}
+            if line.get("qty_produced") not in (None, "0")
+            else line
+            for line in lines
+        ]
+
         return {
             "production_date": (production_date or self.today).isoformat()
             if not isinstance(production_date, str)
             else production_date,
-            "lines": lines if lines is not None else [
-                {"product_id": self.pipe.pk, "qty_produced": "5"}
-            ],
+            "lines": lines,
         }
 
     def save(self, payload=None):
@@ -4603,6 +4789,19 @@ class ProductionTests(UserFactoryMixin, TestCase):
             reverse("core:production_create"),
             json.dumps(payload if payload is not None else self.payload()),
             content_type="application/json",
+        )
+
+    def edit(self, entry, **overrides):
+        """POST the edit form. Every field is required, so the unchanged ones
+        have to be posted back alongside whatever the test is changing."""
+        data = {
+            "production_date": entry.production_date.isoformat(),
+            "qty_produced": str(entry.qty_produced),
+            "reason": entry.reason,
+            **overrides,
+        }
+        return self.client.post(
+            reverse("core:production_edit", args=[entry.pk]), data
         )
 
     def stock(self, product):
@@ -4687,6 +4886,59 @@ class ProductionTests(UserFactoryMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("production date", response.json()["error"])
 
+    def test_the_reason_is_stored_against_the_entry(self):
+        self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5",
+             "reason": "Evening batch"},
+        ]))
+        self.assertEqual(ProductionEntry.objects.get().reason, "Evening batch")
+
+    def test_a_row_with_a_quantity_and_no_reason_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5", "reason": ""},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("reason", response.json()["error"])
+        self.assertFalse(ProductionEntry.objects.exists())
+        self.assertEqual(self.stock(self.pipe), Decimal("10.000"))
+
+    def test_a_reason_of_only_spaces_is_refused(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5", "reason": "   "},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("reason", response.json()["error"])
+        self.assertFalse(ProductionEntry.objects.exists())
+
+    def test_a_row_at_zero_needs_no_reason(self):
+        """Rows left at zero are just the shelf sitting there; they are never
+        saved, so there is nothing to explain."""
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.tank.pk, "qty_produced": "0", "reason": ""},
+        ]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProductionEntry.objects.count(), 1)
+
+    def test_one_row_missing_a_reason_writes_none_of_the_sheet(self):
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5"},
+            {"product_id": self.tank.pk, "qty_produced": "2", "reason": ""},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ProductionEntry.objects.exists())
+        self.assertEqual(self.stock(self.pipe), Decimal("10.000"))
+        self.assertEqual(self.stock(self.tank), Decimal("4.000"))
+
+    def test_an_over_long_reason_is_refused_not_a_500(self):
+        """The column holds 500. Without this the save would raise on the way
+        into the database instead of coming back as a message."""
+        response = self.save(self.payload(lines=[
+            {"product_id": self.pipe.pk, "qty_produced": "5", "reason": "x" * 501},
+        ]))
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ProductionEntry.objects.exists())
+
     def test_the_same_product_twice_is_refused(self):
         response = self.save(self.payload(lines=[
             {"product_id": self.pipe.pk, "qty_produced": "5"},
@@ -4723,9 +4975,7 @@ class ProductionTests(UserFactoryMixin, TestCase):
     def test_raising_the_quantity_adds_the_difference(self):
         self.save()
         entry = ProductionEntry.objects.get()
-        self.client.post(
-            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "8"}
-        )
+        self.edit(entry, qty_produced="8")
         entry.refresh_from_db()
         self.assertEqual(entry.qty_produced, Decimal("8.000"))
         self.assertEqual(self.stock(self.pipe), Decimal("18.000"))
@@ -4733,9 +4983,7 @@ class ProductionTests(UserFactoryMixin, TestCase):
     def test_lowering_the_quantity_takes_the_difference_back(self):
         self.save()
         entry = ProductionEntry.objects.get()
-        self.client.post(
-            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "2"}
-        )
+        self.edit(entry, qty_produced="2")
         self.assertEqual(self.stock(self.pipe), Decimal("12.000"))
 
     def test_editing_keeps_stock_before_and_moves_stock_after(self):
@@ -4743,9 +4991,7 @@ class ProductionTests(UserFactoryMixin, TestCase):
         quantity now cannot change that. What it left behind does change."""
         self.save()
         entry = ProductionEntry.objects.get()
-        self.client.post(
-            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "8"}
-        )
+        self.edit(entry, qty_produced="8")
         entry.refresh_from_db()
         self.assertEqual(entry.stock_before, Decimal("10.000"))
         self.assertEqual(entry.stock_after, Decimal("18.000"))
@@ -4757,9 +5003,7 @@ class ProductionTests(UserFactoryMixin, TestCase):
         self.pipe.qty = Decimal("1.000")  # sold since
         self.pipe.save(update_fields=["qty"])
 
-        response = self.client.post(
-            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "1"}
-        )
+        response = self.edit(entry, qty_produced="1")
         self.assertEqual(response.status_code, 200)
         self.assertFormError(
             response.context["form"], "qty_produced",
@@ -4773,14 +5017,55 @@ class ProductionTests(UserFactoryMixin, TestCase):
     def test_a_zero_quantity_is_refused_on_edit(self):
         self.save()
         entry = ProductionEntry.objects.get()
-        response = self.client.post(
-            reverse("core:production_edit", args=[entry.pk]), {"qty_produced": "0"}
-        )
+        response = self.edit(entry, qty_produced="0")
         self.assertFormError(
             response.context["form"], "qty_produced",
             "Quantity must be above 0. Delete the entry instead.",
         )
         self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+
+    def test_the_reason_is_editable(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        self.edit(entry, reason="Recount correction")
+        entry.refresh_from_db()
+        self.assertEqual(entry.reason, "Recount correction")
+
+    def test_a_blank_reason_is_refused_on_edit(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        response = self.edit(entry, reason="   ")
+        self.assertFormError(
+            response.context["form"], "reason",
+            "Give a reason for this production.",
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.reason, "Morning production run")
+
+    def test_the_date_is_editable_and_moves_no_stock(self):
+        """The shelf is one running figure, not a per-day one, so moving an
+        entry to another day cannot move any of it."""
+        self.save()
+        entry = ProductionEntry.objects.get()
+        past = self.today - timedelta(days=3)
+
+        self.edit(entry, production_date=past.isoformat())
+        entry.refresh_from_db()
+        self.assertEqual(entry.production_date, past)
+        self.assertEqual(self.stock(self.pipe), Decimal("15.000"))
+
+    def test_a_future_date_is_refused_on_edit(self):
+        self.save()
+        entry = ProductionEntry.objects.get()
+        response = self.edit(
+            entry, production_date=(self.today + timedelta(days=1)).isoformat()
+        )
+        self.assertFormError(
+            response.context["form"], "production_date",
+            "Production can't be dated in the future.",
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.production_date, self.today)
 
     def test_the_edit_page_renders(self):
         self.save()
@@ -5660,3 +5945,272 @@ class ContextProcessorTests(UserFactoryMixin, TestCase):
     def test_current_role_is_none_for_anonymous(self):
         response = self.client.get(reverse("login"))
         self.assertIsNone(response.context["current_role"])
+
+
+class UserManagementTests(UserFactoryMixin, TestCase):
+    """Accounts are created here or nowhere: there is no self-registration, and
+    only a super admin may open any of these pages."""
+
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+
+    def create(self, **overrides):
+        data = {
+            "username": "nimal",
+            "first_name": "Nimal",
+            "last_name": "Perera",
+            "email": "nimal@senovka.lk",
+            "role": User.Role.MANAGER,
+            "is_active": "on",
+            **overrides,
+        }
+        return self.client.post(reverse("core:user_create"), data)
+
+    # ---- access ----
+    def test_every_user_url_is_closed_to_managers(self):
+        target = self.make_manager()
+        self.client.force_login(target)
+
+        pages = [
+            ("core:user_list", "get"),
+            ("core:user_create", "get"),
+            ("core:user_edit", "get"),
+            ("core:user_reset_password", "post"),
+            ("core:user_deactivate", "post"),
+            ("core:user_activate", "post"),
+        ]
+        for name, method in pages:
+            with self.subTest(url=name):
+                args = [] if name in {"core:user_list", "core:user_create"} else [self.admin.pk]
+                response = getattr(self.client, method)(reverse(name, args=args))
+                self.assertRedirects(response, reverse("core:dashboard"))
+
+        # Not merely hidden — the manager reached none of it.
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+
+    # ---- creating ----
+    def test_creating_a_user_stores_the_fields(self):
+        response = self.create()
+        self.assertRedirects(response, reverse("core:user_list"))
+
+        user = User.objects.get(username="nimal")
+        self.assertEqual(user.first_name, "Nimal")
+        self.assertEqual(user.email, "nimal@senovka.lk")
+        self.assertEqual(user.role, User.Role.MANAGER)
+        self.assertTrue(user.is_active)
+
+    def test_the_generated_password_works_and_is_hashed(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+
+        password = self.client.session["new_credentials"]["password"]
+        self.assertEqual(len(password), 8)
+        # Stored as a hash, never as the text that was shown.
+        self.assertNotEqual(user.password, password)
+        self.assertTrue(user.check_password(password))
+
+    def test_the_password_is_shown_once_and_then_gone(self):
+        self.create()
+        first = self.client.get(reverse("core:user_list"))
+        self.assertIsNotNone(first.context["credentials"])
+        self.assertEqual(first.context["credentials"]["username"], "nimal")
+
+        # Coming back to the list must not put it on screen again.
+        second = self.client.get(reverse("core:user_list"))
+        self.assertIsNone(second.context["credentials"])
+
+    def test_a_duplicate_username_is_refused_whatever_its_case(self):
+        self.create()
+        response = self.create(username="NIMAL")
+        self.assertFormError(response.context["form"], "username", "That username is taken.")
+        self.assertEqual(User.objects.filter(username__iexact="nimal").count(), 1)
+
+    def test_a_username_is_stored_lower_cased(self):
+        self.create(username="Nimal")
+        self.assertTrue(User.objects.filter(username="nimal").exists())
+
+    def test_a_super_admin_can_be_created(self):
+        self.create(username="dinusha", role=User.Role.SUPER_ADMIN)
+        self.assertEqual(
+            User.objects.get(username="dinusha").role, User.Role.SUPER_ADMIN
+        )
+
+    # ---- editing ----
+    def test_editing_updates_the_fields(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+
+        self.client.post(
+            reverse("core:user_edit", args=[user.pk]),
+            {
+                "first_name": "Nimal",
+                "last_name": "Silva",
+                "email": "n.silva@senovka.lk",
+                "role": User.Role.SUPER_ADMIN,
+                "is_active": "on",
+            },
+        )
+        user.refresh_from_db()
+        self.assertEqual(user.last_name, "Silva")
+        self.assertEqual(user.role, User.Role.SUPER_ADMIN)
+
+    def test_the_username_cannot_be_changed(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+
+        self.client.post(
+            reverse("core:user_edit", args=[user.pk]),
+            {
+                "username": "someone_else",
+                "first_name": "Nimal",
+                "last_name": "Perera",
+                "email": "",
+                "role": User.Role.MANAGER,
+                "is_active": "on",
+            },
+        )
+        user.refresh_from_db()
+        self.assertEqual(user.username, "nimal")
+
+    def test_a_super_admin_cannot_change_their_own_role(self):
+        """The field is dropped from the form, so the POST can't reach the
+        column — hiding it in the template would not be enough."""
+        self.client.post(
+            reverse("core:user_edit", args=[self.admin.pk]),
+            {
+                "first_name": "Boss",
+                "last_name": "",
+                "email": "",
+                "role": User.Role.MANAGER,
+                "is_active": "on",
+            },
+        )
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, User.Role.SUPER_ADMIN)
+        # The rest of the edit still went through.
+        self.assertEqual(self.admin.first_name, "Boss")
+
+    def test_a_super_admin_cannot_deactivate_themselves_through_the_form(self):
+        self.client.post(
+            reverse("core:user_edit", args=[self.admin.pk]),
+            {"first_name": "", "last_name": "", "email": "", "is_active": ""},
+        )
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+
+    # ---- deactivating ----
+    def test_deactivating_stops_them_signing_in(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+        password = self.client.session["new_credentials"]["password"]
+
+        self.client.post(reverse("core:user_deactivate", args=[user.pk]))
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+
+        # The account is closed, not just flagged.
+        self.client.logout()
+        response = self.client.post(
+            reverse("login"), {"username": "nimal", "password": password}
+        )
+        self.assertEqual(response.status_code, 200)  # back on the form, not in
+
+    def test_deactivating_leaves_their_records_alone(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+        customer = Customer.objects.create(name="Acme")
+        bill = Bill.objects.create(
+            customer=customer,
+            bill_date=timezone.localdate(),
+            total_amount=Decimal("100.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+        )
+        BillEditAudit.objects.create(
+            bill=bill,
+            edit_date=timezone.localdate(),
+            reason="Wrong qty entered",
+            created_by=user,
+        )
+
+        self.client.post(reverse("core:user_deactivate", args=[user.pk]))
+
+        self.assertTrue(Bill.objects.filter(pk=bill.pk).exists())
+        self.assertEqual(BillEditAudit.objects.get().created_by, user)
+
+    def test_a_super_admin_cannot_deactivate_their_own_account(self):
+        response = self.client.post(
+            reverse("core:user_deactivate", args=[self.admin.pk])
+        )
+        self.assertRedirects(response, reverse("core:user_list"))
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+
+    def test_activating_lets_them_back_in(self):
+        self.create(is_active="")
+        user = User.objects.get(username="nimal")
+        self.assertFalse(user.is_active)
+
+        self.client.post(reverse("core:user_activate", args=[user.pk]))
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+
+    def test_deactivate_and_activate_refuse_a_get(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+        for name in ["core:user_deactivate", "core:user_activate"]:
+            with self.subTest(url=name):
+                response = self.client.get(reverse(name, args=[user.pk]))
+                self.assertEqual(response.status_code, 405)
+
+    # ---- resetting a password ----
+    def test_resetting_replaces_the_password(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+        first = self.client.session["new_credentials"]["password"]
+
+        self.client.post(reverse("core:user_reset_password", args=[user.pk]))
+        second = self.client.session["new_credentials"]["password"]
+
+        self.assertNotEqual(first, second)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password(second))
+        self.assertFalse(user.check_password(first))
+
+    def test_resetting_shows_the_new_password_once(self):
+        self.create()
+        user = User.objects.get(username="nimal")
+        self.client.get(reverse("core:user_list"))  # clear the create's password
+
+        self.client.post(reverse("core:user_reset_password", args=[user.pk]))
+        response = self.client.get(reverse("core:user_list"))
+        self.assertEqual(response.context["credentials"]["username"], "nimal")
+        self.assertIsNone(
+            self.client.get(reverse("core:user_list")).context["credentials"]
+        )
+
+    def test_resetting_your_own_password_does_not_sign_you_out(self):
+        """Changing a password rotates the session auth hash; without
+        update_session_auth_hash the reset would log the admin out."""
+        response = self.client.post(
+            reverse("core:user_reset_password", args=[self.admin.pk])
+        )
+        self.assertRedirects(response, reverse("core:user_list"))
+        # Still signed in: the list renders rather than bouncing to login.
+        self.assertEqual(
+            self.client.get(reverse("core:user_list")).status_code, 200
+        )
+
+    def test_reset_refuses_a_get(self):
+        response = self.client.get(
+            reverse("core:user_reset_password", args=[self.admin.pk])
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_generated_passwords_avoid_ambiguous_characters(self):
+        from core.models import generate_password
+
+        seen = "".join(generate_password() for _ in range(200))
+        for char in "Il1O0":
+            self.assertNotIn(char, seen)

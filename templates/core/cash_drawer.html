@@ -105,6 +105,7 @@
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">In (+)</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Out (−)</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Running Balance</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
         </tr>
       </thead>
 
@@ -121,6 +122,7 @@
             <td class="whitespace-nowrap px-4 py-2 text-right text-xs font-semibold text-slate-500">
               {{ opening|floatformat:2|intcomma }}
             </td>
+            <td></td>
           </tr>
         {% endif %}
 
@@ -145,6 +147,15 @@
               {% else %}
                 <span class="text-slate-400">{{ row.entry.get_txn_type_display }}</span>
               {% endif %}
+
+              {% if row.entry.edited_at %}
+                {# title=, so the reason for the change is one hover away rather
+                   than another column wide. #}
+                <span class="ml-1 cursor-help rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+                      title="Edited {{ row.entry.edited_at|date:'j M Y, g:i a' }}{% if row.entry.edited_by %} by {{ row.entry.edited_by.username }}{% endif %}{% if row.entry.edit_reason %} — {{ row.entry.edit_reason }}{% endif %}">
+                  Edited
+                </span>
+              {% endif %}
             </td>
 
             <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-emerald-600">
@@ -157,10 +168,39 @@
                        {% if row.running < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
               {{ row.running|floatformat:2|intcomma }}
             </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              {% if row.is_manual %}
+                <div class="flex justify-end gap-1">
+                  <button type="button"
+                          data-url="{% url 'core:cash_drawer_edit' row.entry.pk %}"
+                          data-date="{{ row.entry.txn_date|date:'Y-m-d' }}"
+                          data-type="{{ row.entry.txn_type }}"
+                          data-amount="{{ row.entry.amount }}"
+                          data-reason="{{ row.entry.reason }}"
+                          class="js-edit rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                    Edit
+                  </button>
+                  <button type="button"
+                          data-url="{% url 'core:cash_drawer_delete' row.entry.pk %}"
+                          data-date="{{ row.entry.txn_date|date:'j M Y' }}"
+                          data-type="{{ row.entry.get_txn_type_display }}"
+                          data-amount="{{ row.entry.amount|floatformat:2|intcomma }}"
+                          data-reason="{{ row.entry.reason }}"
+                          class="js-delete rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                    Delete
+                  </button>
+                </div>
+              {% else %}
+                {# Written by a bill: it belongs to that bill's payment, and is
+                   corrected by editing the bill, not here. #}
+                <span class="text-xs text-slate-400">From Bill #{{ row.entry.bill_id }}</span>
+              {% endif %}
+            </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="5" class="px-4 py-12 text-center">
+            <td colspan="6" class="px-4 py-12 text-center">
               {% if is_filtered %}
                 <p class="text-sm text-slate-500">No drawer activity in this date range.</p>
                 <a href="{% url 'core:cash_drawer' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
@@ -191,6 +231,7 @@
                        {% if closing < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
               {{ closing|floatformat:2|intcomma }}
             </td>
+            <td></td>
           </tr>
         </tfoot>
       {% endif %}
@@ -278,10 +319,164 @@
   </div>
 </div>
 
+<!-- ====================== Edit modal ====================== -->
+{% comment %}
+Only ever opened on a manual entry — a bill-linked row has no Edit button, and
+cash_drawer_edit refuses one regardless of what is posted at it.
+
+The form action is set per row by JS. When a correction fails validation the
+view re-renders this page with `edit_form` bound and `edit_entry` set, and the
+script below reopens the modal on the errors rather than lose what was typed.
+{% endcomment %}
+<div id="edit-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <form method="post" id="edit-modal-form" novalidate>
+      {% csrf_token %}
+
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 id="edit-modal-title" class="text-base font-semibold text-slate-900">Edit drawer entry</h3>
+          <p class="mt-0.5 text-xs text-slate-500">
+            The running balance is summed from the rows on every render, so it
+            re-reckons itself once this is saved.
+          </p>
+        </div>
+        <button type="button" id="edit-modal-close" aria-label="Close"
+                class="text-slate-400 hover:text-slate-900">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if edit_form.non_field_errors %}
+        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {{ edit_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div class="mt-5 space-y-4">
+        <div>
+          <label for="{{ edit_form.txn_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ edit_form.txn_date.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ edit_form.txn_date }}
+          {% for error in edit_form.txn_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ edit_form.txn_type.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ edit_form.txn_type.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ edit_form.txn_type }}
+          {% for error in edit_form.txn_type.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ edit_form.amount.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ edit_form.amount.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ edit_form.amount }}
+          {% for error in edit_form.amount.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ edit_form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ edit_form.reason.label }}
+          </label>
+          {{ edit_form.reason }}
+          <p class="mt-1.5 text-xs text-slate-400">{{ edit_form.reason.help_text }}</p>
+          {% for error in edit_form.reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div class="border-t border-slate-200 pt-4">
+          <label for="{{ edit_form.edit_reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ edit_form.edit_reason.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ edit_form.edit_reason }}
+          <p class="mt-1.5 text-xs text-slate-400">
+            Kept against the entry and shown on the Edited badge in the log.
+          </p>
+          {% for error in edit_form.edit_reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" id="edit-modal-cancel"
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit"
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+          Save changes
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ====================== Delete modal ====================== -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">Delete drawer entry?</h3>
+        <p class="mt-1 text-sm text-slate-600">
+          <span id="delete-modal-type" class="font-semibold text-slate-900"></span>
+          of <span id="delete-modal-amount" class="font-semibold text-slate-900"></span>
+          on <span id="delete-modal-date" class="font-semibold text-slate-900"></span>
+        </p>
+        <p id="delete-modal-reason-line" class="mt-1 hidden text-sm text-slate-500">
+          “<span id="delete-modal-reason"></span>”
+        </p>
+
+        <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Nothing needs reversing: the drawer total isn't stored anywhere, it's
+          added up from the rows each time the page is drawn. Once this row is
+          gone it simply stops counting.
+        </p>
+        <p class="mt-2 text-xs text-slate-500">This can't be undone.</p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
+{% comment %}
+Set only when a correction bounced back with errors: the URL of the entry that
+was being edited, so the reopened modal still knows where to post.
+{% endcomment %}
+<script id="edit-failed-url" type="application/json">
+  {% if edit_entry %}"{% url 'core:cash_drawer_edit' edit_entry.pk %}"{% else %}null{% endif %}
+</script>
+
 <script>
+  // ---- record out ----
   (function () {
     const modal = document.getElementById('out-modal');
     if (!modal) return;
@@ -313,6 +508,109 @@
     // A rejected entry comes back as a fresh page with the errors on the form,
     // so reopen it rather than hide what the operator typed.
     if (modal.querySelector('.text-rose-600')) show();
+  })();
+
+  // ---- edit a manual entry ----
+  (function () {
+    const modal = document.getElementById('edit-modal');
+    if (!modal) return;
+
+    const form   = document.getElementById('edit-modal-form');
+    const close  = document.getElementById('edit-modal-close');
+    const cancel = document.getElementById('edit-modal-cancel');
+
+    // The modal is one form reused by every row, so its fields are Django's,
+    // named as the form names them.
+    function field(name) { return form.querySelector('[name="' + name + '"]'); }
+
+    function show() {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      const first = modal.querySelector('input, select');
+      if (first) first.focus();
+    }
+    function hide() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    document.querySelectorAll('.js-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        form.action = btn.dataset.url;
+        field('txn_date').value = btn.dataset.date;
+        field('txn_type').value = btn.dataset.type;
+        field('amount').value = btn.dataset.amount;
+        field('reason').value = btn.dataset.reason;
+        // Never carried over from a previous row: the reason for *this* change
+        // has to be typed for this change.
+        field('edit_reason').value = '';
+        show();
+      });
+    });
+
+    close.addEventListener('click', hide);
+    cancel.addEventListener('click', hide);
+    modal.addEventListener('click', function (e) { if (e.target === modal) hide(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) hide();
+    });
+
+    // A correction that failed validation is re-rendered into this modal by the
+    // view, already carrying its values and errors. Reopen it as it stands —
+    // the prefill above would wipe exactly what needs correcting.
+    const failedUrl = JSON.parse(document.getElementById('edit-failed-url').textContent);
+    if (failedUrl) {
+      form.action = failedUrl;
+      show();
+    }
+  })();
+
+  // ---- delete a manual entry ----
+  (function () {
+    const modal = document.getElementById('delete-modal');
+    if (!modal) return;
+
+    const form       = document.getElementById('delete-modal-form');
+    const typeEl     = document.getElementById('delete-modal-type');
+    const amountEl   = document.getElementById('delete-modal-amount');
+    const dateEl     = document.getElementById('delete-modal-date');
+    const reasonEl   = document.getElementById('delete-modal-reason');
+    const reasonLine = document.getElementById('delete-modal-reason-line');
+    const cancel     = document.getElementById('delete-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.url;
+      typeEl.textContent = btn.dataset.type;
+      amountEl.textContent = btn.dataset.amount;
+      dateEl.textContent = btn.dataset.date;
+
+      // reason is optional on a drawer entry; an empty quoted string would read
+      // as though it had been left blank on purpose.
+      const reason = btn.dataset.reason || '';
+      reasonEl.textContent = reason;
+      reasonLine.classList.toggle('hidden', reason === '');
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
   })();
 </script>
 {% endblock %}

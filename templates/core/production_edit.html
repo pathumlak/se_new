@@ -21,11 +21,11 @@
       </div>
     {% endif %}
 
-    {# Product and date identify the entry; changing them makes it a different one. #}
+    {# Product identifies the entry; changing it makes it a different one. #}
     <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
       <p class="text-sm font-semibold text-slate-900">{{ entry.product }}</p>
       <p class="mt-0.5 text-xs text-slate-500">
-        Produced on {{ entry.production_date|date:"j M Y" }}
+        The product can't be changed. Delete this entry and record it again instead.
       </p>
       <dl class="mt-3 grid grid-cols-3 gap-3 border-t border-slate-200 pt-3 text-xs">
         <div>
@@ -38,7 +38,7 @@
         </div>
         <div>
           <dt class="text-slate-500">Stock now</dt>
-          <dd class="mt-0.5 font-semibold text-slate-900">{{ entry.product.qty|floatformat:"-3" }}</dd>
+          <dd class="mt-0.5 font-semibold text-slate-900">{{ stock_now|floatformat:"-3" }}</dd>
         </div>
       </dl>
     </div>
@@ -46,17 +46,44 @@
     <form method="post" novalidate>
       {% csrf_token %}
 
-      <div>
-        <label for="{{ form.qty_produced.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-          {{ form.qty_produced.label }} <span class="text-rose-500">*</span>
-        </label>
-        {{ form.qty_produced }}
-        <p class="mt-1.5 text-xs text-slate-400">
-          Stock moves by the difference from {{ entry.qty_produced|floatformat:"-3" }}, up or down.
-        </p>
-        {% for error in form.qty_produced.errors %}
-          <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
-        {% endfor %}
+      <div class="space-y-5">
+        <div>
+          <label for="{{ form.production_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.production_date.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.production_date }}
+          <p class="mt-1.5 text-xs text-slate-400">
+            Moves the entry to another day. It doesn't move any stock — the shelf
+            is a single running figure, not a per-day one.
+          </p>
+          {% for error in form.production_date.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ form.qty_produced.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.qty_produced.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.qty_produced }}
+          <p class="mt-1.5 text-xs text-slate-400">
+            Stock moves by the difference from {{ was_qty|floatformat:"-3" }}, up or down.
+          </p>
+          {% for error in form.qty_produced.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ form.reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+            {{ form.reason.label }} <span class="text-rose-500">*</span>
+          </label>
+          {{ form.reason }}
+          <p class="mt-1.5 text-xs text-slate-400">{{ form.reason.help_text }}</p>
+          {% for error in form.reason.errors %}
+            <p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>
+          {% endfor %}
+        </div>
       </div>
 
       <div class="mt-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">

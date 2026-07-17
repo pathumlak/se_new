@@ -5,137 +5,260 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Senovka Plastics{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['DM Mono', 'monospace'],
+          },
+          colors: {
+            navy: {
+              950: '#0B0F1A',
+              900: '#0F1628',
+              850: '#131C34',
+              800: '#192240',
+              750: '#1E2A4A',
+              700: '#243354',
+            },
+            amber: {
+              accent: '#F59E0B',
+              light:  '#FEF3C7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Scrollbar styling for sidebar */
+    #sidebar nav::-webkit-scrollbar { width: 4px; }
+    #sidebar nav::-webkit-scrollbar-track { background: transparent; }
+    #sidebar nav::-webkit-scrollbar-thumb { background: #243354; border-radius: 2px; }
+    #sidebar nav::-webkit-scrollbar-thumb:hover { background: #F59E0B; }
+
+    /* Active nav indicator */
+    .nav-active-bar {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 60%;
+      background: #F59E0B;
+      border-radius: 0 2px 2px 0;
+    }
+
+    /* Smooth sidebar transition */
+    #sidebar { transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+    /* Badge pill */
+    .role-badge-admin { background: rgba(99,102,241,0.12); color: #818CF8; border: 1px solid rgba(99,102,241,0.2); }
+    .role-badge-user  { background: rgba(100,116,139,0.1); color: #94A3B8; border: 1px solid rgba(100,116,139,0.15); }
+
+    /* Section divider in nav */
+    .nav-section-label {
+      padding: 0 12px;
+      margin-top: 20px;
+      margin-bottom: 4px;
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #2D3F6B;
+    }
+
+    .nav-divider {
+      height: 1px;
+      background: linear-gradient(to right, #1E2A4A, transparent);
+      margin: 12px 12px;
+    }
+  </style>
   {% block extra_head %}{% endblock %}
 </head>
-<body class="h-full bg-slate-100 text-slate-800">
+<body class="h-full bg-slate-50 font-sans antialiased text-slate-800">
 
 {% if user.is_authenticated %}
-{% comment %}
-Active state keys off the resolved URL name, not request.path — path prefixes
-would mark "Bill List" (/bills/) active while on "Make Bill" (/bills/new/).
-
-Spelled as a comment tag because the hash-style comment is single-line only:
-spanning lines, it isn't stripped and renders onto the page as text.
-{% endcomment %}
 {% with active=request.resolver_match.url_name %}
-{% with link="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors" on="bg-slate-800 text-white" off="text-slate-400 hover:bg-slate-800/60 hover:text-white" %}
+{% with lbase="relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all duration-150 cursor-pointer select-none" %}
+{% with lon="bg-navy-800 text-white shadow-sm" loff="text-slate-400 hover:bg-navy-800/70 hover:text-slate-200" %}
 
   <!-- Mobile backdrop -->
   <div id="sidebar-backdrop"
-       class="fixed inset-0 z-30 hidden bg-slate-900/60 backdrop-blur-sm lg:hidden"></div>
+       class="fixed inset-0 z-30 hidden bg-black/50 backdrop-blur-[2px] lg:hidden"></div>
 
-  <!-- ======================= SIDEBAR ======================= -->
+  <!-- ======================== SIDEBAR ======================== -->
   <aside id="sidebar"
          aria-label="Main navigation"
-         class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full transform flex-col
-                bg-slate-900 transition-transform duration-200 ease-in-out lg:translate-x-0">
+         class="fixed inset-y-0 left-0 z-40 flex w-[240px] -translate-x-full flex-col bg-navy-950 lg:translate-x-0"
+         style="background: #0B0F1A;">
 
     <!-- Brand -->
-    <div class="flex h-16 shrink-0 items-center justify-between border-b border-slate-800 px-4">
-      <a href="{% url 'core:dashboard' %}" class="flex items-center gap-2.5">
-        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-sm font-bold text-slate-900">SP</span>
-        <span class="text-base font-semibold tracking-tight text-white">Senovka Plastics</span>
+    <div class="flex h-[60px] shrink-0 items-center gap-3 border-b px-4"
+         style="border-color: #131C34;">
+      <a href="{% url 'core:dashboard' %}" class="flex items-center gap-2.5 min-w-0">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg ring-1 ring-white/10">
+          <img src="{% static 'images/logo.jpeg' %}" alt="Logo" class="h-full w-full object-cover">
+        </span>
+        <div class="min-w-0">
+          <p class="truncate text-[13px] font-semibold text-white tracking-tight leading-tight">Senovka Plastics</p>
+          <p class="text-[10px] text-slate-500 leading-tight tracking-widest uppercase">ERP System</p>
+        </div>
       </a>
-      <button id="sidebar-close" class="text-slate-400 hover:text-white lg:hidden" aria-label="Close navigation">
-        <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <button id="sidebar-close" class="ml-auto text-slate-600 hover:text-white transition-colors lg:hidden" aria-label="Close navigation">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
         </svg>
       </button>
     </div>
 
     <!-- Nav -->
-    <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+    <nav class="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
 
-      <a href="{% url 'core:dashboard' %}" class="{{ link }} {% if active == 'dashboard' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <!-- Main -->
+      <a href="{% url 'core:dashboard' %}"
+         class="{{ lbase }} {% if active == 'dashboard' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'dashboard' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.955-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
         </svg>
         Dashboard
       </a>
 
       {% if is_super_admin %}
-      <a href="{% url 'core:category_list' %}" class="{{ link }} {% if active == 'category_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <div class="nav-divider"></div>
+      <p class="nav-section-label">Administration</p>
+
+      <a href="{% url 'core:user_list' %}"
+         class="{{ lbase }} {% if active|slice:':5' == 'user_' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active|slice:':5' == 'user_' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
+        </svg>
+        Users
+      </a>
+
+      <a href="{% url 'core:category_list' %}"
+         class="{{ lbase }} {% if active == 'category_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'category_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/>
         </svg>
         Categories
-        <span class="ml-auto rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 group-hover:text-slate-400">Admin</span>
       </a>
       {% endif %}
 
-      <a href="{% url 'core:product_list' %}" class="{{ link }} {% if active == 'product_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <div class="nav-divider"></div>
+      <p class="nav-section-label">Catalogue</p>
+
+      <a href="{% url 'core:product_list' %}"
+         class="{{ lbase }} {% if active == 'product_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'product_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
         </svg>
         Products
       </a>
 
-      <a href="{% url 'core:customer_list' %}" class="{{ link }} {% if active == 'customer_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:customer_list' %}"
+         class="{{ lbase }} {% if active == 'customer_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'customer_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
         </svg>
         Customers
       </a>
 
-      <a href="{% url 'core:bill_create' %}" class="{{ link }} {% if active == 'bill_create' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <div class="nav-divider"></div>
+      <p class="nav-section-label">Billing</p>
+
+      <a href="{% url 'core:bill_create' %}"
+         class="{{ lbase }} {% if active == 'bill_create' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'bill_create' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        Make Bill
+        New Bill
       </a>
 
-      <a href="{% url 'core:bill_list' %}" class="{{ link }} {% if active == 'bill_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:bill_list' %}"
+         class="{{ lbase }} {% if active == 'bill_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'bill_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zM3.75 12h.007v.008H3.75V12zm0 5.25h.007v.008H3.75v-.008z"/>
         </svg>
         Bill List
       </a>
 
-      <a href="{% url 'core:held_bill_list' %}" class="{{ link }} {% if active == 'held_bill_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:held_bill_list' %}"
+         class="{{ lbase }} {% if active == 'held_bill_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'held_bill_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/>
         </svg>
         Held Bills
       </a>
 
-      <a href="{% url 'core:cheque_list' %}" class="{{ link }} {% if active == 'cheque_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:cheque_list' %}"
+         class="{{ lbase }} {% if active == 'cheque_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'cheque_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/>
         </svg>
         Cheques
       </a>
 
-      <a href="{% url 'core:cash_drawer' %}" class="{{ link }} {% if active == 'cash_drawer' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <div class="nav-divider"></div>
+      <p class="nav-section-label">Finance</p>
+
+      <a href="{% url 'core:cash_drawer' %}"
+         class="{{ lbase }} {% if active == 'cash_drawer' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'cash_drawer' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
         </svg>
         Cash Drawer
       </a>
 
-      <a href="{% url 'core:supplier_bill_list' %}" class="{{ link }} {% if active == 'supplier_bill_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:supplier_bill_list' %}"
+         class="{{ lbase }} {% if active == 'supplier_bill_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'supplier_bill_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12"/>
         </svg>
         Supplier Bills
       </a>
 
-      <a href="{% url 'core:production_list' %}" class="{{ link }} {% if active == 'production_list' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12M3 3l1.5 1.5M15 3l1.5 1.5M21 21v-9l-3.75-3"/>
-        </svg>
-        Production
-      </a>
-
-      <a href="{% url 'core:ledger_index' %}" class="{{ link }} {% if active == 'ledger_index' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <a href="{% url 'core:ledger_index' %}"
+         class="{{ lbase }} {% if active == 'ledger_index' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'ledger_index' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
         </svg>
         Customer Ledger
       </a>
 
-      <a href="{% url 'core:sales_report' %}" class="{{ link }} {% if active == 'sales_report' %}{{ on }}{% else %}{{ off }}{% endif %}">
-        <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <div class="nav-divider"></div>
+      <p class="nav-section-label">Operations</p>
+
+      <a href="{% url 'core:production_list' %}"
+         class="{{ lbase }} {% if active == 'production_list' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'production_list' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12M3 3l1.5 1.5M15 3l1.5 1.5M21 21v-9l-3.75-3"/>
+        </svg>
+        Production
+      </a>
+
+      <a href="{% url 'core:sales_report' %}"
+         class="{{ lbase }} {% if active == 'sales_report' %}{{ lon }}{% else %}{{ loff }}{% endif %}">
+        {% if active == 'sales_report' %}<span class="nav-active-bar"></span>{% endif %}
+        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
         </svg>
         Sales Report
@@ -143,41 +266,65 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
       {% block sidebar_nav %}{% endblock %}
     </nav>
+
+    <!-- Sidebar footer -->
+    <div class="shrink-0 border-t px-3 py-3" style="border-color: #131C34;">
+      <p class="px-1 text-[9px] font-medium uppercase tracking-widest" style="color: #1E2A4A;">
+        v{{ SENOVKA_VERSION|default:"1.0" }} &nbsp;·&nbsp; Senovka ERP
+      </p>
+    </div>
   </aside>
 
-  <!-- ======================= MAIN ======================= -->
-  <div class="lg:pl-64">
+  <!-- ======================== MAIN ======================== -->
+  <div class="lg:pl-[240px] flex flex-col min-h-screen">
 
     <!-- Top bar -->
-    <header class="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm sm:px-6">
-      <button id="sidebar-open" class="text-slate-600 hover:text-slate-900 lg:hidden" aria-label="Open navigation">
-        <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <header class="sticky top-0 z-20 flex h-[60px] items-center gap-4 border-b border-slate-200/80 bg-white/95 backdrop-blur-sm px-4 sm:px-6"
+            style="box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 0 rgba(0,0,0,0.04);">
+
+      <!-- Mobile menu toggle -->
+      <button id="sidebar-open"
+              class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors lg:hidden"
+              aria-label="Open navigation">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
         </svg>
       </button>
 
-      <h1 class="truncate text-base font-semibold text-slate-900">{% block header %}{% endblock %}</h1>
+      <!-- Page title -->
+      <h1 class="truncate text-[15px] font-semibold text-slate-900 tracking-tight">
+        {% block header %}{% endblock %}
+      </h1>
 
-      <div class="ml-auto flex items-center gap-3">
-        <div class="hidden text-right sm:block">
-          <p class="text-sm font-medium leading-tight text-slate-900">{{ user.get_username }}</p>
-          <p class="text-xs leading-tight text-slate-500">{{ user.email|default:"" }}</p>
+      <!-- Right side -->
+      <div class="ml-auto flex items-center gap-2">
+
+        <!-- User info -->
+        <div class="hidden sm:flex items-center gap-2.5 pr-2.5 border-r border-slate-200">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy-950 text-[11px] font-bold text-white uppercase"
+               style="background: #0B0F1A;">
+            {{ user.get_username|slice:":1" }}
+          </div>
+          <div class="text-right leading-tight">
+            <p class="text-[13px] font-semibold text-slate-900">{{ user.get_username }}</p>
+            <p class="text-[11px] text-slate-400">{{ user.email|default:"" }}</p>
+          </div>
         </div>
 
         {% if current_role %}
-          <span class="rounded-full px-2.5 py-1 text-xs font-semibold
-                       {% if is_super_admin %}bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200
-                       {% else %}bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200{% endif %}">
+          <span class="rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-wide uppercase
+                       {% if is_super_admin %}role-badge-admin{% else %}role-badge-user{% endif %}">
             {{ user.get_role_display }}
           </span>
         {% endif %}
 
+        <!-- Logout -->
         <form method="post" action="{% url 'logout' %}">
           {% csrf_token %}
           <button type="submit"
-                  class="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium
-                         text-slate-700 transition hover:bg-slate-50 hover:text-slate-900">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                  class="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-medium
+                         text-slate-600 transition-all hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
             </svg>
             <span class="hidden sm:inline">Log out</span>
@@ -186,68 +333,81 @@ spanning lines, it isn't stripped and renders onto the page as text.
       </div>
     </header>
 
-    <main class="p-4 sm:p-6 lg:p-8">
-      {% if messages %}
-        <div class="mb-6 space-y-2">
-          {% for message in messages %}
-            <div class="flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm
-                        {% if message.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800
-                        {% elif message.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800
-                        {% elif message.tags == 'warning' %}border-amber-200 bg-amber-50 text-amber-800
-                        {% else %}border-slate-200 bg-white text-slate-700{% endif %}">
-              <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                {% if message.tags == 'success' %}
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                {% else %}
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                {% endif %}
-              </svg>
-              <span>{{ message }}</span>
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
+    <!-- Messages -->
+    {% if messages %}
+      <div class="px-4 pt-4 sm:px-6 space-y-2">
+        {% for message in messages %}
+          <div class="flex items-start gap-3 rounded-xl border px-4 py-3 text-[13px] font-medium
+                      {% if message.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800
+                      {% elif message.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800
+                      {% elif message.tags == 'warning' %}border-amber-200 bg-amber-50 text-amber-800
+                      {% else %}border-slate-200 bg-white text-slate-700{% endif %}"
+               style="box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
+            <svg class="mt-px h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              {% if message.tags == 'success' %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              {% elif message.tags == 'error' %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              {% elif message.tags == 'warning' %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+              {% else %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/>
+              {% endif %}
+            </svg>
+            <span>{{ message }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
 
+    <!-- Page content -->
+    <main class="flex-1 p-4 sm:p-6 lg:p-8">
       {% block content %}{% endblock %}
     </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-100 px-6 py-3">
+      <p class="text-[11px] text-slate-400 font-medium">
+        &copy; {% now "Y" %} Senovka Plastics (Pvt) Ltd &nbsp;·&nbsp; All rights reserved
+      </p>
+    </footer>
   </div>
 
+{% endwith %}
 {% endwith %}
 {% endwith %}
 
 <script>
   (function () {
-    const sidebar = document.getElementById('sidebar');
+    const sidebar  = document.getElementById('sidebar');
     const backdrop = document.getElementById('sidebar-backdrop');
-    const openBtn = document.getElementById('sidebar-open');
+    const openBtn  = document.getElementById('sidebar-open');
     const closeBtn = document.getElementById('sidebar-close');
 
-    function open() {
+    function openSidebar() {
       sidebar.classList.remove('-translate-x-full');
       backdrop.classList.remove('hidden');
-      document.body.classList.add('overflow-hidden', 'lg:overflow-auto');
+      document.body.classList.add('overflow-hidden');
     }
-    function close() {
+    function closeSidebar() {
       sidebar.classList.add('-translate-x-full');
       backdrop.classList.add('hidden');
-      document.body.classList.remove('overflow-hidden', 'lg:overflow-auto');
+      document.body.classList.remove('overflow-hidden');
     }
 
-    openBtn.addEventListener('click', open);
-    closeBtn.addEventListener('click', close);
-    backdrop.addEventListener('click', close);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    openBtn.addEventListener('click', openSidebar);
+    closeBtn.addEventListener('click', closeSidebar);
+    backdrop.addEventListener('click', closeSidebar);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSidebar(); });
 
-    // Reset inline mobile state when crossing into the lg breakpoint, so the
-    // desktop sidebar is never left translated off-canvas.
     window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
-      if (e.matches) close();
+      if (e.matches) closeSidebar();
     });
   })();
 </script>
 
 {% else %}
-  {# Unauthenticated pages (login, anonymous 403) render without the chrome. #}
+  {# Unauthenticated pages render without the chrome #}
   {% block anon_content %}{% endblock %}
 {% endif %}
 

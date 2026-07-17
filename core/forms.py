@@ -1,8 +1,17 @@
 from decimal import Decimal
 
 from django import forms
+from django.utils import timezone
 
-from .models import CashDrawer, Category, Cheque, Customer, Product, ProductionEntry
+from .models import (
+    CashDrawer,
+    Category,
+    Cheque,
+    Customer,
+    Product,
+    ProductionEntry,
+    User,
+)
 
 INPUT_CLASSES = (
     "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
@@ -16,6 +25,103 @@ CHECKBOX_CLASSES = (
     "h-4 w-4 rounded border-slate-300 text-slate-900 "
     "focus:ring-1 focus:ring-slate-900"
 )
+
+
+class UserCreateForm(forms.ModelForm):
+    """Create a staff account.
+
+    No password field: there is no self-registration, so the first password is
+    generated and shown to the super admin once, rather than chosen by whoever
+    happens to be filling the form in.
+    """
+
+    class Meta:
+        model = User
+        fields = ["username", "first_name", "last_name", "email", "role", "is_active"]
+        labels = {
+            "first_name": "First name",
+            "last_name": "Last name",
+            "is_active": "Active",
+        }
+        widgets = {
+            "username": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. nimal",
+                    "autofocus": True,
+                    "autocapitalize": "none",
+                }
+            ),
+            "first_name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Nimal"}
+            ),
+            "last_name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Perera"}
+            ),
+            "email": forms.EmailInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. nimal@senovka.lk"}
+            ),
+            "role": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+        help_texts = {
+            "username": "Used to sign in. It cannot be changed later.",
+            "email": "Leave blank if you don't have one.",
+            "is_active": "An inactive account cannot sign in.",
+        }
+
+    def clean_username(self):
+        """Stored lower-cased. Django's username lookup is case-sensitive, so
+        'Nimal' and 'nimal' would otherwise be two accounts that look like one.
+        """
+        username = self.cleaned_data["username"].strip().lower()
+        if User.objects.filter(username__iexact=username).exists():
+            raise forms.ValidationError("That username is taken.")
+        return username
+
+
+class UserEditForm(forms.ModelForm):
+    """Edit a staff account.
+
+    `username` is absent: it identifies the account, and every record already
+    written points at this row — renaming it would rewrite history.
+
+    `role` and `is_active` are *removed from the form* when a super admin edits
+    their own account, not just disabled in the template. A disabled input is
+    still a field the POST can carry, so hiding alone would let a super admin
+    demote or lock themselves out by hand. Dropping them means their POST
+    cannot reach those columns at all.
+    """
+
+    class Meta:
+        model = User
+        fields = ["first_name", "last_name", "email", "role", "is_active"]
+        labels = {
+            "first_name": "First name",
+            "last_name": "Last name",
+            "is_active": "Active",
+        }
+        widgets = {
+            "first_name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "autofocus": True}
+            ),
+            "last_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "email": forms.EmailInput(attrs={"class": INPUT_CLASSES}),
+            "role": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+        help_texts = {
+            "email": "Leave blank if you don't have one.",
+            "is_active": "An inactive account cannot sign in. Records they "
+            "already created are not affected.",
+        }
+
+    def __init__(self, *args, is_self=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.is_self = is_self
+        if is_self:
+            del self.fields["role"]
+            del self.fields["is_active"]
 
 
 class CategoryForm(forms.ModelForm):
@@ -201,16 +307,30 @@ class CustomerForm(forms.ModelForm):
 class ProductionEntryForm(forms.ModelForm):
     """Correct one production entry.
 
-    Only the quantity: the product and the date say what was made and when,
-    and changing those makes it a different entry. stock_before and stock_after
-    are snapshots the view maintains, never typed.
+    `product` is absent: it is what was made, and pointing the entry at a
+    different product is not a correction — it's two corrections, and the stock
+    move would have to reverse one shelf and add to another. Delete and re-enter
+    instead.
+
+    stock_before and stock_after are snapshots the view maintains, never typed.
     """
 
     class Meta:
         model = ProductionEntry
-        fields = ["qty_produced"]
-        labels = {"qty_produced": "Quantity produced"}
+        fields = ["production_date", "qty_produced", "reason"]
+        labels = {
+            "production_date": "Production date",
+            "qty_produced": "Quantity produced",
+            "reason": "Reason",
+        }
         widgets = {
+            # format pinned: a <input type=date> only pre-fills from an ISO
+            # value, and the localised default would render the stored date as
+            # an empty box.
+            "production_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
             "qty_produced": forms.NumberInput(
                 attrs={
                     "class": INPUT_CLASSES,
@@ -219,6 +339,20 @@ class ProductionEntryForm(forms.ModelForm):
                     "autofocus": True,
                 }
             ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Morning production run",
+                    "maxlength": 500,
+                }
+            ),
+        }
+        help_texts = {
+            "reason": "What this production was — e.g. Morning production run, "
+            "Evening batch, Recount correction.",
+        }
+        error_messages = {
+            "reason": {"required": "Give a reason for this production."},
         }
 
     def clean_qty_produced(self):
@@ -228,6 +362,21 @@ class ProductionEntryForm(forms.ModelForm):
                 "Quantity must be above 0. Delete the entry instead."
             )
         return qty
+
+    def clean_production_date(self):
+        production_date = self.cleaned_data["production_date"]
+        # Mirrors _save_production: production can be recorded late, never early.
+        if production_date > timezone.localdate():
+            raise forms.ValidationError("Production can't be dated in the future.")
+        return production_date
+
+    def clean_reason(self):
+        """A reason of spaces is no reason. CharField already strips, so this
+        only has to reject what stripping leaves empty."""
+        reason = self.cleaned_data["reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for this production.")
+        return reason
 
 
 class SupplierQuickForm(forms.ModelForm):
@@ -357,6 +506,117 @@ class CashDrawerOutForm(forms.ModelForm):
         if commit:
             entry.save()
         return entry
+
+
+class CashDrawerEditForm(forms.ModelForm):
+    """Correct a manual drawer entry.
+
+    Only ever reaches an entry with no bill: one auto-written by a bill belongs
+    to that bill's payment, and correcting it here would put the drawer out of
+    step with the bill it came from. The view refuses those; this form never
+    sees one.
+
+    `txn_type` *is* editable, unlike on CashDrawerOutForm where everything is
+    money going out — a withdrawal keyed as a transfer is exactly the kind of
+    mistake this page exists to fix.
+
+    No balance is reversed on save: the running balance on the list is summed
+    from the rows themselves on every render, so a corrected row is simply
+    counted differently next time.
+    """
+
+    edit_reason = forms.CharField(
+        label="Reason for Edit",
+        max_length=500,
+        error_messages={
+            "required": "Give a reason for this edit.",
+            "max_length": "Keep the reason under 500 characters.",
+        },
+        widget=forms.TextInput(
+            attrs={
+                "class": INPUT_CLASSES,
+                "placeholder": "e.g. Wrong amount keyed, Wrong date",
+                "maxlength": 500,
+            }
+        ),
+    )
+
+    class Meta:
+        model = CashDrawer
+        fields = ["txn_date", "txn_type", "amount", "reason", "edit_reason"]
+        labels = {
+            "txn_date": "Date",
+            "txn_type": "Type",
+            "reason": "Description",
+        }
+        widgets = {
+            # format pinned: see ProductionEntryForm — a bound <input type=date>
+            # renders empty unless the value is ISO.
+            "txn_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "txn_type": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "amount": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0"}
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Owner Withdrawal — school fees",
+                }
+            ),
+        }
+        help_texts = {
+            "reason": "What this entry was for. Shown in the log.",
+        }
+
+    def __init__(self, *args, drawer_balance=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: The drawer with this entry left out — what it would hold if this row
+        #: didn't exist. An edited 'out' can't take more than that.
+        self.drawer_balance = drawer_balance
+
+    def clean_reason(self):
+        return self.cleaned_data["reason"].strip()
+
+    def clean_edit_reason(self):
+        reason = self.cleaned_data["edit_reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be above 0.")
+        return amount
+
+    def clean(self):
+        """Cash that isn't in the drawer still can't leave it.
+
+        The same rule CashDrawerOutForm applies on the way in, checked here
+        against the drawer minus this entry — editing a 500 withdrawal up to
+        5000 has to be judged as if the 500 had never been taken.
+
+        In clean(), not clean_amount(): the answer depends on txn_type too, and
+        field cleaning runs in field order, so txn_type isn't known yet.
+        """
+        cleaned = super().clean()
+
+        amount = cleaned.get("amount")
+        txn_type = cleaned.get("txn_type")
+        if amount is None or txn_type is None or self.drawer_balance is None:
+            return cleaned
+
+        if txn_type != CashDrawer.TxnType.IN and amount > self.drawer_balance:
+            self.add_error(
+                "amount",
+                f"Only {self.drawer_balance:,.2f} would be in the drawer without "
+                f"this entry.",
+            )
+
+        return cleaned
 
 
 class ChequeForm(forms.ModelForm):
