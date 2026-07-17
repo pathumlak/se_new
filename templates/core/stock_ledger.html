@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Stock Ledger · {{ product.name }} · Senovka Plastics{% endblock %}
+{% block header %}Stock Ledger{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div class="min-w-0">
+    <a href="{% url 'core:product_list' %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      Products
+    </a>
+
+    <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ product.name }}</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      {{ product.category.name }}{% if product.size %} · {{ product.size }}{% endif %}
+    </p>
+  </div>
+
+  <div class="flex shrink-0 flex-wrap items-center gap-2">
+    <div class="text-right">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current stock</p>
+      <p class="text-2xl font-semibold
+                {% if current_stock < 0 %}text-rose-600
+                {% elif current_stock == 0 %}text-rose-500
+                {% elif current_stock <= low_stock_threshold %}text-amber-600
+                {% else %}text-emerald-600{% endif %}">
+        {{ current_stock|floatformat:"-3" }}
+      </p>
+    </div>
+  </div>
+</div>
+
+{% if ledger_mismatch %}
+  <div class="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+    <strong>Warning:</strong> The ledger's closing balance ({{ closing_balance|floatformat:"-3" }})
+    does not match the current stock ({{ current_stock|floatformat:"-3" }}). A stock move
+    may have happened outside the app. A manual production correction can bring them back into line.
+  </div>
+{% endif %}
+
+<!-- Summary -->
+<div class="mb-5 grid gap-3 sm:grid-cols-4">
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Opening</p>
+    <p class="mt-1 text-lg font-semibold text-slate-900">{{ opening_balance|floatformat:"-3" }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total produced / received</p>
+    <p class="mt-1 text-lg font-semibold text-emerald-700">{{ total_produced|floatformat:"-3" }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total sold</p>
+    <p class="mt-1 text-lg font-semibold text-rose-700">{{ total_sold|floatformat:"-3" }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Closing</p>
+    <p class="mt-1 text-lg font-semibold
+              {% if closing_balance < 0 %}text-rose-600
+              {% elif closing_balance == 0 %}text-rose-500
+              {% else %}text-slate-900{% endif %}">
+      {{ closing_balance|floatformat:"-3" }}
+    </p>
+  </div>
+</div>
+
+<!-- Month filter -->
+<form method="get" class="no-print mb-4 flex items-center gap-2 text-sm">
+  <label for="month" class="text-slate-500">Month:</label>
+  <input type="month" id="month" name="month"
+         value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+         class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  <button type="submit"
+          class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+    Apply
+  </button>
+  <a href="?month=all"
+     class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+    All time
+  </a>
+  <span class="ml-2 text-xs text-slate-400">Showing: {{ month_filter.label }}</span>
+</form>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- Ledger -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Production</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Sales</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill number</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50
+                     {% if row.kind == 'opening' %}bg-slate-50 italic
+                     {% elif row.kind == 'oversale' %}bg-rose-50/60
+                     {% elif row.kind == 'production' %}border-l-4 border-emerald-400
+                     {% elif row.kind == 'supplier' %}border-l-4 border-sky-400
+                     {% elif row.kind == 'sale' %}border-l-4 border-rose-300
+                     {% endif %}">
+            <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ row.date|date:"j M Y" }}</td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
+                       {% if row.kind == 'oversale' %}text-rose-700{% else %}text-emerald-700{% endif %}">
+              {% if row.production is not None %}
+                +{{ row.production|floatformat:"-3" }}
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right text-slate-500">
+              {% if row.total is not None %}{{ row.total|floatformat:"-3" }}{% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium text-rose-700">
+              {% if row.sales is not None %}
+                −{{ row.sales|floatformat:"-3" }}
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-semibold
+                       {% if row.balance < 0 %}text-rose-600
+                       {% elif row.balance == 0 %}text-slate-400
+                       {% else %}text-slate-900{% endif %}">
+              {{ row.balance|floatformat:"-3" }}
+            </td>
+
+            <td class="px-4 py-2.5 text-slate-800">
+              {{ row.customer }}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-slate-500">
+              {% if row.bill_pk %}
+                <a href="{% url 'core:bill_detail' row.bill_pk %}"
+                   class="font-medium text-slate-700 hover:underline">
+                  {{ row.bill_number }}
+                </a>
+              {% else %}
+                {{ row.bill_number }}
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
+              No stock movement in this period.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="mt-3 text-xs text-slate-400">
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 align-middle"></span> Production ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400 align-middle"></span> Supplier receipt ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 align-middle"></span> Sale ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto)
+</p>
+
+{% endblock %}

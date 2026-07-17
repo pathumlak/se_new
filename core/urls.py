@@ -38,6 +38,13 @@ urlpatterns = [
         name="product_toggle_active",
     ),
     path("products/<int:pk>/prices/", views.product_prices, name="product_prices"),
+    # Every stock movement on one product, oldest first, with a running balance
+    # and a running production total.
+    path(
+        "products/<int:pk>/stock-ledger/",
+        views.stock_ledger,
+        name="stock_ledger",
+    ),
     path("customers/", views.customer_list, name="customer_list"),
     path("customers/create/", views.customer_create, name="customer_create"),
     path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),

@@ -34,6 +34,7 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_POST
 
 from .decorators import super_admin_required
+from .utils import get_month_filter
 from .forms import (
     BillEditReasonForm,
     BillPaymentForm,
@@ -77,6 +78,12 @@ CHEQUE_WARNING_DAYS = 3
 
 MONEY = DecimalField(max_digits=12, decimal_places=2)
 ZERO = Decimal("0.00")
+
+#: Prefix on ProductionEntry.reason for entries the bill-save path auto-created
+#: to cover an oversell. _reverse_bill looks these up by prefix to undo them
+#: when the bill is edited or deleted, and the stock ledger uses it to render
+#: those rows distinctly. Do not change without a data migration.
+OVERSALE_REASON_PREFIX = "Oversale —"
 
 
 def _paginate(request, object_list, per_page=None):
@@ -421,6 +428,10 @@ def category_delete(request, pk):
 def product_list(request):
     query = request.GET.get("q", "").strip()
     category_id = request.GET.get("category", "").strip()
+    # ?view=stock — the sidebar's Stock Ledgers link — narrows the list to
+    # products the operator would want to open a ledger for: negative
+    # (oversold), zero, or low.
+    stock_view = request.GET.get("view", "").strip() == "stock"
 
     # order_by repeats Product.Meta.ordering, which the annotate() below would
     # otherwise drop — see _bills_with_counts.
@@ -438,6 +449,9 @@ def product_list(request):
         selected_category = int(category_id)
         products = products.filter(category_id=selected_category)
 
+    if stock_view:
+        products = products.filter(qty__lte=settings.LOW_STOCK_THRESHOLD)
+
     page_obj = _paginate(request, products)
 
     return render(
@@ -449,7 +463,8 @@ def product_list(request):
             "categories": Category.objects.all(),
             "query": query,
             "selected_category": selected_category,
-            "is_filtered": bool(query or selected_category),
+            "stock_view": stock_view,
+            "is_filtered": bool(query or selected_category or stock_view),
             "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
         },
     )
@@ -524,6 +539,212 @@ def product_toggle_active(request, pk):
             "is_active": product.is_active,
             "label": "Active" if product.is_active else "Inactive",
         }
+    )
+
+
+def _stock_ledger_rows(product):
+    """Every stock movement on `product`, oldest first, with a running balance
+    and running production total.
+
+    Three sources land in one column layout:
+      Production       — a ProductionEntry row (own manufacture, corrections,
+                         or an auto Oversale row that covered a shortfall)
+      Supplier receipt — a SupplierBillItem (goods arriving from a supplier)
+      Sale             — a BillItem (goods leaving on a customer bill)
+
+    An opening "as stock" row is always first, holding the balance the ledger
+    has to start from so it ends at Product.qty. Computed rather than stored:
+    opening = current stock − sum(inputs) + sum(outputs). If everything has
+    been recorded through the app since day one, opening comes out as 0.
+
+    All work happens in Python because the balance and total both depend on
+    every earlier row — SQL cannot express that a page at a time.
+    """
+    events = []
+
+    for entry in ProductionEntry.objects.filter(product=product):
+        is_oversale = entry.reason.startswith(OVERSALE_REASON_PREFIX)
+        events.append(
+            {
+                "date": entry.production_date,
+                # (date, kind, tiebreaker) — production comes before same-day
+                # sales so the sale reads as drawing on that morning's batch,
+                # not on stock that arrived later in the day.
+                "_sort": (entry.production_date, 0, entry.created_at, entry.pk),
+                "kind": "oversale" if is_oversale else "production",
+                "production": entry.qty_produced,
+                "sales": None,
+                "customer": entry.reason or "",
+                "bill_number": "",
+            }
+        )
+
+    supplier_items = (
+        SupplierBillItem.objects.filter(product=product)
+        .exclude(supplier_bill__status=SupplierBill.Status.CANCELLED)
+        .select_related("supplier_bill__supplier")
+    )
+    for item in supplier_items:
+        sb = item.supplier_bill
+        events.append(
+            {
+                "date": sb.bill_date,
+                # No created_at on SupplierBillItem — order by pk within the
+                # day, which is monotonic and stable across page loads.
+                "_sort": (sb.bill_date, 0, sb.bill_date, item.pk),
+                "kind": "supplier",
+                "production": item.qty,
+                "sales": None,
+                "customer": f"Supplier: {sb.supplier.name}",
+                "bill_number": f"SUP-{sb.pk}",
+            }
+        )
+
+    bill_items = (
+        BillItem.objects.filter(product=product)
+        .exclude(bill__status=Bill.Status.CANCELLED)
+        .select_related("bill__customer")
+    )
+    for item in bill_items:
+        bill = item.bill
+        if bill.is_walk_in:
+            who = bill.walk_in_name or "Walk-in"
+        elif bill.customer_id:
+            who = bill.customer.name
+        else:
+            who = "—"
+        events.append(
+            {
+                "date": bill.bill_date,
+                # Sales sort *after* productions on the same day (kind=1 vs 0).
+                "_sort": (bill.bill_date, 1, bill.bill_date, item.pk),
+                "kind": "sale",
+                "production": None,
+                "sales": item.qty,
+                "customer": who,
+                "bill_number": f"#{bill.pk:04d}",
+                # Explicit pk so the template can link straight to the bill
+                # without parsing the formatted "#0001" back apart.
+                "bill_pk": bill.pk,
+            }
+        )
+
+    events.sort(key=lambda e: e["_sort"])
+
+    total_in = sum(
+        (e["production"] or Decimal("0.000") for e in events), Decimal("0.000")
+    )
+    total_out = sum(
+        (e["sales"] or Decimal("0.000") for e in events), Decimal("0.000")
+    )
+    # Opening = current shelf, minus everything the ledger says came in, plus
+    # everything it says went out. If every movement has been recorded, this
+    # comes to zero (or whatever the shelf held before the app was in use).
+    opening = product.qty - total_in + total_out
+
+    rows = []
+    opening_date = events[0]["date"] if events else timezone.localdate()
+    rows.append(
+        {
+            "date": opening_date,
+            "production": None,
+            "total": None,
+            "sales": None,
+            "balance": opening,
+            "customer": "as stock",
+            "bill_number": "",
+            "kind": "opening",
+        }
+    )
+
+    balance = opening
+    running_total = Decimal("0.000")
+    for e in events:
+        if e["production"] is not None:
+            balance += e["production"]
+            running_total += e["production"]
+            rows.append(
+                {
+                    "date": e["date"],
+                    "production": e["production"],
+                    "total": running_total,
+                    "sales": None,
+                    "balance": balance,
+                    "customer": e["customer"],
+                    "bill_number": e["bill_number"],
+                    "kind": e["kind"],
+                    "bill_pk": e.get("bill_pk"),
+                }
+            )
+        else:
+            balance -= e["sales"]
+            rows.append(
+                {
+                    "date": e["date"],
+                    "production": None,
+                    # TOTAL only advances on production/supplier rows — it is
+                    # a cumulative production counter, not a running balance.
+                    "total": None,
+                    "sales": e["sales"],
+                    "balance": balance,
+                    "customer": e["customer"],
+                    "bill_number": e["bill_number"],
+                    "kind": e["kind"],
+                    "bill_pk": e.get("bill_pk"),
+                }
+            )
+
+    return {
+        "rows": rows,
+        "opening": opening,
+        "total_produced": total_in,
+        "total_sold": total_out,
+        "closing_balance": balance,
+    }
+
+
+@login_required
+def stock_ledger(request, pk):
+    """One product's full movement history with a running balance.
+
+    The month filter narrows the *display* — the running balance is still
+    computed over the whole ledger, so the first row shown carries the
+    balance as it stood at the end of the prior month, not zero.
+    """
+    product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
+
+    ledger = _stock_ledger_rows(product)
+    rows = ledger["rows"]
+
+    month_filter = get_month_filter(request)
+    if not month_filter.is_all_time:
+        rows = [
+            r for r in rows
+            if month_filter.start <= r["date"] <= month_filter.end
+        ]
+
+    page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
+
+    # If the ledger's closing figure disagrees with the shelf, say so — a
+    # mismatch means a stock move happened outside the app.
+    ledger_mismatch = ledger["closing_balance"] != product.qty
+
+    return render(
+        request,
+        "core/stock_ledger.html",
+        {
+            "product": product,
+            "page_obj": page_obj,
+            "rows": page_obj.object_list,
+            "month_filter": month_filter,
+            "opening_balance": ledger["opening"],
+            "total_produced": ledger["total_produced"],
+            "total_sold": ledger["total_sold"],
+            "closing_balance": ledger["closing_balance"],
+            "current_stock": product.qty,
+            "ledger_mismatch": ledger_mismatch,
+            "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
+        },
     )
 
 
@@ -1759,7 +1980,20 @@ def _reverse_bill(bill):
     delete is this followed by dropping the header. Must run inside a
     transaction — half a reversal is worse than none.
     """
-    # Stock first, off the rows about to be deleted.
+    # Auto-created Oversale production rows: reverse the stock they added and
+    # delete them, so a bill that oversold leaves no phantom production
+    # behind on its way out. Done before the normal stock restore so both
+    # movements are undone in the same order they were applied.
+    oversale = ProductionEntry.objects.filter(
+        reason__startswith=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}"
+    )
+    for entry in oversale:
+        Product.objects.filter(pk=entry.product_id).update(
+            qty=F("qty") - entry.qty_produced
+        )
+    oversale.delete()
+
+    # Stock next, off the rows about to be deleted.
     for item in bill.items.all():
         Product.objects.filter(pk=item.product_id).update(qty=F("qty") + item.qty)
 
@@ -1974,7 +2208,15 @@ def _write_bill(bill, user, payload):
     bill.notes = str(payload.get("notes") or "").strip()
     bill.save()
 
-    # 2. lines, and the stock they take with them
+    # 2. lines, and the stock they take with them.
+    #
+    # Overselling is allowed: a bill may take more than the shelf holds. When
+    # that happens we auto-create a matching ProductionEntry with reason
+    # "Oversale — Bill #N" for the shortfall, then decrement stock normally.
+    # The net effect is that Product.qty never goes negative and the stock
+    # ledger has a matching production row explaining where the extra units
+    # came from. _reverse_bill deletes these auto rows on edit/delete so the
+    # phantom stock does not persist past its bill.
     for item in items:
         BillItem.objects.create(
             bill=bill,
@@ -1983,12 +2225,26 @@ def _write_bill(bill, user, payload):
             unit_price=item["unit_price"],
             line_total=item["line_total"],
         )
-        # Unconditional decrement: overselling is allowed by design — a bill
-        # may take more than the shelf holds, driving Product.qty negative,
-        # and the stock ledger flags the shortfall as an OVERSELL row. Two
-        # tills selling the last unit at the same time still each land a
-        # decrement here; the ledger simply shows both, and the negative
-        # balance is what tells the operator to reconcile.
+
+        # Fresh read: two tills billing at once may already have moved the
+        # shelf since this bill was validated.
+        current_qty = Product.objects.values_list("qty", flat=True).get(
+            pk=item["product"].pk
+        )
+        if item["qty"] > current_qty:
+            shortage = item["qty"] - current_qty
+            ProductionEntry.objects.create(
+                product=item["product"],
+                production_date=bill.bill_date,
+                qty_produced=shortage,
+                reason=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}",
+                stock_before=current_qty,
+                stock_after=current_qty + shortage,
+            )
+            Product.objects.filter(pk=item["product"].pk).update(
+                qty=F("qty") + shortage
+            )
+
         Product.objects.filter(pk=item["product"].pk).update(
             qty=F("qty") - item["qty"]
         )

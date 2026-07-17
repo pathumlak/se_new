@@ -1,9 +1,26 @@
 {% extends "base.html" %}
 
 {% block title %}Products · Senovka Plastics{% endblock %}
-{% block header %}Products{% endblock %}
+{% block header %}{% if stock_view %}Stock Ledgers{% else %}Products{% endif %}{% endblock %}
 
 {% block content %}
+
+{% if stock_view %}
+  <div class="mb-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+    <svg class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+    </svg>
+    <div class="text-sm text-amber-800">
+      <p class="font-semibold">Stock Ledgers</p>
+      <p class="mt-0.5 text-xs">
+        Filtered to products at or below the low-stock threshold ({{ low_stock_threshold }})
+        — the ones you'd usually want to open a ledger for. Click <em>Stock Ledger</em> on
+        any row to see every movement.
+        <a href="{% url 'core:product_list' %}" class="ml-1 font-medium underline">Show all products</a>
+      </p>
+    </div>
+  </div>
+{% endif %}
 
 <!-- Toolbar -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -128,6 +145,11 @@
 
             <td class="whitespace-nowrap px-5 py-3 text-right">
               <div class="flex justify-end gap-1">
+                <a href="{% url 'core:stock_ledger' product.pk %}"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                   title="View every stock movement on this product">
+                  Stock Ledger
+                </a>
                 <a href="{% url 'core:product_prices' product.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Prices
