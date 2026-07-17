@@ -37,10 +37,10 @@ spanning lines, it isn't stripped and renders onto the page as text.
       <label for="bill-date" class="mb-1.5 block text-sm font-medium text-slate-700">
         Bill Date <span class="text-rose-500">*</span>
       </label>
-      {# max: a bill dated forward would sit ahead of the running balance in every ledger it lands in. The save step refuses it too. #}
+      {# No value prefill: the biller has to choose a date rather than accept today's by default. max: a bill dated forward would sit ahead of the running balance in every ledger it lands in. The save step refuses both. #}
       <input type="date" id="bill-date"
-             value="{{ today|date:'Y-m-d' }}"
              max="{{ today|date:'Y-m-d' }}"
+             required
              {% if is_edit %}disabled{% endif %}
              class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900
@@ -48,6 +48,10 @@ spanning lines, it isn't stripped and renders onto the page as text.
       {% if is_edit %}
         <p class="mt-1.5 text-xs text-slate-400">
           An edit keeps the date it was billed on.
+        </p>
+      {% else %}
+        <p class="mt-1.5 text-xs text-slate-400">
+          Pick the date the goods actually left.
         </p>
       {% endif %}
     </div>
@@ -116,174 +120,295 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
 <!-- ===================== PRODUCTS + BILL ITEMS ===================== -->
 {% comment %}
-  One screen, two columns: the cards pick products, the panel prices them.
+  Full width, stacked: products on top, what's on the bill underneath in its
+  own scrolling list — no split screen.
 
-  There is no "add selected" step between them — clicking a card puts the
-  product straight on the bill and clicking it again takes it off, so the panel
-  is always what the bill currently says. The panel is the source of truth for
-  what is on the bill; a card's highlight is only a reflection of it.
-
-  On a narrow screen the panel stacks under the cards, which is why it carries
-  its own heading rather than relying on sitting beside them.
+  Clicking a product opens a small modal to set qty and price (Enter adds it
+  in one step); clicking a product already on the bill reopens the same modal
+  pre-filled so it can be adjusted or removed. The list is the source of truth
+  for what is on the bill; a card's highlight only reflects it.
 {% endcomment %}
-<div id="step-build" class="grid gap-5 lg:grid-cols-3">
+<div id="step-build" class="space-y-5">
 
-  <!-- ---------------------------- cards ---------------------------- -->
-  <div class="lg:col-span-2">
-
-    <div id="panel-idle" class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
-      <p class="text-sm text-slate-500">Choose who the bill is for to load their prices.</p>
+  <!-- ---------------------------- products ---------------------------- -->
+  <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+      <h3 class="text-sm font-semibold text-slate-900">Products</h3>
+      <p class="text-xs text-slate-400">Click a product to set qty &amp; price.</p>
     </div>
 
-    <div id="panel-loading" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
-      <p class="text-sm text-slate-500">Loading products…</p>
-    </div>
-
-    <div id="panel-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
-      <p id="error-text" class="text-sm text-rose-700"></p>
-      <button type="button" id="retry"
-              class="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50">
-        Try again
-      </button>
-    </div>
-
-    <div id="panel-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
-      <p class="text-sm text-slate-500">Nothing to bill.</p>
-      <p class="mt-1 text-xs text-slate-400">Only active products can go on a bill.</p>
-    </div>
-
-    <div id="panel-grid" class="hidden">
-
-      <!-- Search -->
-      <div class="relative mb-3">
-        <svg class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400"
-             fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
-        </svg>
-        <input type="search" id="product-search" placeholder="Search by name or size"
-               autocomplete="off"
-               class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm
-                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    <div class="p-5">
+      <div id="panel-idle" class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
+        <p class="text-sm text-slate-500">Choose who the bill is for to load their prices.</p>
       </div>
 
-      <!-- Category tabs -->
-      {% comment %}
-        Off the Category table, not a fixed list: categories are operator-
-        managed here, so a hardcoded tab would be wrong the first time one was
-        added or renamed. Tabs match on the id for the same reason.
-      {% endcomment %}
-      <div class="mb-4 flex flex-wrap gap-1.5" id="category-tabs">
-        <button type="button" data-category="" aria-pressed="true"
-                class="js-cat rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
-          All
+      <div id="panel-loading" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
+        <p class="text-sm text-slate-500">Loading products…</p>
+      </div>
+
+      <div id="panel-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
+        <p id="error-text" class="text-sm text-rose-700"></p>
+        <button type="button" id="retry"
+                class="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50">
+          Try again
         </button>
-        {% for category in categories %}
-          <button type="button" data-category="{{ category.pk }}" aria-pressed="false"
-                  class="js-cat rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">
-            {{ category.name }}
-          </button>
-        {% endfor %}
       </div>
 
-      <div id="product-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+      <div id="panel-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center">
+        <p class="text-sm text-slate-500">Nothing to bill.</p>
+        <p class="mt-1 text-xs text-slate-400">Only active products can go on a bill.</p>
+      </div>
 
-      <p id="grid-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500"></p>
+      <div id="panel-grid" class="hidden">
+
+        <!-- Search -->
+        <div class="relative mb-3">
+          <svg class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400"
+               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+          </svg>
+          <input type="search" id="product-search" placeholder="Search by name or size"
+                 autocomplete="off"
+                 class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+
+        <!-- Category tabs -->
+        {% comment %}
+          Off the Category table, not a fixed list: categories are operator-
+          managed here, so a hardcoded tab would be wrong the first time one was
+          added or renamed. Tabs match on the id for the same reason.
+        {% endcomment %}
+        <div class="mb-4 flex flex-wrap gap-1.5" id="category-tabs">
+          <button type="button" data-category="" aria-pressed="true"
+                  class="js-cat rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+            All
+          </button>
+          {% for category in categories %}
+            <button type="button" data-category="{{ category.pk }}" aria-pressed="false"
+                    class="js-cat rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">
+              {{ category.name }}
+            </button>
+          {% endfor %}
+        </div>
+
+        <div id="product-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"></div>
+
+        <p id="grid-empty" class="hidden rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500"></p>
+      </div>
     </div>
   </div>
 
-  <!-- ---------------------------- panel ---------------------------- -->
-  <div class="lg:col-span-1">
-    <div class="sticky top-20 rounded-xl border border-slate-200 bg-white shadow-sm">
+  <!-- ---------------------------- bill items ---------------------------- -->
+  <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
 
-      <div class="border-b border-slate-200 px-4 py-3">
-        <h3 class="text-sm font-semibold text-slate-900">
-          Bill Items
-          <span id="item-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
-        </h3>
-        <p id="summary-customer" class="mt-1 truncate text-xs text-slate-500"></p>
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-900">
+        Bill Items
+        <span id="item-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
+      </h3>
+      <p id="summary-customer" class="truncate text-xs text-slate-500"></p>
+    </div>
+
+    <div id="bill-rows" class="max-h-96 divide-y divide-slate-100 overflow-y-auto"></div>
+
+    <p id="bill-empty" class="px-4 py-10 text-center text-sm text-slate-400">
+      Click a product above to add it.
+    </p>
+
+    <p id="invalid-note" class="mx-4 mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+    <!-- Adjustments -->
+    <div class="grid gap-3 border-t border-slate-200 px-4 py-3 sm:grid-cols-2">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm text-slate-500">Subtotal</span>
+        <span id="subtotal-cell" class="font-semibold text-slate-900">0.00</span>
+      </div>
+      <div class="hidden sm:block"></div>
+
+      <div class="flex items-center justify-between gap-2">
+        <label for="delivery-charge" class="text-sm text-slate-500">Delivery</label>
+        <input type="number" step="0.01" min="0" inputmode="decimal" id="delivery-charge"
+               placeholder="0.00"
+               class="w-32 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
       </div>
 
-      <div id="bill-rows" class="max-h-[22rem] divide-y divide-slate-100 overflow-y-auto"></div>
-
-      <p id="bill-empty" class="px-4 py-10 text-center text-sm text-slate-400">
-        Click a product to add it.
-      </p>
-
-      <p id="invalid-note" class="mx-4 mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
-
-      <!-- Adjustments -->
-      <div class="space-y-3 border-t border-slate-200 px-4 py-3">
-        <div class="flex items-center justify-between text-sm">
-          <span class="text-slate-500">Subtotal</span>
-          <span id="subtotal-cell" class="font-semibold text-slate-900">0.00</span>
-        </div>
-
-        <div class="flex items-center justify-between gap-2">
-          <label for="delivery-charge" class="text-sm text-slate-500">Delivery</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" id="delivery-charge"
-                 placeholder="0.00"
-                 class="w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
-                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-        </div>
-
-        <div class="flex items-center justify-between gap-2">
-          <label for="discount-amount" class="text-sm text-slate-500">Discount</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" id="discount-amount"
-                 placeholder="0.00"
-                 class="w-28 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
-                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-        </div>
-
-        {# Shown only once a discount is entered: money off a bill is the one figure on it nothing else explains, and the save step refuses it unexplained. #}
-        <div id="discount-reason-row" class="hidden">
-          <label for="discount-reason" class="mb-1 block text-xs font-medium text-slate-600">
-            Discount reason <span class="text-rose-500">*</span>
-          </label>
-          <input type="text" id="discount-reason" maxlength="255" placeholder="Why?"
-                 class="block w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 shadow-sm
-                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-          <p id="discount-error" class="mt-1 hidden text-xs text-rose-600"></p>
-        </div>
+      <div class="flex items-center justify-between gap-2">
+        <label for="discount-amount" class="text-sm text-slate-500">Discount</label>
+        <input type="number" step="0.01" min="0" inputmode="decimal" id="discount-amount"
+               placeholder="0.00"
+               class="w-32 rounded-lg border border-slate-300 px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
       </div>
 
-      <!-- Totals -->
-      <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
-        <div class="flex items-baseline justify-between">
-          <span class="text-sm font-semibold text-slate-900">Grand total</span>
-          <span id="grand-total" class="text-xl font-semibold text-slate-900">0.00</span>
+      {# Shown only once a discount is entered: money off a bill is the one figure on it nothing else explains, and the save step refuses it unexplained. #}
+      <div id="discount-reason-row" class="hidden sm:col-span-2">
+        <label for="discount-reason" class="mb-1 block text-xs font-medium text-slate-600">
+          Discount reason <span class="text-rose-500">*</span>
+        </label>
+        <input type="text" id="discount-reason" maxlength="255" placeholder="Why?"
+               class="block w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <p id="discount-error" class="mt-1 hidden text-xs text-rose-600"></p>
+      </div>
+    </div>
+
+    <!-- Totals -->
+    <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <span class="text-sm font-semibold text-slate-900">Grand total</span>
+        <span id="grand-total" class="text-xl font-semibold text-slate-900">0.00</span>
+      </div>
+
+      <dl class="mt-3 grid gap-1.5 border-t border-slate-200 pt-3 text-xs sm:grid-cols-2">
+        <div class="flex items-center justify-between">
+          <dt class="text-slate-500">Current balance</dt>
+          <dd id="summary-balance" class="font-medium"></dd>
         </div>
+        <div class="flex items-center justify-between">
+          <dt class="font-medium text-slate-700">Amount to collect</dt>
+          <dd id="summary-collect" class="font-semibold text-slate-900">0.00</dd>
+        </div>
+      </dl>
+      <p id="summary-collect-note" class="mt-1.5 text-[11px] text-slate-500"></p>
 
-        <dl class="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-xs">
-          <div class="flex items-center justify-between">
-            <dt class="text-slate-500">Current balance</dt>
-            <dd id="summary-balance" class="font-medium"></dd>
-          </div>
-          <div class="flex items-center justify-between">
-            <dt class="font-medium text-slate-700">Amount to collect</dt>
-            <dd id="summary-collect" class="font-semibold text-slate-900">0.00</dd>
-          </div>
-        </dl>
-        <p id="summary-collect-note" class="mt-1.5 text-[11px] text-slate-500"></p>
+      <p id="summary-changed" class="mt-3 hidden rounded-lg bg-indigo-50 px-3 py-2 text-[11px] text-indigo-700"></p>
 
-        <p id="summary-changed" class="mt-3 hidden rounded-lg bg-indigo-50 px-3 py-2 text-[11px] text-indigo-700"></p>
-
+      <div class="mt-3 flex flex-wrap items-center gap-3">
         <button type="button" id="to-payment" disabled
-                class="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
+                class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
                        transition hover:bg-slate-800 disabled:opacity-50">
           Continue to payment
         </button>
-        <p id="to-payment-note" class="mt-1.5 text-center text-xs text-slate-400"></p>
-
+        {# Held bills are dormant — no stock, no balance, no payment — so this doesn't wait for the payment step to be filled. Anything in the panel is enough. #}
+        <button type="button" id="hold-bill"
+                class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700
+                       transition hover:bg-slate-50 disabled:opacity-50">
+          Hold bill
+        </button>
         <button type="button" id="start-over"
-                class="mt-1 w-full rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-900">
+                class="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-900">
           Start over
         </button>
+        <p id="to-payment-note" class="text-xs text-slate-400"></p>
+        <p id="hold-note" class="text-xs text-slate-400"></p>
       </div>
     </div>
   </div>
 </div>
 
+<!-- ============================ QTY / PRICE MODAL ============================ -->
+{% comment %}
+  The only place qty and unit price are entered. Opens pre-filled — "1" and the
+  quoted price for a new line, whatever's already on the bill for one being
+  edited — and Enter (the form's submit) adds or updates it in one step.
+{% endcomment %}
+<div id="qty-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/50 px-4">
+  <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <p id="modal-product-name" class="truncate text-base font-semibold text-slate-900"></p>
+        <p id="modal-product-meta" class="mt-0.5 text-xs text-slate-500"></p>
+      </div>
+      <button type="button" id="modal-close-x" aria-label="Close"
+              class="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="qty-modal-form" class="mt-4 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="modal-qty" class="mb-1.5 block text-xs font-medium text-slate-600">Quantity</label>
+          <input type="number" id="modal-qty" step="0.001" min="0" inputmode="decimal"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label for="modal-price" class="mb-1.5 block text-xs font-medium text-slate-600">Unit price</label>
+          <input type="number" id="modal-price" step="0.01" min="0" inputmode="decimal"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+      </div>
+
+      <p id="modal-error" class="hidden rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700"></p>
+
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <button type="button" id="modal-remove"
+                class="hidden rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50">
+          Remove
+        </button>
+        <div class="ml-auto flex items-center gap-2">
+          <button type="button" id="modal-cancel"
+                  class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button type="submit" id="modal-submit"
+                  class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Add to bill
+          </button>
+        </div>
+      </div>
+      <p class="text-center text-[11px] text-slate-400">Press Enter to confirm.</p>
+    </form>
+  </div>
+</div>
+
 <!-- ============================ PAYMENT ============================ -->
+{# Cloned by addChequeRow() in the JS. Not a Django template — this is HTML the JS reads via the browser's <template> element. Field names carry no prefix here; the JS namespaces them per cheque when it clones. #}
+<template id="cheque-row-template">
+  <div class="js-cheque-row rounded-lg border border-slate-200 bg-slate-50 p-3">
+    <div class="mb-2 flex items-center justify-between">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 js-cheque-index">Cheque 1</p>
+      <button type="button" class="js-remove-cheque rounded-md px-1.5 text-lg leading-none text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove cheque">&times;</button>
+    </div>
+
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Cheque No <span class="text-rose-500">*</span></label>
+        <input type="text" data-field="cheque_no"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Bank Name <span class="text-rose-500">*</span></label>
+        <input type="text" data-field="bank_name" placeholder="e.g. BOC"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Branch <span class="text-xs font-normal text-slate-400">(optional)</span></label>
+        <input type="text" data-field="branch"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Account No <span class="text-xs font-normal text-slate-400">(optional)</span></label>
+        <input type="text" data-field="acc_no"
+               class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-slate-700">Amount <span class="text-rose-500">*</span></label>
+        <input type="number" step="0.01" min="0" inputmode="decimal" data-field="amount"
+               class="js-cheque-amount block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="mb-1 block text-xs font-medium text-slate-700">Received <span class="text-rose-500">*</span></label>
+          <input type="date" data-field="received_date" value="{{ today|date:'Y-m-d' }}"
+                 class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label class="mb-1 block text-xs font-medium text-slate-700">Maturity <span class="text-rose-500">*</span></label>
+          <input type="date" data-field="maturity_date"
+                 class="block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
 <div id="step-pay" class="hidden grid gap-5 lg:grid-cols-3">
 
   <div class="lg:col-span-2">
@@ -291,8 +416,13 @@ spanning lines, it isn't stripped and renders onto the page as text.
     <fieldset class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <legend class="px-1 text-sm font-semibold text-slate-900">Payment type</legend>
 
-      <div class="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        {# Values match Bill.PaymentType so the save step can post them straight through. #}
+      {# There's no account behind a walk-in sale, so only Full Cash — for the exact total — makes sense; every other card is hidden by applyMode() rather than merely disabled. #}
+      <p id="walkin-payment-note" class="mb-2 hidden rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        Walk-in sales are cash only, paid in full — there's no account for anything else to go on.
+      </p>
+
+      <div class="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {# Values match Bill.PaymentType so the save step can post them straight through. Legacy "partial" is filtered out in _bill_form_context. #}
         {% for value, label in payment_types %}
           <label class="js-type-card flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300
                         px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -304,9 +434,13 @@ spanning lines, it isn't stripped and renders onto the page as text.
       </div>
     </fieldset>
 
+    {# ---------- Cash-only rendering helpers ---------- #}
+    {# Reused by Full Cash and Partial Cash — same fields, different totals rules. #}
+
     <!-- 1. Full Cash -->
     <div id="pay-full_cash" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 class="text-sm font-semibold text-slate-900">Full Cash</h3>
+      <p class="mt-1 text-xs text-slate-500">Cash covers the whole bill.</p>
       <div class="mt-4 grid gap-4 sm:grid-cols-2">
         <div>
           <label for="fullcash-amount" class="mb-1.5 block text-sm font-medium text-slate-700">
@@ -318,84 +452,134 @@ spanning lines, it isn't stripped and renders onto the page as text.
         </div>
         <div>
           <label for="fullcash-account" class="mb-1.5 block text-sm font-medium text-slate-700">
-            Transfer to account?
+            Transfer to
           </label>
           <select id="fullcash-account"
                   class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
                          shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-            <option value="">None (physical cash)</option>
+            <option value="">Physical Cash (drawer)</option>
             {% for value, label in account_choices %}
               <option value="{{ value }}">{{ label }} Account</option>
             {% endfor %}
           </select>
-          <p class="mt-1.5 text-xs text-slate-400">Leave as None to keep the cash in the drawer.</p>
         </div>
       </div>
     </div>
 
     <!-- 2. Full Cheque -->
     <div id="pay-full_cheque" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 class="mb-4 text-sm font-semibold text-slate-900">Full Cheque</h3>
-      {% include "core/_cheque_fields.html" with prefix="fullchq" %}
-    </div>
+      <h3 class="text-sm font-semibold text-slate-900">Full Cheque</h3>
+      <p class="mt-1 text-xs text-slate-500">One or more cheques covering the whole bill.</p>
 
-    <!-- 3. Partial (cash + cheque) -->
-    <div id="pay-partial" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 class="text-sm font-semibold text-slate-900">Partial — cash and cheque</h3>
+      <div id="fullchq-list" class="js-cheque-list mt-4 space-y-3" data-prefix="fullchq"></div>
 
-      <div class="mt-4 max-w-xs">
-        <label for="partial-cash" class="mb-1.5 block text-sm font-medium text-slate-700">
-          Cash Amount <span class="text-rose-500">*</span>
-        </label>
-        <input type="number" step="0.01" min="0" inputmode="decimal" id="partial-cash"
-               class="js-money block w-full rounded-lg border border-slate-300 px-3 py-2 text-right text-sm
-                      text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-      </div>
-
-      <div class="mt-5 border-t border-slate-200 pt-5">
-        <p class="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque</p>
-        {% include "core/_cheque_fields.html" with prefix="partchq" %}
+      <div class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
+        <button type="button" data-prefix="fullchq"
+                class="js-add-cheque rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+          + Add Another Cheque
+        </button>
+        <p class="text-xs text-slate-500">
+          Cheques total: <span id="fullchq-total" class="js-cheque-total font-semibold text-slate-900">0.00</span>
+        </p>
       </div>
     </div>
 
-    <!-- 4. Mixed (cash + cheque + transfer) -->
-    <div id="pay-mixed" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 class="text-sm font-semibold text-slate-900">Mixed — cash, cheque and transfer</h3>
+    <!-- 3. Partial Cash -->
+    <div id="pay-partial_cash" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 class="text-sm font-semibold text-slate-900">Partial Cash</h3>
+      <p class="mt-1 text-xs text-slate-500">Cash for part of the bill — the rest is added to the customer's outstanding balance.</p>
 
-      <div class="mt-4 grid gap-4 sm:grid-cols-3">
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
         <div>
-          <label for="mixed-cash" class="mb-1.5 block text-sm font-medium text-slate-700">Cash Amount</label>
+          <label for="partcash-amount" class="mb-1.5 block text-sm font-medium text-slate-700">
+            Cash Amount <span class="text-rose-500">*</span>
+          </label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" id="partcash-amount"
+                 class="js-money block w-full rounded-lg border border-slate-300 px-3 py-2 text-right text-sm
+                        text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label for="partcash-account" class="mb-1.5 block text-sm font-medium text-slate-700">Transfer to</label>
+          <select id="partcash-account"
+                  class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
+                         shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+            <option value="">Physical Cash (drawer)</option>
+            {% for value, label in account_choices %}
+              <option value="{{ value }}">{{ label }} Account</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <p id="partcash-remaining" class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600"></p>
+    </div>
+
+    <!-- 4. Partial Cheque -->
+    <div id="pay-partial_cheque" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 class="text-sm font-semibold text-slate-900">Partial Cheque</h3>
+      <p class="mt-1 text-xs text-slate-500">Cheques for part of the bill — the rest is added to the customer's outstanding balance.</p>
+
+      <div id="partchq-list" class="js-cheque-list mt-4 space-y-3" data-prefix="partchq"></div>
+
+      <div class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
+        <button type="button" data-prefix="partchq"
+                class="js-add-cheque rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+          + Add Another Cheque
+        </button>
+        <p class="text-xs text-slate-500">
+          Cheques total: <span id="partchq-total" class="js-cheque-total font-semibold text-slate-900">0.00</span>
+        </p>
+      </div>
+
+      <p id="partchq-remaining" class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600"></p>
+    </div>
+
+    <!-- 5. Mixed (cash + cheque) -->
+    <div id="pay-mixed" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 class="text-sm font-semibold text-slate-900">Mixed — cash and cheque(s)</h3>
+      <p class="mt-1 text-xs text-slate-500">Cash plus one or more cheques covering the whole bill.</p>
+
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="mixed-cash" class="mb-1.5 block text-sm font-medium text-slate-700">
+            Cash Amount <span class="text-rose-500">*</span>
+          </label>
           <input type="number" step="0.01" min="0" inputmode="decimal" id="mixed-cash"
                  class="js-money block w-full rounded-lg border border-slate-300 px-3 py-2 text-right text-sm
                         text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
         </div>
         <div>
-          <label for="mixed-transfer" class="mb-1.5 block text-sm font-medium text-slate-700">Transfer Amount</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" id="mixed-transfer"
-                 class="js-money block w-full rounded-lg border border-slate-300 px-3 py-2 text-right text-sm
-                        text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-        </div>
-        <div>
-          <label for="mixed-account" class="mb-1.5 block text-sm font-medium text-slate-700">To Account</label>
+          <label for="mixed-account" class="mb-1.5 block text-sm font-medium text-slate-700">Transfer to</label>
           <select id="mixed-account"
                   class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
                          shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
-            <option value="">Select an account</option>
+            <option value="">Physical Cash (drawer)</option>
             {% for value, label in account_choices %}
-              <option value="{{ value }}">{{ label }}</option>
+              <option value="{{ value }}">{{ label }} Account</option>
             {% endfor %}
           </select>
         </div>
       </div>
 
       <div class="mt-5 border-t border-slate-200 pt-5">
-        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque</p>
-        <p class="mb-4 text-xs text-slate-400">Optional — leave the amount blank if there is no cheque.</p>
-        {% include "core/_cheque_fields.html" with prefix="mixchq" %}
+        <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque(s)</p>
+        <div id="mixchq-list" class="js-cheque-list space-y-3" data-prefix="mixchq"></div>
+
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <button type="button" data-prefix="mixchq"
+                  class="js-add-cheque rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            + Add Another Cheque
+          </button>
+          <p class="text-xs text-slate-500">
+            Cheques total: <span id="mixchq-total" class="js-cheque-total font-semibold text-slate-900">0.00</span>
+          </p>
+        </div>
       </div>
+
+      <p id="mixed-remaining" class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600"></p>
     </div>
 
-    <!-- 5. Pay Later -->
+    <!-- 6. Pay Later -->
     <div id="pay-pay_later" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 class="text-sm font-semibold text-slate-900">Pay Later</h3>
       <p id="paylater-message" class="mt-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"></p>

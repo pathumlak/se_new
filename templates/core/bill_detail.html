@@ -35,9 +35,13 @@
     <h2 class="mt-2 text-xl font-semibold text-slate-900">Bill #{{ bill.pk }}</h2>
 
     <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
-      <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-medium text-slate-900 hover:underline">
-        {{ bill.customer.name }}
-      </a>
+      {% if bill.is_walk_in %}
+        <span class="font-medium italic text-slate-900">{{ bill.walk_in_name }} (walk-in)</span>
+      {% else %}
+        <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-medium text-slate-900 hover:underline">
+          {{ bill.customer.name }}
+        </a>
+      {% endif %}
       <span class="text-slate-300">·</span>
       <span>{{ bill.bill_date|date:"j M Y" }}</span>
       <span class="text-slate-300">·</span>
@@ -60,10 +64,12 @@
   </div>
 
   <div class="no-print flex shrink-0 flex-wrap gap-2">
-    <a href="{% url 'core:customer_ledger' bill.customer.pk %}"
-       class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-      Ledger
-    </a>
+    {% if not bill.is_walk_in %}
+      <a href="{% url 'core:customer_ledger' bill.customer.pk %}"
+         class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Ledger
+      </a>
+    {% endif %}
     <a href="{% url 'core:bill_edit' bill.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Edit
@@ -72,7 +78,7 @@
       <button type="button"
               data-delete-url="{% url 'core:bill_delete' bill.pk %}"
               data-bill="Bill #{{ bill.pk }}"
-              data-customer="{{ bill.customer.name }}"
+              data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
               data-total="{{ bill.total_amount|floatformat:2|intcomma }}"
               data-reverses="{{ reverses }}"
               class="js-delete rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
@@ -123,6 +129,30 @@
               <td colspan="4" class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Subtotal</td>
               <td class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold text-slate-900">
                 {{ bill.subtotal|floatformat:2|intcomma }}
+              </td>
+            </tr>
+            {% if bill.delivery_charge %}
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Delivery charge</td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-slate-900">
+                  +{{ bill.delivery_charge|floatformat:2|intcomma }}
+                </td>
+              </tr>
+            {% endif %}
+            {% if bill.discount_amount %}
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Discount{% if bill.discount_reason %} — {{ bill.discount_reason }}{% endif %}
+                </td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-rose-600">
+                  -{{ bill.discount_amount|floatformat:2|intcomma }}
+                </td>
+              </tr>
+            {% endif %}
+            <tr class="border-t border-slate-200">
+              <td colspan="4" class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold text-slate-900">
+                {{ bill.total_amount|floatformat:2|intcomma }}
               </td>
             </tr>
           </tfoot>
@@ -188,8 +218,26 @@
 
       <dl class="mt-3 space-y-2 text-sm">
         <div class="flex items-center justify-between">
-          <dt class="text-slate-500">Bill total</dt>
-          <dd class="font-medium text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</dd>
+          <dt class="text-slate-500">Subtotal</dt>
+          <dd class="font-medium text-slate-900">{{ bill.subtotal|floatformat:2|intcomma }}</dd>
+        </div>
+        {% if bill.delivery_charge %}
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-500">Delivery charge</dt>
+            <dd class="font-medium text-slate-900">+{{ bill.delivery_charge|floatformat:2|intcomma }}</dd>
+          </div>
+        {% endif %}
+        {% if bill.discount_amount %}
+          <div class="flex items-center justify-between gap-3">
+            <dt class="text-slate-500">
+              Discount{% if bill.discount_reason %} <span class="text-xs text-slate-400">({{ bill.discount_reason }})</span>{% endif %}
+            </dt>
+            <dd class="shrink-0 font-medium text-rose-600">-{{ bill.discount_amount|floatformat:2|intcomma }}</dd>
+          </div>
+        {% endif %}
+        <div class="flex items-center justify-between border-t border-slate-200 pt-2">
+          <dt class="font-semibold text-slate-900">Bill total</dt>
+          <dd class="text-base font-semibold text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</dd>
         </div>
         <div class="flex items-center justify-between">
           <dt class="text-slate-500">Paid now</dt>
@@ -197,37 +245,44 @@
         </div>
       </dl>
 
-      {# balance_change is the signed move this bill made, so the reading before it is recoverable. #}
-      <dl class="mt-4 space-y-2 border-t border-slate-200 pt-4 text-sm">
-        <div class="flex items-center justify-between">
-          <dt class="text-slate-500">Balance before</dt>
-          <dd class="font-medium {% if balance_before < 0 %}text-rose-600{% elif balance_before > 0 %}text-emerald-600{% else %}text-slate-500{% endif %}">
-            {{ balance_before|floatformat:2|intcomma }}
-          </dd>
-        </div>
-        <div class="flex items-center justify-between">
-          <dt class="text-slate-500">This bill</dt>
-          <dd class="font-medium text-slate-900">
-            {% if bill.balance_change > 0 %}+{% endif %}{{ bill.balance_change|floatformat:2|intcomma }}
-          </dd>
-        </div>
-        <div class="flex items-center justify-between border-t border-slate-200 pt-2">
-          <dt class="font-semibold text-slate-900">Balance now</dt>
-          <dd class="text-base font-semibold {% if bill.customer.balance < 0 %}text-rose-600{% elif bill.customer.balance > 0 %}text-emerald-600{% else %}text-slate-500{% endif %}">
-            {{ bill.customer.balance|floatformat:2|intcomma }}
-          </dd>
-        </div>
-      </dl>
+      {% if bill.is_walk_in %}
+        {# A walk-in has no account behind it, so there is no balance to move — this note stands in for the breakdown below. #}
+        <p class="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          Walk-in sale — paid in full, no customer balance affected.
+        </p>
+      {% else %}
+        {# balance_change is the signed move this bill made, so the reading before it is recoverable. #}
+        <dl class="mt-4 space-y-2 border-t border-slate-200 pt-4 text-sm">
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-500">Balance before</dt>
+            <dd class="font-medium {% if balance_before < 0 %}text-rose-600{% elif balance_before > 0 %}text-emerald-600{% else %}text-slate-500{% endif %}">
+              {{ balance_before|floatformat:2|intcomma }}
+            </dd>
+          </div>
+          <div class="flex items-center justify-between">
+            <dt class="text-slate-500">This bill</dt>
+            <dd class="font-medium text-slate-900">
+              {% if bill.balance_change > 0 %}+{% endif %}{{ bill.balance_change|floatformat:2|intcomma }}
+            </dd>
+          </div>
+          <div class="flex items-center justify-between border-t border-slate-200 pt-2">
+            <dt class="font-semibold text-slate-900">Balance now</dt>
+            <dd class="text-base font-semibold {% if bill.customer.balance < 0 %}text-rose-600{% elif bill.customer.balance > 0 %}text-emerald-600{% else %}text-slate-500{% endif %}">
+              {{ bill.customer.balance|floatformat:2|intcomma }}
+            </dd>
+          </div>
+        </dl>
 
-      <p class="mt-3 text-xs text-slate-400">
-        {% if bill.customer.balance < 0 %}
-          Customer owes {{ owed_now|floatformat:2|intcomma }}.
-        {% elif bill.customer.balance > 0 %}
-          We owe them {{ bill.customer.balance|floatformat:2|intcomma }}.
-        {% else %}
-          Settled in full.
-        {% endif %}
-      </p>
+        <p class="mt-3 text-xs text-slate-400">
+          {% if bill.customer.balance < 0 %}
+            Customer owes {{ owed_now|floatformat:2|intcomma }}.
+          {% elif bill.customer.balance > 0 %}
+            We owe them {{ bill.customer.balance|floatformat:2|intcomma }}.
+          {% else %}
+            Settled in full.
+          {% endif %}
+        </p>
+      {% endif %}
     </div>
   </div>
 </div>

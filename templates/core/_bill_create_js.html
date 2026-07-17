@@ -2,12 +2,12 @@
 Bill creation, one page, no reloads:
 
   header   who the bill is for (a customer, or a walk-in name) and its date
-  build    click cards to put products on the bill; price them in the panel
+  build    click a product to open a modal, set qty & price, Enter to add it
   payment  settle the grand total
 
-The panel is the bill. A card's highlight only reflects what the panel holds,
-so `lines` is the single source of truth and the cards are redrawn from it —
-never the other way round.
+`lines` is the single source of truth for what's on the bill. A card's
+highlight and a row's contents only ever reflect it — never the other way
+round — and the modal is the one place qty and price get typed.
 
 Nothing here writes to the database, and none of this validation is evidence:
 the save step re-derives every figure server-side. Prices the biller edited are
@@ -23,6 +23,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const URL_TEMPLATE = '{% url "core:bill_products" 999999999 %}';
     // Whichever of bill_save / bill_edit rendered the page.
     const SAVE_URL = '{{ save_url }}';
+    // Held bills are a create-only affordance; empty on the edit page hides
+    // the Hold button, so nothing here fires off it.
+    const HOLD_URL = '{% if not is_edit %}{% url "core:held_bill_save" %}{% endif %}';
     const CSRF = '{{ csrf_token }}';
 
     // Present only when editing: the bill to rebuild the page from.
@@ -111,9 +114,23 @@ spanning lines, it isn't stripped and renders onto the page as text.
       override: $('credit-override'),  // super admins only
     };
 
+    // ---- qty/price modal ----
+    const modal       = $('qty-modal');
+    const modalForm   = $('qty-modal-form');
+    const modalName   = $('modal-product-name');
+    const modalMeta   = $('modal-product-meta');
+    const modalQty    = $('modal-qty');
+    const modalPrice  = $('modal-price');
+    const modalError  = $('modal-error');
+    const modalRemove = $('modal-remove');
+    const modalCancel = $('modal-cancel');
+    const modalCloseX = $('modal-close-x');
+    const modalSubmit = $('modal-submit');
+    let modalProductId = null;
+
     // Products as the server last described them for this customer.
     let loaded = [];
-    // productId -> {product, row, qtyInput, priceInput, ...}. A Map keeps the
+    // productId -> {product, row, qty, price, ...}. A Map keeps the
     // rows in the order they were added.
     const lines = new Map();
     // productId -> card element, so a card can be re-styled without a re-render.
@@ -213,26 +230,37 @@ spanning lines, it isn't stripped and renders onto the page as text.
       modePanels.regular.classList.toggle('hidden', walk);
       modePanels.walk_in.classList.toggle('hidden', !walk);
 
-      // A walk-in cannot be put on account: the holding account is shared, so
-      // a balance left on it would say what walk-ins owe in total and never
-      // which of them. The save step refuses it; this says so up front rather
-      // than letting the biller fill in a bill that cannot be saved.
-      const later = document.querySelector('.js-type[value="pay_later"]');
-      if (later) {
-        later.disabled = walk;
-        if (walk && later.checked) {
-          later.checked = false;
+      // There is no account behind a walk-in sale, so nothing can be left
+      // outstanding (Pay Later) or settled by cheque/transfer against a
+      // balance that doesn't exist — full cash, for the exact total, is the
+      // only option that makes sense. Every other card is hidden rather than
+      // merely greyed out, and full cash is selected in its place. The save
+      // step enforces this regardless of what reaches it from here.
+      let cashRadio = null;
+      document.querySelectorAll('.js-type-card').forEach(function (card) {
+        const radio = card.querySelector('.js-type');
+        if (!radio) return;
+        if (radio.value === 'full_cash') cashRadio = radio;
+
+        const restrict = walk && radio.value !== 'full_cash';
+        card.classList.toggle('hidden', restrict);
+        radio.disabled = restrict;
+        if (restrict && radio.checked) {
+          radio.checked = false;
           document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
             panel.classList.add('hidden');
           });
         }
-        const card = later.closest('.js-type-card');
-        if (card) {
-          card.classList.toggle('opacity-40', walk);
-          card.classList.toggle('cursor-not-allowed', walk);
-          card.classList.toggle('cursor-pointer', !walk);
-          card.title = walk ? 'A walk-in sale has to be paid in full.' : '';
-        }
+      });
+
+      const note = $('walkin-payment-note');
+      if (note) note.classList.toggle('hidden', !walk);
+
+      // Picks it for them — a walk-in only ever has the one option, so
+      // there's nothing to choose.
+      if (walk && cashRadio && !cashRadio.checked) {
+        cashRadio.checked = true;
+        onTypeChange();
       }
     }
 
@@ -369,19 +397,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
       }
     }
 
-    function toggleProduct(id) {
-      const product = loaded.find(function (p) { return p.id === id; });
-      if (!product || stockOf(product) <= 0) return;
-
-      if (lines.has(id)) {
-        removeLine(id);
-      } else {
-        addLine(product);
-      }
-      paintCard(id);
-      recalc();
-    }
-
     function load(customerId) {
       // Each request carries a token; a slow earlier reply must not overwrite
       // the grid after the biller has moved to another customer.
@@ -430,32 +445,31 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // ================= bill items panel =================
 
     // Returns the line total, or null when the row can't produce one. Null is
-    // deliberate: a bad row must not silently count as 0 in the subtotal.
+    // deliberate: a bad row must not silently count as 0 in the subtotal. Qty
+    // and price come from the modal, not an inline input, so the only way a
+    // line can go bad after being added is stock shifting under it (an edit,
+    // or two billers working at once) — that's what this still guards.
     function evaluate(line) {
-      const qty = num(line.qtyInput.value);
-      const price = num(line.priceInput.value);
+      const qty = line.qty;
+      const price = line.price;
       const stock = stockOf(line.product);
 
-      let qtyError = '';
-      if (Number.isNaN(qty)) qtyError = 'Enter a quantity.';
-      else if (qty < MIN_QTY) qtyError = 'Minimum quantity is ' + MIN_QTY + '.';
-      else if (qty > stock) qtyError = 'Only ' + line.product.qty + ' in stock.';
+      let message = '';
+      if (!(qty >= MIN_QTY)) message = 'Enter a quantity.';
+      else if (qty > stock) message = 'Only ' + line.product.qty + ' in stock — click to fix.';
+      else if (!(price >= 0)) message = 'Enter a price.';
 
-      let priceError = '';
-      if (Number.isNaN(price)) priceError = 'Enter a price.';
-      else if (price < 0) priceError = 'Price cannot be negative.';
-
-      const message = qtyError || priceError;
-      line.error.textContent = message;
-      line.error.classList.toggle('hidden', message === '');
+      line.warn.textContent = message;
+      line.warn.classList.toggle('hidden', message === '');
 
       const bad = message !== '';
       line.row.classList.toggle('bg-rose-50', bad);
 
+      line.meta.textContent = qty + ' × ' + money(price);
+
       // A price that differs from what the server quoted gets written back to
       // CustomerPrice on save, so the biller is told it will stick.
-      const changed = !Number.isNaN(price) &&
-        price.toFixed(2) !== Number(line.product.unit_price).toFixed(2);
+      const changed = price.toFixed(2) !== Number(line.product.unit_price).toFixed(2);
       line.changedBadge.classList.toggle('hidden', !changed);
       line.changed = changed;
 
@@ -519,18 +533,23 @@ spanning lines, it isn't stripped and renders onto the page as text.
       // ---- readiness ----
       const named = !isWalkIn() || walkinName.value.trim() !== '';
       const chosen = isWalkIn() ? named : select.value !== '';
-      const ready = hasLines && invalid === 0 && adjustError === '' && chosen;
+      // No longer pre-filled with today, so a blank date is a real gap, not a
+      // leftover default the biller forgot to change.
+      const dated = billDate.value !== '';
+      const ready = hasLines && invalid === 0 && adjustError === '' && chosen && dated;
 
       toPayment.disabled = !ready;
-      toPayNote.textContent = !chosen
-        ? (isWalkIn() ? 'Enter the walk-in name.' : 'Choose a customer.')
-        : !hasLines
-          ? 'Add at least one item.'
-          : invalid > 0
-            ? 'Fix the rows that need attention first.'
-            : adjustError !== ''
-              ? 'Fix the discount first.'
-              : '';
+      toPayNote.textContent = !dated
+        ? 'Choose the bill date.'
+        : !chosen
+          ? (isWalkIn() ? 'Enter the walk-in name.' : 'Choose a customer.')
+          : !hasLines
+            ? 'Add at least one item.'
+            : invalid > 0
+              ? 'Fix the rows that need attention first.'
+              : adjustError !== ''
+                ? 'Fix the discount first.'
+                : '';
 
       if (invalid > 0) {
         invalidNote.textContent = invalid + (invalid === 1 ? ' row needs' : ' rows need') +
@@ -582,113 +601,106 @@ spanning lines, it isn't stripped and renders onto the page as text.
       }
     }
 
+    // A row only ever displays what the modal last set — clicking it (or its
+    // edit affordance) reopens the modal rather than editing inline, so the
+    // modal is the single place qty and price ever get typed.
     function lineRow(product) {
       const row = document.createElement('div');
-      row.className = 'px-4 py-3';
-
-      const head = document.createElement('div');
-      head.className = 'flex items-start justify-between gap-2';
+      row.className = 'js-bill-row group flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-50';
+      row.dataset.id = String(product.id);
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.setAttribute('aria-label', 'Edit ' + product.name);
 
       const names = document.createElement('div');
-      names.className = 'min-w-0';
+      names.className = 'min-w-0 flex-1';
+
       const name = document.createElement('p');
       name.className = 'truncate text-sm font-medium text-slate-900';
       name.textContent = product.name;
       names.appendChild(name);
+
       if (product.size) {
         const size = document.createElement('p');
         size.className = 'truncate text-xs text-slate-400';
         size.textContent = product.size;
         names.appendChild(size);
       }
-      head.appendChild(names);
+
+      const meta = document.createElement('p');
+      meta.className = 'mt-1 text-xs text-slate-500';
+      names.appendChild(meta);
+
+      const changedBadge = document.createElement('span');
+      changedBadge.className = 'mt-1 hidden inline-block w-fit rounded-full bg-amber-50 px-2 py-0.5 ' +
+        'text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200';
+      changedBadge.textContent = 'Price updated';
+      names.appendChild(changedBadge);
+
+      const warn = document.createElement('p');
+      warn.className = 'mt-1 hidden text-xs font-medium text-rose-600';
+      names.appendChild(warn);
+
+      const totals = document.createElement('div');
+      totals.className = 'shrink-0 text-right';
+      const totalCell = document.createElement('p');
+      totalCell.className = 'text-sm font-semibold text-slate-900';
+      totals.appendChild(totalCell);
 
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.className = 'shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-400 hover:bg-rose-50 hover:text-rose-600';
+      remove.className = 'mt-1 shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-300 ' +
+        'hover:bg-rose-50 hover:text-rose-600 group-hover:text-slate-400';
       remove.textContent = '×';
       remove.setAttribute('aria-label', 'Remove ' + product.name);
-      head.appendChild(remove);
-      row.appendChild(head);
 
-      return { row: row, remove: remove };
-    }
+      row.appendChild(names);
+      row.appendChild(totals);
+      row.appendChild(remove);
 
-    function numberInput(value, extra) {
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.value = value;
-      input.className = 'w-full rounded-lg border border-slate-300 px-2 py-1 text-right text-sm ' +
-        'text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900';
-      Object.keys(extra).forEach(function (key) { input.setAttribute(key, extra[key]); });
-      return input;
-    }
-
-    function addLine(product) {
-      if (lines.has(product.id)) return;
-
-      const built = lineRow(product);
-      const row = built.row;
-
-      const fields = document.createElement('div');
-      fields.className = 'mt-2 grid grid-cols-3 items-center gap-2';
-
-      const qtyInput = numberInput('1', {
-        min: String(MIN_QTY),
-        max: product.qty,
-        // Stock carries 3 dp, so the step has to allow them or the browser
-        // rejects a perfectly sellable 2.5.
-        step: '0.001',
-        'aria-label': 'Quantity for ' + product.name,
+      row.addEventListener('click', function (e) {
+        if (e.target === remove) return;
+        openModal(product);
       });
-      const priceInput = numberInput(product.unit_price, {
-        min: '0',
-        step: '0.01',
-        'aria-label': 'Unit price for ' + product.name,
+      row.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openModal(product);
+        }
       });
-
-      const totalCell = document.createElement('p');
-      totalCell.className = 'text-right text-sm font-semibold text-slate-900';
-      totalCell.textContent = '0.00';
-
-      fields.appendChild(qtyInput);
-      fields.appendChild(priceInput);
-      fields.appendChild(totalCell);
-      row.appendChild(fields);
-
-      const error = document.createElement('p');
-      error.className = 'mt-1 hidden text-right text-xs text-rose-600';
-      row.appendChild(error);
-
-      const changedBadge = document.createElement('span');
-      changedBadge.className = 'mt-1 hidden rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold ' +
-        'text-amber-700 ring-1 ring-inset ring-amber-200';
-      changedBadge.textContent = 'Price updated';
-      const badgeWrap = document.createElement('div');
-      badgeWrap.className = 'flex justify-end';
-      badgeWrap.appendChild(changedBadge);
-      row.appendChild(badgeWrap);
-
-      lines.set(product.id, {
-        product: product,
-        row: row,
-        qtyInput: qtyInput,
-        priceInput: priceInput,
-        error: error,
-        totalCell: totalCell,
-        changedBadge: changedBadge,
-        changed: false,
-      });
-      billBody.appendChild(row);
-
-      // 'input' fires on keyup, paste and the spinner arrows alike.
-      qtyInput.addEventListener('input', recalc);
-      priceInput.addEventListener('input', recalc);
-      built.remove.addEventListener('click', function () {
+      remove.addEventListener('click', function (e) {
+        e.stopPropagation();
         removeLine(product.id);
         paintCard(product.id);
         recalc();
       });
+
+      return { row: row, meta: meta, totalCell: totalCell, changedBadge: changedBadge, warn: warn };
+    }
+
+    /** Adds a new line, or updates qty/price on one already on the bill. */
+    function addOrUpdateLine(product, qty, price) {
+      let line = lines.get(product.id);
+      if (!line) {
+        const built = lineRow(product);
+        line = {
+          product: product,
+          row: built.row,
+          meta: built.meta,
+          totalCell: built.totalCell,
+          changedBadge: built.changedBadge,
+          warn: built.warn,
+          qty: qty,
+          price: price,
+          changed: false,
+        };
+        lines.set(product.id, line);
+        billBody.appendChild(line.row);
+      } else {
+        line.qty = qty;
+        line.price = price;
+      }
+      return line;
     }
 
     function removeLine(id) {
@@ -697,6 +709,113 @@ spanning lines, it isn't stripped and renders onto the page as text.
       line.row.remove();
       lines.delete(id);
     }
+
+    // ================= qty/price modal =================
+
+    /**
+     * Opens pre-filled: "1" and the quoted price for a product not yet on the
+     * bill, whatever is already there for one being edited. Enter — the
+     * form's submit — adds or updates it in one step, so a fast biller never
+     * has to reach for the mouse between picking a product and moving to the
+     * next one.
+     */
+    function openModal(product) {
+      if (stockOf(product) <= 0 && !lines.has(product.id)) return;
+
+      modalProductId = product.id;
+      const existing = lines.get(product.id);
+
+      modalName.textContent = product.name;
+      modalMeta.textContent = (product.size ? product.size + ' · ' : '') + stockOf(product) + ' in stock';
+      modalQty.value = existing ? existing.qty : '1';
+      modalPrice.value = existing ? existing.price : product.unit_price;
+      modalQty.max = product.qty;
+
+      modalError.textContent = '';
+      modalError.classList.add('hidden');
+      modalRemove.classList.toggle('hidden', !existing);
+      modalSubmit.textContent = existing ? 'Update' : 'Add to bill';
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+
+      // Let the modal paint first so focus lands correctly, then select the
+      // qty so typing overwrites the prefill instead of appending to it.
+      requestAnimationFrame(function () {
+        modalQty.focus();
+        modalQty.select();
+      });
+    }
+
+    function closeModal() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      modalProductId = null;
+    }
+
+    function submitModal() {
+      const product = loaded.find(function (p) { return p.id === modalProductId; });
+      if (!product) { closeModal(); return; }
+
+      const stock = stockOf(product);
+      const qty = num(modalQty.value);
+      const price = num(modalPrice.value);
+
+      let message = '';
+      if (Number.isNaN(qty)) message = 'Enter a quantity.';
+      else if (qty < MIN_QTY) message = 'Minimum quantity is ' + MIN_QTY + '.';
+      else if (qty > stock) message = 'Only ' + product.qty + ' in stock.';
+      else if (Number.isNaN(price)) message = 'Enter a unit price.';
+      else if (price < 0) message = 'Price cannot be negative.';
+
+      if (message) {
+        modalError.textContent = message;
+        modalError.classList.remove('hidden');
+        return;
+      }
+
+      addOrUpdateLine(product, round2(qty), round2(price));
+      paintCard(product.id);
+      recalc();
+      closeModal();
+    }
+
+    // Enter moves qty → price → add, one field at a time, rather than
+    // submitting straight off the qty field: that way the biller can type the
+    // qty, hit Enter, immediately overwrite the price (highlighted the same
+    // way qty was on open), hit Enter again, and the line is in.
+    modalQty.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      modalPrice.focus();
+      modalPrice.select();
+    });
+    modalPrice.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      submitModal();
+    });
+    // Belt-and-braces: catches Enter from any other field in the form (or a
+    // browser that submits on Enter regardless of which field triggered it).
+    modalForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      submitModal();
+    });
+    modalCancel.addEventListener('click', closeModal);
+    modalCloseX.addEventListener('click', closeModal);
+    modalRemove.addEventListener('click', function () {
+      if (modalProductId === null) return;
+      removeLine(modalProductId);
+      paintCard(modalProductId);
+      recalc();
+      closeModal();
+    });
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
 
     // ================= payment =================
 
@@ -737,35 +856,175 @@ spanning lines, it isn't stripped and renders onto the page as text.
       return value;
     }
 
-    /**
-     * The cheque amount; 0 when an optional cheque is left blank; NaN when the
-     * details don't hold up. Anything with an amount must carry the fields the
-     * Cheque model needs — branch and account number are blank=True there, so
-     * they stay optional here.
-     */
-    function readCheque(prefix, required, errors) {
-      const amountEl = $(prefix + '-amount');
-      const raw = amountEl.value.trim();
-      if (!required && raw === '') return 0;
+    // ---- multi-cheque manager ----
+    //
+    // Each cheque-taking type (full_cheque, partial_cheque, mixed) owns a
+    // list container with data-prefix telling us who it belongs to. Rows are
+    // cloned from #cheque-row-template and each carries data-field attributes
+    // that map directly to the payload keys the save step expects. A single
+    // template + prefix-scoped lists is what keeps the payload shape uniform
+    // regardless of which panel produced it.
 
-      const amount = num(raw);
-      if (Number.isNaN(amount) || amount <= 0) {
-        errors.push('Enter a cheque amount above 0.');
+    const chequeTemplate = $('cheque-row-template');
+
+    /** Every cheque row inside the named list. */
+    function chequeRows(prefix) {
+      const list = $(prefix + '-list');
+      return list ? Array.from(list.querySelectorAll('.js-cheque-row')) : [];
+    }
+
+    /** Renumber the "Cheque N" labels — called after add and remove so the
+     * displayed order matches the rows top to bottom. */
+    function renumberCheques(prefix) {
+      chequeRows(prefix).forEach(function (row, i) {
+        const label = row.querySelector('.js-cheque-index');
+        if (label) label.textContent = 'Cheque ' + (i + 1);
+      });
+    }
+
+    /** Read a single cheque row into the object shape the save step expects. */
+    function readChequeRow(row) {
+      const get = function (field) {
+        const input = row.querySelector('[data-field="' + field + '"]');
+        return input ? input.value.trim() : '';
+      };
+      return {
+        cheque_no: get('cheque_no'),
+        bank_name: get('bank_name'),
+        branch: get('branch'),
+        acc_no: get('acc_no'),
+        amount: get('amount'),
+        received_date: get('received_date'),
+        maturity_date: get('maturity_date'),
+      };
+    }
+
+    /** Every non-blank cheque row on the given list, as payload dicts. Empty
+     * rows are skipped so a stray extra row doesn't fail validation. */
+    function collectCheques(prefix) {
+      return chequeRows(prefix).map(readChequeRow).filter(function (c) {
+        return c.amount !== '' || c.cheque_no !== '' || c.bank_name !== '';
+      });
+    }
+
+    /** Sum of amounts on the given list (bad rows contribute 0). Updates the
+     * live total badge alongside the "+ Add Another" button. */
+    function chequeSum(prefix) {
+      let total = 0;
+      chequeRows(prefix).forEach(function (row) {
+        const raw = row.querySelector('.js-cheque-amount');
+        const value = raw ? num(raw.value) : NaN;
+        if (!Number.isNaN(value) && value > 0) total = round2(total + value);
+      });
+      const el = $(prefix + '-total');
+      if (el) el.textContent = money(total);
+      return total;
+    }
+
+    /** Validate one cheque row against the Cheque model's requirements. */
+    function validateChequeRow(row, label, errors) {
+      const cheque = readChequeRow(row);
+      let hasError = false;
+      const flag = function (message) {
+        errors.push(label + ': ' + message);
+        hasError = true;
+      };
+
+      const amount = num(cheque.amount);
+      if (Number.isNaN(amount) || amount <= 0) flag('amount must be above 0');
+      if (!cheque.cheque_no) flag('number is required');
+      if (!cheque.bank_name) flag('bank name is required');
+      if (!cheque.received_date) flag('received date is required');
+      if (!cheque.maturity_date) flag('maturity date is required');
+      // yyyy-mm-dd strings compare as dates.
+      if (cheque.received_date && cheque.maturity_date &&
+          cheque.maturity_date < cheque.received_date) {
+        flag('maturity date cannot be before the received date');
+      }
+      return { ok: !hasError, amount: Number.isNaN(amount) ? 0 : amount };
+    }
+
+    /** Add a cheque row to the given list; hydrates from `preset` if given. */
+    function addChequeRow(prefix, preset) {
+      const list = $(prefix + '-list');
+      if (!list || !chequeTemplate) return null;
+      const clone = chequeTemplate.content.firstElementChild.cloneNode(true);
+
+      if (preset) {
+        ['cheque_no', 'bank_name', 'branch', 'acc_no', 'amount',
+         'received_date', 'maturity_date'].forEach(function (field) {
+          const input = clone.querySelector('[data-field="' + field + '"]');
+          if (input && preset[field] !== undefined && preset[field] !== null) {
+            input.value = preset[field];
+          }
+        });
+      }
+
+      // Live total updates on any amount change in the list.
+      const amountInput = clone.querySelector('.js-cheque-amount');
+      if (amountInput) {
+        amountInput.addEventListener('input', refreshPayment);
+      }
+
+      // Remove: forbidden on the last row so a cheque-taking type always has
+      // somewhere to type into.
+      const remove = clone.querySelector('.js-remove-cheque');
+      if (remove) {
+        remove.addEventListener('click', function () {
+          if (chequeRows(prefix).length <= 1) return;
+          clone.remove();
+          renumberCheques(prefix);
+          refreshPayment();
+        });
+      }
+
+      list.appendChild(clone);
+      renumberCheques(prefix);
+      return clone;
+    }
+
+    /** Empty every cheque list so the panels start fresh on Start Over. */
+    function clearAllCheques() {
+      ['fullchq', 'partchq', 'mixchq'].forEach(function (prefix) {
+        const list = $(prefix + '-list');
+        if (list) list.replaceChildren();
+        const total = $(prefix + '-total');
+        if (total) total.textContent = '0.00';
+      });
+    }
+
+    /** Make sure a cheque-taking type has at least one row on show. */
+    function ensureChequeRow(prefix) {
+      if (chequeRows(prefix).length === 0) addChequeRow(prefix, null);
+    }
+
+    /** Read a cash input the same way the old readMoney did — required means
+     * blank is an error, optional means blank is 0. */
+    function readCashInput(el, label, errors, optional) {
+      const raw = el.value.trim();
+      if (raw === '') {
+        if (optional) return 0;
+        errors.push(label + ' is required.');
         return NaN;
       }
+      const value = num(raw);
+      if (Number.isNaN(value)) { errors.push(label + ' must be a number.'); return NaN; }
+      if (value < 0) { errors.push(label + ' cannot be negative.'); return NaN; }
+      return value;
+    }
 
-      if (!$(prefix + '-no').value.trim()) errors.push('Cheque number is required.');
-      if (!$(prefix + '-bank').value.trim()) errors.push('Bank name is required.');
-
-      const received = $(prefix + '-received').value;
-      const maturity = $(prefix + '-maturity').value;
-      if (!received) errors.push('Cheque received date is required.');
-      if (!maturity) errors.push('Cheque maturity date is required.');
-      // Both are yyyy-mm-dd, so comparing the strings compares the dates.
-      if (received && maturity && maturity < received) {
-        errors.push('Cheque maturity date cannot be before the received date.');
-      }
-      return amount;
+    /** Validate every row in one cheque list, return sum-of-valid-amounts. */
+    function validateChequeList(prefix, errors) {
+      const rows = chequeRows(prefix);
+      if (rows.length === 0) { errors.push('Add at least one cheque.'); return NaN; }
+      let total = 0;
+      let anyBad = false;
+      rows.forEach(function (row, i) {
+        const result = validateChequeRow(row, 'Cheque ' + (i + 1), errors);
+        if (!result.ok) anyBad = true;
+        else total = round2(total + result.amount);
+      });
+      return anyBad ? NaN : total;
     }
 
     function validatePayment() {
@@ -775,28 +1034,62 @@ spanning lines, it isn't stripped and renders onto the page as text.
       const balance = balanceNow();
       let paid = 0;
       let blocked = false;
+      // For partial types, how much is being taken now vs left on account.
+      let partialRemaining = 0;
 
       if (type === 'full_cash') {
-        paid = readMoney($('fullcash-amount'), 'Amount received', errors, false);
+        paid = readCashInput($('fullcash-amount'), 'Amount received', errors, false);
+        if (!Number.isNaN(paid) && paid !== target) {
+          const diff = round2(target - paid);
+          errors.push(diff > 0
+            ? 'Short by ' + money(diff) + ' — must total ' + money(target) + '.'
+            : 'Over by ' + money(Math.abs(diff)) + ' — must total ' + money(target) + '.');
+        }
       } else if (type === 'full_cheque') {
-        paid = readCheque('fullchq', true, errors);
-      } else if (type === 'partial') {
-        const cash = readMoney($('partial-cash'), 'Cash amount', errors, false);
-        const cheque = readCheque('partchq', true, errors);
-        paid = (Number.isNaN(cash) || Number.isNaN(cheque)) ? NaN : round2(cash + cheque);
+        const chequeTotal = validateChequeList('fullchq', errors);
+        paid = Number.isNaN(chequeTotal) ? NaN : chequeTotal;
+        if (!Number.isNaN(paid) && paid !== target) {
+          const diff = round2(target - paid);
+          errors.push(diff > 0
+            ? 'Cheques short by ' + money(diff) + ' — must total ' + money(target) + '.'
+            : 'Cheques over by ' + money(Math.abs(diff)) + ' — must total ' + money(target) + '.');
+        }
+      } else if (type === 'partial_cash') {
+        const cash = readCashInput($('partcash-amount'), 'Cash amount', errors, false);
+        if (!Number.isNaN(cash)) {
+          if (cash <= 0) errors.push('Cash amount must be above 0.');
+          else if (cash >= target) {
+            errors.push('Partial Cash must be less than ' + money(target) + '. Use Full Cash to pay the whole bill.');
+          } else {
+            partialRemaining = round2(target - cash);
+          }
+        }
+        paid = Number.isNaN(cash) ? NaN : cash;
+      } else if (type === 'partial_cheque') {
+        const chequeTotal = validateChequeList('partchq', errors);
+        if (!Number.isNaN(chequeTotal)) {
+          if (chequeTotal <= 0) errors.push('Cheque total must be above 0.');
+          else if (chequeTotal >= target) {
+            errors.push('Partial Cheque total must be less than ' + money(target) + '. Use Full Cheque to pay the whole bill.');
+          } else {
+            partialRemaining = round2(target - chequeTotal);
+          }
+        }
+        paid = Number.isNaN(chequeTotal) ? NaN : chequeTotal;
       } else if (type === 'mixed') {
-        const cash = readMoney($('mixed-cash'), 'Cash amount', errors, true);
-        const transfer = readMoney($('mixed-transfer'), 'Transfer amount', errors, true);
-        const cheque = readCheque('mixchq', false, errors);
-
-        if (Number.isNaN(cash) || Number.isNaN(transfer) || Number.isNaN(cheque)) {
+        const cash = readCashInput($('mixed-cash'), 'Cash amount', errors, false);
+        const chequeTotal = validateChequeList('mixchq', errors);
+        if (!Number.isNaN(cash) && cash <= 0) errors.push('Mixed needs a cash amount above 0.');
+        if (Number.isNaN(cash) || Number.isNaN(chequeTotal)) {
           paid = NaN;
         } else {
-          paid = round2(cash + transfer + cheque);
-          if (transfer > 0 && !$('mixed-account').value) {
-            errors.push('Choose an account for the transfer.');
+          paid = round2(cash + chequeTotal);
+          if (paid !== target) {
+            const diff = round2(target - paid);
+            errors.push(diff > 0
+              ? 'Short by ' + money(diff) + ' — cash + cheques must total ' + money(target) + '.'
+              : 'Over by ' + money(Math.abs(diff)) + ' — cash + cheques must total ' + money(target) + '.');
           }
-          if (paid === 0) errors.push('Enter at least one payment amount.');
         }
       } else if (type === 'pay_later') {
         paid = 0;
@@ -809,25 +1102,19 @@ spanning lines, it isn't stripped and renders onto the page as text.
         paid = 0;
       }
 
+      // Guard against the credit-covers-it case for any collecting type.
+      if (['full_cash', 'full_cheque', 'partial_cash', 'partial_cheque', 'mixed']
+            .indexOf(type) !== -1 && target <= 0) {
+        errors.push('Nothing to collect — the credit covers this bill. Use Pay Later.');
+      }
+
       const settled = Number.isNaN(paid) ? 0 : paid;
       const after = round2(balance - currentTotal + settled);
 
-      if (type && type !== 'pay_later' && !Number.isNaN(paid)) {
-        if (target <= 0) {
-          // Their credit already covers the bill, so there is nothing to hand
-          // over and no amount that could match.
-          errors.push('Nothing to collect — the credit covers this bill. Use Pay Later.');
-        } else if (round2(paid) !== target) {
-          const diff = round2(target - paid);
-          errors.push(diff > 0
-            ? 'Short by ' + money(diff) + ' — payment must total ' + money(target) + '.'
-            : 'Over by ' + money(Math.abs(diff)) + ' — payment must total ' + money(target) + '.');
-        }
-      }
-
-      // Only Pay Later can leave money outstanding; every other type is held
-      // to the full amount above, so it always lands the balance on zero.
-      if (type === 'pay_later' && !isWalkIn()) {
+      // Only Pay Later needs the credit-limit gate; partial types already know
+      // they leave money outstanding and that's the point of them, but the
+      // credit limit still applies to whatever they leave behind.
+      if ((type === 'pay_later' || type === 'partial_cash' || type === 'partial_cheque') && !isWalkIn()) {
         const owed = after < 0 ? Math.abs(after) : 0;
         const limit = creditLimitNow();
         if (owed > limit) {
@@ -861,7 +1148,54 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
     function refreshPayment() {
       const balance = balanceNow();
+      const target = collectTarget();
+      const type = selectedType();
+
+      // Refresh every live cheque total up front, so validation and the panel
+      // notes below both read the same numbers.
+      ['fullchq', 'partchq', 'mixchq'].forEach(chequeSum);
+
       const result = validatePayment();
+
+      // Partial-remaining notes: the panels tell the biller what will be
+      // added to outstanding, so refreshing them here keeps text and figures
+      // in sync no matter which field triggered the update.
+      const partcashCash = num($('partcash-amount').value);
+      const partcashNote = $('partcash-remaining');
+      if (partcashNote) {
+        if (type === 'partial_cash' && !Number.isNaN(partcashCash) && partcashCash > 0 && partcashCash < target) {
+          partcashNote.textContent = 'Remaining ' + money(round2(target - partcashCash)) +
+            ' will be added to customer outstanding.';
+        } else {
+          partcashNote.textContent = '';
+        }
+      }
+
+      const partchqTotal = chequeSum('partchq');
+      const partchqNote = $('partchq-remaining');
+      if (partchqNote) {
+        if (type === 'partial_cheque' && partchqTotal > 0 && partchqTotal < target) {
+          partchqNote.textContent = 'Remaining ' + money(round2(target - partchqTotal)) +
+            ' will be added to customer outstanding.';
+        } else {
+          partchqNote.textContent = '';
+        }
+      }
+
+      const mixedCash = num($('mixed-cash').value);
+      const mixedChequeTotal = chequeSum('mixchq');
+      const mixedNote = $('mixed-remaining');
+      if (mixedNote) {
+        if (type === 'mixed' && !Number.isNaN(mixedCash) && mixedCash >= 0) {
+          const combined = round2(mixedCash + mixedChequeTotal);
+          const diff = round2(target - combined);
+          if (diff > 0) mixedNote.textContent = 'Short by ' + money(diff) + '.';
+          else if (diff < 0) mixedNote.textContent = 'Over by ' + money(Math.abs(diff)) + '.';
+          else mixedNote.textContent = 'Cash + cheques equal ' + money(target) + '.';
+        } else {
+          mixedNote.textContent = '';
+        }
+      }
 
       pay.subtotal.textContent = money(currentTotal);
       pay.adjust.textContent = money(round2(-balance));
@@ -901,29 +1235,20 @@ spanning lines, it isn't stripped and renders onto the page as text.
         panel.classList.toggle('hidden', panel.id !== 'pay-' + type);
       });
 
+      // Every cheque-taking type needs at least one row on show, so the
+      // biller has somewhere to type. Adding here rather than at load time
+      // means switching in and out of, say, partial_cheque doesn't leave
+      // stray empty rows lying around on other panels.
+      if (type === 'full_cheque') ensureChequeRow('fullchq');
+      else if (type === 'partial_cheque') ensureChequeRow('partchq');
+      else if (type === 'mixed') ensureChequeRow('mixchq');
+
       // Prefill the obvious figure, but never overwrite something typed.
       const target = collectTarget();
-      if (target > 0) {
-        if (type === 'full_cash' && $('fullcash-amount').value.trim() === '') {
-          $('fullcash-amount').value = target.toFixed(2);
-        }
-        if (type === 'full_cheque' && $('fullchq-amount').value.trim() === '') {
-          $('fullchq-amount').value = target.toFixed(2);
-        }
+      if (target > 0 && type === 'full_cash' && $('fullcash-amount').value.trim() === '') {
+        $('fullcash-amount').value = target.toFixed(2);
       }
       refreshPayment();
-    }
-
-    function chequePayload(prefix) {
-      return {
-        cheque_no: $(prefix + '-no').value.trim(),
-        bank_name: $(prefix + '-bank').value.trim(),
-        branch: $(prefix + '-branch').value.trim(),
-        acc_no: $(prefix + '-acc').value.trim(),
-        amount: $(prefix + '-amount').value.trim(),
-        received_date: $(prefix + '-received').value,
-        maturity_date: $(prefix + '-maturity').value,
-      };
     }
 
     function paymentPayload() {
@@ -934,16 +1259,16 @@ spanning lines, it isn't stripped and renders onto the page as text.
         payload.cash = $('fullcash-amount').value.trim();
         payload.account = $('fullcash-account').value;
       } else if (type === 'full_cheque') {
-        payload.cheque = chequePayload('fullchq');
-      } else if (type === 'partial') {
-        payload.cash = $('partial-cash').value.trim();
-        payload.cheque = chequePayload('partchq');
+        payload.cheques = collectCheques('fullchq');
+      } else if (type === 'partial_cash') {
+        payload.cash = $('partcash-amount').value.trim();
+        payload.account = $('partcash-account').value;
+      } else if (type === 'partial_cheque') {
+        payload.cheques = collectCheques('partchq');
       } else if (type === 'mixed') {
         payload.cash = $('mixed-cash').value.trim();
-        payload.transfer = $('mixed-transfer').value.trim();
         payload.account = $('mixed-account').value;
-        const cheque = chequePayload('mixchq');
-        if (cheque.amount !== '') payload.cheque = cheque;
+        payload.cheques = collectCheques('mixchq');
       }
 
       payload.credit_override = !!(pay.override && pay.override.checked);
@@ -978,8 +1303,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
       lines.forEach(function (line) {
         out.push({
           product_id: line.product.id,
-          qty: line.qtyInput.value.trim(),
-          unit_price: line.priceInput.value.trim(),
+          qty: String(line.qty),
+          unit_price: String(line.price),
           price_changed: line.changed,
         });
       });
@@ -1015,9 +1340,14 @@ spanning lines, it isn't stripped and renders onto the page as text.
       document.querySelectorAll('.js-pay-panel').forEach(function (panel) {
         panel.classList.add('hidden');
       });
-      stepPay.querySelectorAll('input[type="number"], input[type="text"]').forEach(function (el) {
+      // Only clear inputs still on show — the cheque rows carry their own
+      // inputs and are torn down entirely below.
+      stepPay.querySelectorAll('input[type="number"]:not([data-field]), input[type="text"]:not([data-field])').forEach(function (el) {
         el.value = '';
       });
+      // And their select dropdowns.
+      stepPay.querySelectorAll('select').forEach(function (el) { el.value = ''; });
+      clearAllCheques();
       if (pay.override) pay.override.checked = false;
 
       recalc();
@@ -1080,6 +1410,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // The name is part of who the bill is for, but it does not change prices,
     // so it only refreshes the summary rather than reloading the grid.
     walkinName.addEventListener('input', recalc);
+    billDate.addEventListener('input', recalc);
+    billDate.addEventListener('change', recalc);
 
     $('retry').addEventListener('click', function () {
       const id = priceCustomerId();
@@ -1089,7 +1421,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
     grid.addEventListener('click', function (e) {
       const card = e.target.closest('.js-card');
       if (!card || card.disabled) return;
-      toggleProduct(Number(card.dataset.id));
+      const product = loaded.find(function (p) { return p.id === Number(card.dataset.id); });
+      if (product) openModal(product);
     });
 
     search.addEventListener('input', renderGrid);
@@ -1124,8 +1457,69 @@ spanning lines, it isn't stripped and renders onto the page as text.
     });
     $('back-to-items').addEventListener('click', backToItems);
 
+    // ---- hold bill ----
+    // The button is hidden on the edit page (HOLD_URL is empty there), so
+    // this only fires from bill_create.
+    const holdBtn = $('hold-bill');
+    const holdNote = $('hold-note');
+    if (holdBtn && HOLD_URL) {
+      holdBtn.addEventListener('click', function () {
+        if (lines.size === 0) {
+          holdNote.textContent = 'Add at least one item before holding.';
+          holdNote.className = 'text-xs text-rose-600';
+          return;
+        }
+
+        holdBtn.disabled = true;
+        holdNote.textContent = 'Holding…';
+        holdNote.className = 'text-xs text-slate-400';
+
+        fetch(HOLD_URL, {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': CSRF,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(collectBill()),
+        })
+          .then(function (res) {
+            return res.json()
+              .catch(function () { return null; })
+              .then(function (data) { return { ok: res.ok, data: data }; });
+          })
+          .then(function (result) {
+            if (!result.ok || !result.data || !result.data.success) {
+              const message = result.data && result.data.error
+                ? result.data.error
+                : 'Could not hold the bill — please try again.';
+              throw new Error(message);
+            }
+            window.location = result.data.redirect;
+          })
+          .catch(function (err) {
+            holdNote.textContent = err.message;
+            holdNote.className = 'text-xs text-rose-600';
+            holdBtn.disabled = false;
+          });
+      });
+    } else if (holdBtn) {
+      // Edit page: no HOLD_URL, so the button would 404. Hide it entirely
+      // rather than leave a dead affordance on screen.
+      holdBtn.classList.add('hidden');
+    }
+
     document.querySelectorAll('.js-type').forEach(function (radio) {
       radio.addEventListener('change', onTypeChange);
+    });
+
+    // + Add Another Cheque: delegated so a click reaches whichever list's
+    // button was pressed. The data-prefix on the button carries the list id.
+    document.querySelectorAll('.js-add-cheque').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        addChequeRow(btn.dataset.prefix, null);
+        refreshPayment();
+      });
     });
 
     // One listener for the whole section: every amount, date and dropdown in
@@ -1190,29 +1584,34 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
       setValue('fullcash-amount', payment.type === 'full_cash' ? payment.cash : undefined);
       setValue('fullcash-account', payment.type === 'full_cash' ? payment.account : undefined);
-      setValue('partial-cash', payment.type === 'partial' ? payment.cash : undefined);
+      setValue('partcash-amount', payment.type === 'partial_cash' ? payment.cash : undefined);
+      setValue('partcash-account', payment.type === 'partial_cash' ? payment.account : undefined);
       setValue('mixed-cash', payment.type === 'mixed' ? payment.cash : undefined);
-      setValue('mixed-transfer', payment.type === 'mixed' ? payment.transfer : undefined);
       setValue('mixed-account', payment.type === 'mixed' ? payment.account : undefined);
 
-      const cheque = payment.cheque;
-      if (cheque) {
-        const prefix = payment.type === 'full_cheque' ? 'fullchq'
-          : payment.type === 'partial' ? 'partchq' : 'mixchq';
-        setValue(prefix + '-no', cheque.cheque_no);
-        setValue(prefix + '-bank', cheque.bank_name);
-        setValue(prefix + '-branch', cheque.branch);
-        setValue(prefix + '-acc', cheque.acc_no);
-        setValue(prefix + '-amount', cheque.amount);
-        setValue(prefix + '-received', cheque.received_date);
-        setValue(prefix + '-maturity', cheque.maturity_date);
+      // Multi-cheque: rebuild the right list from the array. The legacy
+      // "partial" (cash + one cheque) also arrives here — treat it as the
+      // new partial_cheque for hydration since the panel it edits into is
+      // that one; the save step still accepts the old shape.
+      const cheques = Array.isArray(payment.cheques) ? payment.cheques : [];
+      const prefix = payment.type === 'full_cheque' ? 'fullchq'
+        : payment.type === 'partial_cheque' ? 'partchq'
+        : payment.type === 'mixed' ? 'mixchq'
+        : payment.type === 'partial' ? 'partchq'
+        : '';
+      if (prefix && cheques.length > 0) {
+        // Empty the list first: onTypeChange() below would ensure a blank row,
+        // which would sit above the hydrated ones and confuse the biller.
+        const list = $(prefix + '-list');
+        if (list) list.replaceChildren();
+        cheques.forEach(function (cheque) { addChequeRow(prefix, cheque); });
       }
 
       const radio = document.querySelector('.js-type[value="' + payment.type + '"]');
       if (radio) {
         radio.checked = true;
-        // Shows the panel; its prefill only fills blanks, so it can't tread on
-        // anything set above.
+        // Shows the panel; ensureChequeRow only adds a row when the list is
+        // empty, so it can't tread on cheques we just hydrated.
         onTypeChange();
       }
     }
@@ -1227,10 +1626,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
           missing.push(line.product_id);
           return;
         }
-        addLine(product);
-        const row = lines.get(product.id);
-        row.qtyInput.value = line.qty;
-        row.priceInput.value = line.unit_price;
+        const qty = num(line.qty);
+        const price = num(line.unit_price);
+        addOrUpdateLine(product, Number.isNaN(qty) ? 0 : qty, Number.isNaN(price) ? 0 : price);
         paintCard(product.id);
       });
 

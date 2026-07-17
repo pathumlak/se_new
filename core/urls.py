@@ -48,6 +48,16 @@ urlpatterns = [
         name="bill_products",
     ),
     path("bills/save/", views.bill_save, name="bill_save"),
+    # Park a bill mid-entry. GET the list, POST to hold the current form,
+    # GET the recall page to hydrate bill_create, POST to drop a stale draft.
+    path("bills/held/", views.held_bill_list, name="held_bill_list"),
+    path("bills/hold/", views.held_bill_save, name="held_bill_save"),
+    path("bills/held/<int:pk>/", views.held_bill_recall, name="held_bill_recall"),
+    path(
+        "bills/held/<int:pk>/delete/",
+        views.held_bill_delete,
+        name="held_bill_delete",
+    ),
     path("bills/", views.bill_list, name="bill_list"),
     path("bills/<int:pk>/", views.bill_detail, name="bill_detail"),
     # GET renders the form; POST rewrites the bill.

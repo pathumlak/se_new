@@ -102,7 +102,11 @@ class Bill(models.Model):
     class PaymentType(models.TextChoices):
         FULL_CASH = "full_cash", "Full Cash"
         FULL_CHEQUE = "full_cheque", "Full Cheque"
-        PARTIAL = "partial", "Partial"
+        # PARTIAL is the pre-split "cash + cheque, full amount" type. Kept
+        # only for legacy rows; new bills use PARTIAL_CASH or PARTIAL_CHEQUE.
+        PARTIAL = "partial", "Partial (legacy)"
+        PARTIAL_CASH = "partial_cash", "Partial Cash"
+        PARTIAL_CHEQUE = "partial_cheque", "Partial Cheque"
         MIXED = "mixed", "Mixed"
         PAY_LATER = "pay_later", "Pay Later"
 
@@ -113,10 +117,15 @@ class Bill(models.Model):
         PAID = "paid", "Paid"
         CANCELLED = "cancelled", "Cancelled"
 
+    # Null for a walk-in sale: there is no account to point at, and
+    # walk_in_name is the only record of who bought the goods. Every other
+    # bill keeps this required — the ledger has to balance somewhere.
     customer = models.ForeignKey(
         Customer,
         on_delete=models.PROTECT,
         related_name="bills",
+        null=True,
+        blank=True,
     )
     bill_date = models.DateField()
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -149,7 +158,8 @@ class Bill(models.Model):
         ordering = ["-bill_date", "-id"]
 
     def __str__(self):
-        return f"Bill #{self.pk} · {self.customer} · {self.total_amount}"
+        who = self.customer if self.customer_id else f"{self.walk_in_name} (walk-in)"
+        return f"Bill #{self.pk} · {who} · {self.total_amount}"
 
     @property
     def remaining_balance(self):
@@ -418,6 +428,57 @@ class SupplierBillItem(models.Model):
 
     def __str__(self):
         return f"{self.product} × {self.qty} = {self.line_total}"
+
+
+class HeldBill(models.Model):
+    """A bill parked mid-entry, to be recalled and finished later.
+
+    A held bill is dormant — no stock moves, no balance changes, no payment
+    rows are written. It holds the raw form payload as JSON, exactly as the
+    bill creation page would post it, so recalling it hydrates the page and
+    saving it goes through the normal _write_bill path. When saved as a real
+    bill the held record is deleted.
+
+    Nothing here uses Bill because a held bill has nothing to count yet:
+    borrowing that model would mean the biller could see draft bills in the
+    bill list, in ledgers, and against the stock the parked lines haven't
+    actually taken.
+    """
+
+    # For at-a-glance context in the list. Nullable so a walk-in draft can be
+    # held without picking anyone; the name below is the fallback.
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="held_bills",
+    )
+    walk_in_name = models.CharField(max_length=255, blank=True)
+
+    # The whole form payload the biller would have posted, verbatim. Read
+    # back by the recall page which fires the same code path bill edit uses.
+    payload = models.JSONField()
+
+    # Cached from the payload so the list can order and search without
+    # unpicking it.
+    label = models.CharField(max_length=255, blank=True)
+    item_count = models.PositiveIntegerField(default=0)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="held_bills",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self):
+        return self.label or f"Held bill #{self.pk}"
 
 
 class ProductionEntry(models.Model):

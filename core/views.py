@@ -53,6 +53,7 @@ from .models import (
     Cheque,
     Customer,
     CustomerPrice,
+    HeldBill,
     Payment,
     Product,
     ProductionEntry,
@@ -740,12 +741,22 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     entries = []
 
     for bill in customer.bills.exclude(status=Bill.Status.CANCELLED):
+        # Delivery and discount are folded into total_amount already; spelled
+        # out here so the ledger reads as more than a bare "Sale" whenever
+        # either moved the figure.
+        extra = []
+        if bill.delivery_charge:
+            extra.append(f"+{bill.delivery_charge:.2f} delivery")
+        if bill.discount_amount:
+            extra.append(f"-{bill.discount_amount:.2f} discount")
+        description = f"Sale ({', '.join(extra)})" if extra else "Sale"
+
         entries.append(
             {
                 "date": bill.bill_date,
                 "kind": 0,  # a sale precedes same-day money against it
                 "pk": bill.pk,
-                "description": "Sale",
+                "description": description,
                 "sale": bill.total_amount,
                 "credit": None,
             }
@@ -937,8 +948,15 @@ def _bill_form_context(request, customers):
         # be wrong the first time one is added or renamed.
         "categories": Category.objects.all(),
         # Straight off the models, so the radio values and account codes the
-        # page posts are the ones the save step will store.
-        "payment_types": Bill.PaymentType.choices,
+        # page posts are the ones the save step will store. The legacy
+        # "partial" (cash + cheque, full amount) type is left off — it has
+        # been split into PARTIAL_CASH and PARTIAL_CHEQUE. The save step
+        # still accepts it for editing bills written before the split.
+        "payment_types": [
+            (value, label)
+            for value, label in Bill.PaymentType.choices
+            if value != Bill.PaymentType.PARTIAL
+        ],
         "account_choices": Payment.Account.choices,
     }
 
@@ -1055,14 +1073,14 @@ def _decimal(raw, label, places):
 def _read_bill_date(raw):
     """The date a new bill is billed on, off the payload.
 
-    Blank means today, which is what the picker is pre-set to and what every
-    bill written before the picker existed got. A future date is refused: the
-    goods have not left the yard yet, and a bill dated forward would sit ahead
-    of the running balance in every ledger it appears in.
+    Required — the picker no longer pre-fills today, so a blank here means the
+    biller never chose one rather than that today was intended. A future date
+    is refused: the goods have not left the yard yet, and a bill dated forward
+    would sit ahead of the running balance in every ledger it appears in.
     """
     text = str(raw if raw is not None else "").strip()
     if text == "":
-        return timezone.localdate()
+        raise BillError("Bill date is required.")
 
     parsed = _parse_date(text)
     if parsed is None:
@@ -1079,32 +1097,32 @@ def _optional_decimal(raw, label):
     return _decimal(raw, label, 2)
 
 
-def _read_cheque(raw, required):
-    """The cheque leg, or None when an optional cheque is left blank."""
+def _read_cheque(raw):
+    """Validate one cheque row and return the tidy dict for it. Raises
+    BillError with a row-scoped message if any required field is missing —
+    the caller adds "Cheque N: " so the biller knows which row went wrong.
+    """
     raw = raw or {}
-    amount_text = str(raw.get("amount") or "").strip()
-    if not required and amount_text == "":
-        return None
 
-    amount = _decimal(amount_text, "Cheque amount", 2)
+    amount = _decimal(raw.get("amount"), "amount", 2)
     if amount <= ZERO:
-        raise BillError("Cheque amount must be above 0.")
+        raise BillError("amount must be above 0.")
 
     cheque_no = str(raw.get("cheque_no") or "").strip()
     bank_name = str(raw.get("bank_name") or "").strip()
     if not cheque_no:
-        raise BillError("Cheque number is required.")
+        raise BillError("number is required.")
     if not bank_name:
-        raise BillError("Bank name is required.")
+        raise BillError("bank name is required.")
 
     received = _parse_date(raw.get("received_date"))
     maturity = _parse_date(raw.get("maturity_date"))
     if received is None:
-        raise BillError("Cheque received date is required.")
+        raise BillError("received date is required.")
     if maturity is None:
-        raise BillError("Cheque maturity date is required.")
+        raise BillError("maturity date is required.")
     if maturity < received:
-        raise BillError("Cheque maturity date cannot be before the received date.")
+        raise BillError("maturity date cannot be before the received date.")
 
     return {
         "cheque_no": cheque_no,
@@ -1117,16 +1135,55 @@ def _read_cheque(raw, required):
     }
 
 
+def _read_cheques(raw_list):
+    """Validate an array of cheque rows and return (cheques, total).
+
+    Every cheque type takes at least one row, so a missing or empty list is
+    refused. Row errors are prefixed with "Cheque N: " so a biller with five
+    rows on screen knows which one to fix.
+    """
+    if not isinstance(raw_list, list) or not raw_list:
+        raise BillError("Add at least one cheque.")
+
+    cheques = []
+    total = ZERO
+    for index, raw in enumerate(raw_list, start=1):
+        try:
+            cheque = _read_cheque(raw)
+        except BillError as exc:
+            raise BillError(f"Cheque {index}: {exc}")
+        cheques.append(cheque)
+        total += cheque["amount"]
+    return cheques, total
+
+
+def _read_cash_account(raw):
+    """Where cash on this leg should end up: physical drawer (blank), or one
+    of the named accounts. Invalid strings are refused rather than silently
+    kept as physical.
+    """
+    accounts = {value for value, _ in Payment.Account.choices}
+    account = str(raw or "").strip()
+    if account and account not in accounts:
+        raise BillError("Choose a valid account.")
+    return account
+
+
 def _read_payment(raw, total, customer):
     """Re-derive every payment leg from the payload.
 
-    The page validates all of this already; none of that is evidence, so it is
-    all recomputed here from the customer's stored balance.
+    The page validates all of this already; none of that is evidence, so it
+    is all recomputed here from the customer's stored balance.
 
-    `total` is what the bill comes to — goods plus delivery, less any discount
-    — not the subtotal of the lines. Collecting against the subtotal would ask
-    the customer for the delivery they are not paying and refuse them the
-    discount they were given.
+    `total` is what the bill comes to — goods plus delivery, less any
+    discount — not the subtotal of the lines. Collecting against the subtotal
+    would ask the customer for the delivery they are not paying and refuse
+    them the discount they were given.
+
+    Six payment types are recognised. Two — PARTIAL_CASH and PARTIAL_CHEQUE —
+    intentionally leave money outstanding without going through Pay Later's
+    credit-limit gate: they are how a bill collects some money now and puts
+    the rest on account.
     """
     raw = raw or {}
     kind = str(raw.get("type") or "").strip()
@@ -1134,60 +1191,124 @@ def _read_payment(raw, total, customer):
     if kind not in valid:
         raise BillError("Choose a payment type.")
 
-    accounts = {value for value, _ in Payment.Account.choices}
     parts = {
         "type": kind,
         "cash": ZERO,
         "cash_account": "",
-        "transfer": ZERO,
-        "transfer_account": "",
-        "cheque": None,
+        # Multi-cheque: an array of dicts as returned by _read_cheque, or [].
+        "cheques": [],
     }
+
+    # target is what the customer needs to hand over to settle everything:
+    # this bill plus any debt, less any credit. Full-payment types collect it
+    # exactly; partial types collect less than it; Pay Later collects none.
+    target = (total - customer.balance).quantize(Decimal("0.01"))
 
     if kind == Bill.PaymentType.FULL_CASH:
         parts["cash"] = _decimal(raw.get("cash"), "Amount received", 2)
-        account = str(raw.get("account") or "").strip()
-        if account and account not in accounts:
-            raise BillError("Choose a valid account.")
-        parts["cash_account"] = account
+        parts["cash_account"] = _read_cash_account(raw.get("account"))
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        if parts["cash"] != target:
+            raise BillError(f"Payment must total {target:.2f} — got {parts['cash']:.2f}.")
 
     elif kind == Bill.PaymentType.FULL_CHEQUE:
-        parts["cheque"] = _read_cheque(raw.get("cheque"), required=True)
+        cheques, cheque_total = _read_cheques(raw.get("cheques"))
+        parts["cheques"] = cheques
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        if cheque_total != target:
+            raise BillError(
+                f"Cheques must total {target:.2f} — got {cheque_total:.2f}."
+            )
 
-    elif kind == Bill.PaymentType.PARTIAL:
+    elif kind == Bill.PaymentType.PARTIAL_CASH:
         parts["cash"] = _decimal(raw.get("cash"), "Cash amount", 2)
-        parts["cheque"] = _read_cheque(raw.get("cheque"), required=True)
+        parts["cash_account"] = _read_cash_account(raw.get("account"))
+        if parts["cash"] <= ZERO:
+            raise BillError("Cash amount must be above 0.")
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        if parts["cash"] >= target:
+            raise BillError(
+                f"Partial Cash must be less than {target:.2f}. Use Full Cash to pay the whole bill."
+            )
+
+    elif kind == Bill.PaymentType.PARTIAL_CHEQUE:
+        cheques, cheque_total = _read_cheques(raw.get("cheques"))
+        parts["cheques"] = cheques
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        if cheque_total >= target:
+            raise BillError(
+                f"Partial Cheque total must be less than {target:.2f}. Use Full Cheque to pay the whole bill."
+            )
 
     elif kind == Bill.PaymentType.MIXED:
         parts["cash"] = _optional_decimal(raw.get("cash"), "Cash amount")
-        parts["transfer"] = _optional_decimal(raw.get("transfer"), "Transfer amount")
-        parts["cheque"] = _read_cheque(raw.get("cheque"), required=False)
-        if parts["transfer"] > ZERO:
-            account = str(raw.get("account") or "").strip()
-            if account not in accounts:
-                raise BillError("Choose an account for the transfer.")
-            parts["transfer_account"] = account
+        parts["cash_account"] = _read_cash_account(raw.get("account"))
+        cheques, cheque_total = _read_cheques(raw.get("cheques"))
+        parts["cheques"] = cheques
+        if parts["cash"] <= ZERO:
+            raise BillError("Mixed payment needs a cash amount above 0.")
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        combined = parts["cash"] + cheque_total
+        if combined != target:
+            raise BillError(
+                f"Cash + cheques must total {target:.2f} — got {combined:.2f}."
+            )
 
-    cheque_amount = parts["cheque"]["amount"] if parts["cheque"] else ZERO
-    paid = parts["cash"] + parts["transfer"] + cheque_amount
+    elif kind == Bill.PaymentType.PAY_LATER:
+        pass  # No inputs; credit limit is judged separately.
 
-    if kind == Bill.PaymentType.MIXED and paid <= ZERO:
-        raise BillError("Enter at least one payment amount.")
+    elif kind == Bill.PaymentType.PARTIAL:
+        # Legacy shape: cash + one cheque, together settling the full amount.
+        # Kept only because a bill saved before the split may be re-saved by
+        # editing — the page doesn't offer this type any more.
+        parts["cash"] = _decimal(raw.get("cash"), "Cash amount", 2)
+        cheque = _read_cheque(raw.get("cheque"))
+        parts["cheques"] = [cheque]
+        if target <= ZERO:
+            raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
+        combined = parts["cash"] + cheque["amount"]
+        if combined != target:
+            raise BillError(f"Payment must total {target:.2f} — got {combined:.2f}.")
 
-    # What settles everything: this bill plus any debt, less any credit. A
-    # negative balance is debt and a positive one is credit, so both are the
-    # one subtraction.
-    target = (total - customer.balance).quantize(Decimal("0.01"))
-
-    if kind == Bill.PaymentType.PAY_LATER:
-        paid = ZERO
-    elif target <= ZERO:
-        raise BillError("Nothing to collect — the credit covers this bill. Use Pay Later.")
-    elif paid != target:
-        raise BillError(f"Payment must total {target:.2f} — got {paid:.2f}.")
-
-    parts["paid"] = paid
+    cheque_total = sum((c["amount"] for c in parts["cheques"]), ZERO)
+    parts["paid"] = ZERO if kind == Bill.PaymentType.PAY_LATER else (parts["cash"] + cheque_total)
     return parts
+
+
+def _read_walkin_payment(raw, total):
+    """The only payment a walk-in sale can take: cash, for the exact total.
+
+    There is no account behind a walk-in bill, so nothing can be left
+    outstanding and nothing can be settled by cheque or transfer against a
+    balance that does not exist — full cash, in full, is the one shape that
+    works. Enforced here regardless of what the page already restricts it to,
+    since the page's restriction is a courtesy and not a control.
+    """
+    raw = raw or {}
+    kind = str(raw.get("type") or "").strip()
+    if kind != Bill.PaymentType.FULL_CASH:
+        raise BillError("A walk-in sale can only be paid by full cash.")
+
+    cash = _decimal(raw.get("cash"), "Amount received", 2)
+    account = _read_cash_account(raw.get("account"))
+
+    target = total.quantize(Decimal("0.01"))
+    if cash != target:
+        raise BillError(f"Payment must total {target:.2f} — got {cash:.2f}.")
+
+    return {
+        "type": kind,
+        "cash": cash,
+        "cash_account": account,
+        "cheques": [],
+        "paid": cash,
+        "credit_override": False,
+    }
 
 
 def _check_credit_limit(customer, total, parts, user):
@@ -1221,7 +1342,14 @@ def _check_credit_limit(customer, total, parts, user):
 
 
 def _record_payments(bill, customer, parts):
-    """Payment rows, and the paper trail each one leaves behind."""
+    """Payment rows, and the paper trail each one leaves behind.
+
+    One Payment for the cash leg (if any). One Payment plus one Cheque per
+    cheque row on the bill, so a bill carrying five cheques writes five
+    Payment rows and five Cheque rows — all linked to the same Bill, which
+    keeps _reverse_bill's payments.delete() cascade correct without any
+    per-type branching.
+    """
     now = timezone.now()
 
     if parts["cash"] > ZERO:
@@ -1265,25 +1393,7 @@ def _record_payments(bill, customer, parts):
                 bill=bill,
             )
 
-    if parts["transfer"] > ZERO:
-        payment = Payment.objects.create(
-            bill=bill,
-            method=Payment.Method.TRANSFER,
-            amount=parts["transfer"],
-            account=parts["transfer_account"],
-            paid_at=now,
-        )
-        CashTransfer.objects.create(
-            payment=payment,
-            to_account=parts["transfer_account"],
-            amount=parts["transfer"],
-            transferred_at=now,
-        )
-        # No drawer rows: this money went bank to bank without passing through
-        # the till.
-
-    cheque = parts["cheque"]
-    if cheque:
+    for cheque in parts["cheques"]:
         payment = Payment.objects.create(
             bill=bill,
             method=Payment.Method.CHEQUE,
@@ -1292,6 +1402,7 @@ def _record_payments(bill, customer, parts):
         )
         Cheque.objects.create(
             payment=payment,
+            bill=bill,
             customer=customer,
             cheque_no=cheque["cheque_no"],
             bank_name=cheque["bank_name"],
@@ -1352,15 +1463,15 @@ def _write_bill(bill, user, payload):
     walk_in_name = str(payload.get("walk_in_name") or "").strip()
 
     if is_walk_in:
-        # A walk-in still lands on a real account, because Bill.customer is
-        # required and the ledger has to balance somewhere. Who actually took
-        # the goods is walk_in_name, and it is the only record of them — so it
-        # is required rather than decorative.
+        # No account behind a walk-in sale: Bill.customer is null exactly for
+        # this, and walk_in_name is the only record of who bought the goods —
+        # so it is required rather than decorative. Nothing here touches any
+        # Customer row; a walk-in cannot move a balance that doesn't exist.
         if not walk_in_name:
             raise BillError("Enter the walk-in customer's name.")
         if len(walk_in_name) > 255:
             raise BillError("That walk-in name is too long.")
-        customer = _walk_in_customer()
+        customer = None
     else:
         walk_in_name = ""
         # Read fresh: on an edit the reversal above moved the balance with an
@@ -1382,10 +1493,17 @@ def _write_bill(bill, user, payload):
             is_active=True,
         )
     }
-    quoted = dict(
-        CustomerPrice.objects.filter(customer=customer)
-        .order_by()
-        .values_list("product_id", "unit_price")
+    # A walk-in has no customer to have quoted it a price at all — every line
+    # prices against the product's default, same as a regular customer with no
+    # override of their own.
+    quoted = (
+        dict(
+            CustomerPrice.objects.filter(customer=customer)
+            .order_by()
+            .values_list("product_id", "unit_price")
+        )
+        if customer is not None
+        else {}
     )
 
     items = []
@@ -1443,21 +1561,16 @@ def _write_bill(bill, user, payload):
     # Everything downstream prices against `total`, not the subtotal: the
     # payment collects what the bill actually comes to, and the credit limit
     # measures the debt it actually leaves.
-    parts = _read_payment(payload.get("payment"), total, customer)
-    parts["credit_override"] = bool((payload.get("payment") or {}).get("credit_override"))
-
-    if is_walk_in and parts["type"] == Bill.PaymentType.PAY_LATER:
-        # Every walk-in shares the one holding account, so debt left on it
-        # belongs to nobody in particular: the balance would say what walk-ins
-        # owe in total and never which of them. Refused here rather than left to
-        # the credit limit, which would turn a rule into an arithmetic accident
-        # and say "past the 0.00 credit limit" to someone who never set one.
-        raise BillError(
-            "A walk-in sale can't be put on account — there is no account to "
-            "put it on. Take payment now, or bill this to a regular customer."
-        )
-
-    _check_credit_limit(customer, total, parts, user)
+    #
+    # A walk-in takes a completely different path: there is no balance to
+    # collect against or put debt on, so it is full cash for the exact total
+    # rather than anything _read_payment or the credit limit would judge.
+    if is_walk_in:
+        parts = _read_walkin_payment(payload.get("payment"), total)
+    else:
+        parts = _read_payment(payload.get("payment"), total, customer)
+        parts["credit_override"] = bool((payload.get("payment") or {}).get("credit_override"))
+        _check_credit_limit(customer, total, parts, user)
 
     paid = parts["paid"]
     if paid >= total:
@@ -1471,7 +1584,10 @@ def _write_bill(bill, user, payload):
     # payment settles debt (balance up), so the two net to paid - total. Adding
     # this to the balance is the whole update, which keeps
     # new_balance = old_balance + balance_change true — what the field is for.
-    balance_change = paid - total
+    #
+    # A walk-in never moves one: there is no customer behind it, and it is
+    # always paid in full anyway, so the net would be zero even if there were.
+    balance_change = ZERO if is_walk_in else paid - total
 
     # 1. header. An edit keeps the date it was billed on — the goods left the
     # yard that day whatever gets corrected afterwards.
@@ -1514,22 +1630,28 @@ def _write_bill(bill, user, payload):
                 f"{item['qty']:.3f} needed."
             )
 
-    # 3. money
+    # 3. money. Payment/Cheque/CashDrawer rows don't need a customer — a
+    # walk-in still hits the till and the drawer exactly like any other cash
+    # sale, it just isn't collected against anyone's account.
     _record_payments(bill, customer, parts)
 
     # 4. balance. F() so a balance moved by another till in the meantime is
-    # adjusted rather than overwritten.
-    Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + balance_change)
+    # adjusted rather than overwritten. Skipped entirely for a walk-in: there
+    # is no customer row to move, and balance_change is 0 regardless.
+    if not is_walk_in:
+        Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + balance_change)
 
     # 5. prices the biller changed become this customer's price. Compared
     # against what was quoted, not against the browser's price_changed flag.
-    for item in items:
-        if item["unit_price"] != item["quoted"]:
-            CustomerPrice.objects.update_or_create(
-                customer=customer,
-                product=item["product"],
-                defaults={"unit_price": item["unit_price"]},
-            )
+    # A walk-in has no customer to remember a price for, so nothing to write.
+    if not is_walk_in:
+        for item in items:
+            if item["unit_price"] != item["quoted"]:
+                CustomerPrice.objects.update_or_create(
+                    customer=customer,
+                    product=item["product"],
+                    defaults={"unit_price": item["unit_price"]},
+                )
 
     return bill
 
@@ -1549,10 +1671,29 @@ def bill_save(request):
     except BillError as exc:
         # _save_bill is atomic, so nothing it wrote survives this.
         return JsonResponse({"success": False, "error": str(exc)}, status=400)
+    except Exception as exc:
+        # Anything else — an IntegrityError from a stale DB schema, a bug in
+        # this view — used to fall through to Django's 500 handler, which
+        # answers with HTML. That leaves the biller with a generic "Could not
+        # save the bill" because the browser can't parse the reply as JSON.
+        # Report the exception's class and message so the biller can see what
+        # actually broke; _save_bill is atomic, so nothing here survived it.
+        import logging
+        logging.exception("bill_save failed for user %s", request.user)
+        return JsonResponse(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
 
-    messages.success(
-        request, f"Bill #{bill.pk} for {bill.customer.name} was saved."
-    )
+    # If this bill was recalled from a held draft, retire the draft. Done
+    # after _save_bill returns so a validation failure on the way in leaves
+    # the draft alone — the biller can still recall it and try again.
+    held_id = request.GET.get("held", "").strip()
+    if held_id.isdigit():
+        HeldBill.objects.filter(pk=int(held_id)).delete()
+
+    who = bill.walk_in_name if bill.is_walk_in else bill.customer.name
+    messages.success(request, f"Bill #{bill.pk} for {who} was saved.")
     return JsonResponse(
         {
             "success": True,
@@ -1565,6 +1706,17 @@ def bill_save(request):
 @login_required
 def bill_detail(request, pk):
     bill = get_object_or_404(_bills_with_counts(), pk=pk)
+
+    # A walk-in has no customer behind it to have a balance at all — there is
+    # nothing to recover here, and the template shows a plain "paid in full"
+    # note instead of a balance breakdown.
+    if bill.customer_id:
+        balance_before = bill.customer.balance - bill.balance_change
+        owed_now = -bill.customer.balance if bill.customer.balance < ZERO else ZERO
+    else:
+        balance_before = ZERO
+        owed_now = ZERO
+
     return render(
         request,
         "core/bill_detail.html",
@@ -1575,10 +1727,10 @@ def bill_detail(request, pk):
             "payments": bill.payments.prefetch_related("cheques", "transfers"),
             # The bill records how it moved the balance, so the reading at the
             # time it was saved can be recovered without a full ledger replay.
-            "balance_before": bill.customer.balance - bill.balance_change,
+            "balance_before": balance_before,
             # Templates can't take an absolute value, and a debt reads better
             # as a positive figure.
-            "owed_now": -bill.customer.balance if bill.customer.balance < ZERO else ZERO,
+            "owed_now": owed_now,
         },
     )
 
@@ -1659,28 +1811,39 @@ def _bill_initial(bill):
 
 
 def _payment_initial(bill):
-    """Unpick the payment rows back into the form's fields."""
-    payment = {"type": bill.payment_type}
+    """Unpick the payment rows back into the form's fields.
+
+    Cheques are returned as an array — a bill can carry any number, and the
+    page rebuilds one cheque row per entry. The legacy transfer amount is
+    folded into the cash row's account so a re-edit of a Mixed bill from the
+    old shape still hydrates sensibly.
+    """
+    payment = {"type": bill.payment_type, "cheques": []}
 
     for row in bill.payments.prefetch_related("cheques"):
         if row.method == Payment.Method.CASH:
             payment["cash"] = f"{row.amount:.2f}"
             payment["account"] = row.account
         elif row.method == Payment.Method.TRANSFER:
-            payment["transfer"] = f"{row.amount:.2f}"
+            # Legacy MIXED: the old shape had a separate transfer leg. Treat
+            # its account as the cash account so the new Mixed panel finds
+            # somewhere to put the destination.
+            payment["cash"] = f"{row.amount:.2f}"
             payment["account"] = row.account
         elif row.method == Payment.Method.CHEQUE:
             cheque = row.cheques.first()
             if cheque:
-                payment["cheque"] = {
-                    "cheque_no": cheque.cheque_no,
-                    "bank_name": cheque.bank_name,
-                    "branch": cheque.branch,
-                    "acc_no": cheque.acc_no,
-                    "amount": f"{cheque.amount:.2f}",
-                    "received_date": cheque.received_date.isoformat(),
-                    "maturity_date": cheque.maturity_date.isoformat(),
-                }
+                payment["cheques"].append(
+                    {
+                        "cheque_no": cheque.cheque_no,
+                        "bank_name": cheque.bank_name,
+                        "branch": cheque.branch,
+                        "acc_no": cheque.acc_no,
+                        "amount": f"{cheque.amount:.2f}",
+                        "received_date": cheque.received_date.isoformat(),
+                        "maturity_date": cheque.maturity_date.isoformat(),
+                    }
+                )
     return payment
 
 
@@ -1715,9 +1878,11 @@ def bill_edit(request, pk):
     # customer it belongs to is offered the balance it would have without it.
     # Every other customer's balance is already free of this bill.
     customers = _billable_customers()
-    if bill.customer not in customers:
-        # Retired, turned supplier, or the walk-in holding account: whichever
-        # this bill was made out to, it still has to be editable.
+    # A walk-in bill has no customer at all — nothing to insert or price, the
+    # walk-in toggle and name are hydrated straight from the bill instead.
+    if not bill.is_walk_in and bill.customer not in customers:
+        # Retired or turned supplier: whichever this bill was made out to, it
+        # still has to be editable.
         customers.insert(0, bill.customer)
     for customer in customers:
         customer.balance_for_bill = (
@@ -1743,7 +1908,7 @@ def bill_edit(request, pk):
 def bill_delete(request, pk):
     bill = get_object_or_404(Bill.objects.select_related("customer"), pk=pk)
     label = f"Bill #{bill.pk}"
-    customer = bill.customer.name
+    customer = bill.walk_in_name if bill.is_walk_in else bill.customer.name
 
     with transaction.atomic():
         _reverse_bill(bill)
@@ -1751,6 +1916,150 @@ def bill_delete(request, pk):
 
     messages.success(request, f"{label} for {customer} was deleted and reversed.")
     return redirect("core:bill_list")
+
+
+# ---------------------------------------------------------------- held bills
+# A held bill is dormant: nothing is written to Bill, no stock moves, no
+# balance changes. It stores the raw form payload verbatim, so recalling it is
+# the same as opening the create page pre-filled with everything the biller
+# already typed. Saving from the recall page goes through the normal
+# bill_save path and drops the held record.
+
+
+def _held_bill_label(payload, customer):
+    """A short who-and-what for the held bills list."""
+    if bool(payload.get("is_walk_in")):
+        name = str(payload.get("walk_in_name") or "").strip()
+        return (name or "Walk-in") + " (walk-in)"
+    if customer is not None:
+        return customer.name
+    return "Unknown customer"
+
+
+def _held_bill_snapshot(payload):
+    """Item count and subtotal, cached for the list without a JSON parse each
+    time. Ignores anything malformed rather than refusing to hold the draft —
+    a held bill is a scratchpad, not a submitted one.
+    """
+    lines = payload.get("lines") if isinstance(payload, dict) else None
+    if not isinstance(lines, list):
+        return 0, ZERO
+
+    count = 0
+    subtotal = ZERO
+    for raw in lines:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            qty = Decimal(str(raw.get("qty") or "0"))
+            price = Decimal(str(raw.get("unit_price") or "0"))
+        except InvalidOperation:
+            continue
+        if qty <= ZERO or price < ZERO:
+            continue
+        count += 1
+        subtotal += (qty * price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return count, subtotal
+
+
+@require_POST
+@login_required
+def held_bill_save(request):
+    """Park the current form to be recalled and finished later.
+
+    Deliberately forgiving: a held bill is a scratchpad, so anything short of
+    unreadable JSON is stored as-is. Full validation waits for the real save
+    step, when the biller has actually decided this is the bill they want.
+    """
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"success": False, "error": MALFORMED}, status=400)
+
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return JsonResponse(
+            {"success": False, "error": "Add at least one product before holding the bill."},
+            status=400,
+        )
+
+    customer = None
+    raw_id = payload.get("customer_id")
+    if raw_id not in (None, "", 0, "0"):
+        try:
+            customer = Customer.objects.filter(pk=int(raw_id)).first()
+        except (TypeError, ValueError):
+            customer = None
+
+    walk_in_name = str(payload.get("walk_in_name") or "").strip()[:255]
+    label = _held_bill_label(payload, customer)
+    item_count, subtotal = _held_bill_snapshot(payload)
+
+    held = HeldBill.objects.create(
+        customer=customer,
+        walk_in_name=walk_in_name if bool(payload.get("is_walk_in")) else "",
+        payload=payload,
+        label=label,
+        item_count=item_count,
+        subtotal=subtotal,
+        created_by=request.user,
+    )
+    messages.success(request, f"Held bill for {label} saved. Recall it from Held Bills.")
+    return JsonResponse(
+        {
+            "success": True,
+            "held_id": held.pk,
+            "redirect": reverse("core:held_bill_list"),
+        }
+    )
+
+
+@login_required
+def held_bill_list(request):
+    held = HeldBill.objects.select_related("customer", "created_by")
+    return render(request, "core/held_bills.html", {"held_bills": held})
+
+
+@login_required
+def held_bill_recall(request, pk):
+    """Open bill_create with a held bill pre-loaded, as if the biller had
+    just finished picking their products. The held record stays put until
+    the recalled bill is actually saved, so a mis-click on the recall link
+    doesn't lose the draft.
+    """
+    held = get_object_or_404(HeldBill.objects.select_related("customer"), pk=pk)
+
+    customers = _billable_customers()
+    if held.customer is not None and held.customer not in customers:
+        # Retired, turned supplier, or the walk-in holding account — the draft
+        # still has to be recallable to whichever account it was made against.
+        customers.insert(0, held.customer)
+    for customer in customers:
+        customer.balance_for_bill = customer.balance
+
+    context = _bill_form_context(request, customers)
+    # bill_save deletes this held record on success — see bill_save below.
+    context.update(
+        {
+            "save_url": reverse("core:bill_save") + f"?held={held.pk}",
+            "initial": held.payload,
+            "is_edit": False,
+            "held_bill": held,
+        }
+    )
+    return render(request, "core/bill_create.html", context)
+
+
+@require_POST
+@login_required
+def held_bill_delete(request, pk):
+    held = get_object_or_404(HeldBill, pk=pk)
+    label = held.label or f"#{held.pk}"
+    held.delete()
+    messages.success(request, f"Held bill for {label} was dropped.")
+    return redirect("core:held_bill_list")
 
 
 @login_required

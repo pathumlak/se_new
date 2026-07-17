@@ -114,9 +114,13 @@
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
             <td class="whitespace-nowrap px-4 py-3">
-              <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="text-slate-900 hover:underline">
-                {{ bill.customer.name }}
-              </a>
+              {% if bill.is_walk_in %}
+                <span class="italic text-slate-600">{{ bill.walk_in_name }}</span>
+              {% else %}
+                <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="text-slate-900 hover:underline">
+                  {{ bill.customer.name }}
+                </a>
+              {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
@@ -155,7 +159,7 @@
                   <button type="button"
                           data-delete-url="{% url 'core:bill_delete' bill.pk %}"
                           data-bill="Bill #{{ bill.pk }}"
-                          data-customer="{{ bill.customer.name }}"
+                          data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
                           data-total="{{ bill.total_amount|floatformat:2|intcomma }}"
                           data-reverses="{{ bill.reverses }}"
                           class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
