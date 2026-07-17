@@ -777,10 +777,12 @@ def product_prices(request, pk):
         cp.customer_id: cp for cp in CustomerPrice.objects.filter(product=product)
     }
 
-    # Suppliers aren't sold to, so they stay off the list — unless this product
-    # is already priced for one, since hiding the row would hide the data.
+    # Every active party may be priced: a supplier may buy from us too, so
+    # negotiated prices for them are a real thing. Only inactive accounts are
+    # off the list — unless one is already priced, since hiding the row
+    # would hide the data.
     customers = Customer.objects.filter(
-        Q(is_active=True, is_supplier=False) | Q(pk__in=list(existing))
+        Q(is_active=True) | Q(pk__in=list(existing))
     )
 
     rows = []
@@ -1009,6 +1011,38 @@ def customer_list(request):
 
     page_obj = _paginate(request, customers)
 
+    # Supplier management stats — cheap aggregates over the full supplier set
+    # (not just this page) so the header reads the same on every page.
+    supplier_stats = None
+    if kind == "suppliers":
+        supplier_qs = Customer.objects.filter(is_supplier=True, is_walk_in_account=False)
+        totals = supplier_qs.aggregate(
+            total_count=Count("pk"),
+            total_owed_to=Coalesce(
+                Sum(Case(
+                    When(balance__gt=0, then=F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )),
+                ZERO,
+                output_field=MONEY,
+            ),
+            total_owed_by=Coalesce(
+                Sum(Case(
+                    When(balance__lt=0, then=Value(0) - F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )),
+                ZERO,
+                output_field=MONEY,
+            ),
+        )
+        supplier_stats = {
+            "count": totals["total_count"],
+            "we_owe": totals["total_owed_to"],
+            "they_owe": totals["total_owed_by"],
+        }
+
     return render(
         request,
         "core/customer_list.html",
@@ -1019,6 +1053,7 @@ def customer_list(request):
             "kind": kind,
             "status": status,
             "is_filtered": bool(query or kind or status),
+            "supplier_stats": supplier_stats,
         },
     )
 
@@ -1452,15 +1487,17 @@ def _walk_in_customer():
 def _billable_customers():
     """Who a bill may be made out to, priced against their current balance.
 
-    Suppliers are bought from on supplier bills rather than sold to, and an
-    inactive account should not be taking new business. The walk-in holding
-    account is left out too: it is reached by the Walk-in toggle, and offering
-    it in the dropdown as well would let a bill be booked to it without a name.
+    Suppliers *are* offered: a party we buy from may also buy from us, and
+    the ledger already tracks the net through Customer.balance — a supplier
+    bill moves balance one way (they gave us goods, we owe them), a sales
+    bill moves it the other (we gave them goods, they owe us).
+
+    Inactive accounts and the walk-in holding account are still excluded —
+    walk-in is reached by the Walk-in toggle, and offering it here would let
+    a bill be booked to the holding account without a name.
     """
     return list(
-        Customer.objects.filter(
-            is_active=True, is_supplier=False, is_walk_in_account=False
-        )
+        Customer.objects.filter(is_active=True, is_walk_in_account=False)
     )
 
 
@@ -2065,8 +2102,13 @@ def _write_bill(bill, user, payload):
         walk_in_name = ""
         # Read fresh: on an edit the reversal above moved the balance with an
         # F() expression, which leaves any object already in memory stale.
+        #
+        # Suppliers *may* be billed too: a party we buy from may also buy from
+        # us. The two flows meet on Customer.balance — a supplier bill moves
+        # it up (we owe them), a sales bill moves it down (they owe us) — and
+        # the ledger reads the net. See _billable_customers.
         customer = Customer.objects.filter(
-            pk=payload.get("customer_id"), is_active=True, is_supplier=False
+            pk=payload.get("customer_id"), is_active=True
         ).first()
         if customer is None:
             raise BillError("That customer can't be billed.")
@@ -2945,7 +2987,7 @@ def bill_list(request):
             # The page's rows. The template iterates this, so it never has to
             # know whether it was handed a page or a plain list.
             "bills": page_obj.object_list,
-            "customers": Customer.objects.filter(is_supplier=False),
+            "customers": Customer.objects.filter(is_walk_in_account=False),
             "from_date": from_date,
             "to_date": to_date,
             "selected_customer": selected_customer,
@@ -4208,7 +4250,7 @@ def _sales_report_context(request):
         "to_date": to_date,
         "selected_customer": selected_customer,
         "payment_type": payment_type,
-        "customers": Customer.objects.filter(is_supplier=False),
+        "customers": Customer.objects.filter(is_walk_in_account=False),
         "payment_types": Bill.PaymentType.choices,
         "is_filtered": bool(
             from_date or to_date or selected_customer or payment_type

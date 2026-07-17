@@ -149,6 +149,13 @@
         Customers
       </a>
 
+      <a href="{% url 'core:customer_list' %}?kind=suppliers" class="nav-link {% if active == 'supplier_list' %}active{% endif %}">
+        <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9-1.5h10.5m-10.5 0V6.75a1.5 1.5 0 011.5-1.5h9.75a1.5 1.5 0 011.5 1.5v10.5m0 0h1.5a1.5 1.5 0 011.5 1.5v.75m-3 0a1.5 1.5 0 003 0m-3 0V15m0 3.75h-3"/>
+        </svg>
+        Suppliers
+      </a>
+
       <div class="nav-section-label">Billing</div>
 
       <a href="{% url 'core:bill_create' %}" class="nav-link {% if active == 'bill_create' %}active{% endif %}">

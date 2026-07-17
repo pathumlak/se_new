@@ -1,10 +1,59 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Customers · Senovka Plastics{% endblock %}
-{% block header %}Customers{% endblock %}
+{% block title %}{% if kind == 'suppliers' %}Suppliers{% else %}Customers{% endif %} · Senovka Plastics{% endblock %}
+{% block header %}{% if kind == 'suppliers' %}Supplier Management{% else %}Customers{% endif %}{% endblock %}
 
 {% block content %}
+
+{% if kind == 'suppliers' and supplier_stats %}
+  <!-- Supplier management context header -->
+  <div class="mb-5 overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white shadow-sm">
+    <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-start gap-3">
+        <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9-1.5h10.5m-10.5 0V6.75a1.5 1.5 0 011.5-1.5h9.75a1.5 1.5 0 011.5 1.5v10.5m0 0h1.5a1.5 1.5 0 011.5 1.5v.75m-3 0a1.5 1.5 0 003 0m-3 0V15m0 3.75h-3"/>
+          </svg>
+        </span>
+        <div>
+          <h3 class="text-base font-semibold text-slate-900">Supplier Management</h3>
+          <p class="mt-0.5 text-sm text-slate-600">
+            A party can be both supplier and customer — bill them on a sales
+            bill, buy from them on a supplier bill. The balance shows the net.
+          </p>
+        </div>
+      </div>
+
+      <a href="{% url 'core:supplier_bill_create' %}"
+         class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+        </svg>
+        New Supplier Bill
+      </a>
+    </div>
+
+    <div class="grid gap-px border-t border-indigo-200 bg-indigo-100/70 sm:grid-cols-3">
+      <div class="bg-white p-4">
+        <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Suppliers</p>
+        <p class="mt-1 text-2xl font-semibold text-slate-900">{{ supplier_stats.count }}</p>
+      </div>
+      <div class="bg-white p-4" title="Sum of positive balances — money we still owe suppliers.">
+        <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">We owe suppliers</p>
+        <p class="mt-1 text-2xl font-semibold text-emerald-700">
+          {{ supplier_stats.we_owe|floatformat:2|intcomma }}
+        </p>
+      </div>
+      <div class="bg-white p-4" title="Sum of negative balances — suppliers who owe us (i.e. we sold to them too).">
+        <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Suppliers owe us</p>
+        <p class="mt-1 text-2xl font-semibold {% if supplier_stats.they_owe > 0 %}text-rose-600{% else %}text-slate-400{% endif %}">
+          {{ supplier_stats.they_owe|floatformat:2|intcomma }}
+        </p>
+      </div>
+    </div>
+  </div>
+{% endif %}
 
 <!-- Toolbar -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
