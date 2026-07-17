@@ -49,7 +49,6 @@
     </div>
 
     {% if bill.edit_date %}
-      {# Only the latest edit. Every one of them is in the customer's ledger. #}
       <p class="mt-1.5 text-xs italic text-slate-400">
         Last edited: {{ bill.edit_date|date:"j M Y" }}{% if bill.edit_reason %} — {{ bill.edit_reason }}{% endif %}
       </p>
@@ -278,7 +277,6 @@
       </dl>
 
       {% if bill.is_walk_in %}
-        {# A walk-in has no account behind it, so there is no balance to move — this note stands in for the breakdown below. #}
         <p class="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
           Walk-in sale — paid in full, no customer balance affected.
         </p>

@@ -37,7 +37,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
       <label for="bill-date" class="mb-1.5 block text-sm font-medium text-slate-700">
         Bill Date <span class="text-rose-500">*</span>
       </label>
-      {# No value prefill: the biller has to choose a date rather than accept today's by default. max: a bill dated forward would sit ahead of the running balance in every ledger it lands in. The save step refuses both. #}
       <input type="date" id="bill-date"
              max="{{ today|date:'Y-m-d' }}"
              required
@@ -60,7 +59,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
     <div class="sm:col-span-2">
       <span class="mb-1.5 block text-sm font-medium text-slate-700">Bill to</span>
 
-      {# Radio rather than a checkbox: the two modes are exclusive, and each names itself rather than leaving one implied by the other being off. #}
       <div class="mb-3 inline-flex rounded-lg border border-slate-300 p-0.5">
         <label class="cursor-pointer">
           <input type="radio" name="bill_mode" value="regular" id="mode-regular" class="js-mode peer sr-only" checked>
@@ -85,7 +83,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
                        shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
           <option value="">Select a customer</option>
           {% for customer in customers %}
-            {# Balance rides along in the label so the biller sees what they owe before picking; the dataset carries it unformatted for the summary maths. #}
             <option value="{{ customer.pk }}"
                     data-name="{{ customer.name }}"
                     data-balance="{{ customer.balance_for_bill }}"
@@ -115,7 +112,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
   </div>
 </div>
 
-{# Only ever filled in on an edit, when a line's product has gone entirely. #}
+
 <p id="hydrate-note" class="mb-4 hidden rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700"></p>
 
 <!-- ===================== PRODUCTS + BILL ITEMS ===================== -->
@@ -242,7 +239,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
                       focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
       </div>
 
-      {# Shown only once a discount is entered: money off a bill is the one figure on it nothing else explains, and the save step refuses it unexplained. #}
       <div id="discount-reason-row" class="hidden sm:col-span-2">
         <label for="discount-reason" class="mb-1 block text-xs font-medium text-slate-600">
           Discount reason <span class="text-rose-500">*</span>
@@ -290,7 +286,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
                        transition hover:bg-slate-800 disabled:opacity-50">
           Continue to payment
         </button>
-        {# Held bills are dormant — no stock, no balance, no payment — so this doesn't wait for the payment step to be filled. Anything in the panel is enough. #}
         <button type="button" id="hold-bill"
                 class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700
                        transition hover:bg-slate-50 disabled:opacity-50">
@@ -368,7 +363,6 @@ spanning lines, it isn't stripped and renders onto the page as text.
 </div>
 
 <!-- ============================ PAYMENT ============================ -->
-{# Cloned by addChequeRow() in the JS. Not a Django template — this is HTML the JS reads via the browser's <template> element. Field names carry no prefix here; the JS namespaces them per cheque when it clones. #}
 <template id="cheque-row-template">
   <div class="js-cheque-row rounded-lg border border-slate-200 bg-slate-50 p-3">
     <div class="mb-2 flex items-center justify-between">
@@ -425,13 +419,11 @@ spanning lines, it isn't stripped and renders onto the page as text.
     <fieldset class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <legend class="px-1 text-sm font-semibold text-slate-900">Payment type</legend>
 
-      {# There's no account behind a walk-in sale, so only Full Cash — for the exact total — makes sense; every other card is hidden by applyMode() rather than merely disabled. #}
       <p id="walkin-payment-note" class="mb-2 hidden rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
         Walk-in sales are cash only, paid in full — there's no account for anything else to go on.
       </p>
 
       <div class="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {# Values match Bill.PaymentType so the save step can post them straight through. Legacy "partial" is filtered out in _bill_form_context. #}
         {% for value, label in payment_types %}
           <label class="js-type-card flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300
                         px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -443,8 +435,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
       </div>
     </fieldset>
 
-    {# ---------- Cash-only rendering helpers ---------- #}
-    {# Reused by Full Cash and Partial Cash — same fields, different totals rules. #}
+   
 
     <!-- 1. Full Cash -->
     <div id="pay-full_cash" class="js-pay-panel mt-4 hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -2257,10 +2257,12 @@ class BillSaveTests(UserFactoryMixin, TestCase):
         change) — the failure that lands here has to be one the save path
         still refuses. A duplicated product on the same bill does.
         """
-        response = self.post(self.payload(lines=[
+        payload = self.payload(lines=[
             {"product_id": self.pipe.pk, "qty": "1", "unit_price": "1000.00"},
             {"product_id": self.pipe.pk, "qty": "2", "unit_price": "1000.00"},
-        ], payment={"type": "full_cash", "cash": "8000.00", "account": ""}))
+        ], payment={"type": "full_cash", "cash": "8000.00", "account": ""})
+        payload["bill_date"] = timezone.localdate().isoformat()
+        response = self.post(payload)
         self.assertEqual(response.status_code, 400)
         self.assertIn("on the bill twice", response.json()["error"])
         self.assertRollbackClean()
