@@ -124,12 +124,14 @@ urlpatterns = [
     # Record a follow-up payment against a bill that still owes money.
     path("bills/<int:pk>/pay/", views.bill_add_payment, name="bill_add_payment"),
     path("cheques/", views.cheque_list, name="cheque_list"),
+    path("cheques/excel/", views.cheque_list_excel, name="cheque_list_excel"),
     path("cheques/<int:pk>/deposit/", views.cheque_deposit, name="cheque_deposit"),
     path("cheques/<int:pk>/hold/", views.cheque_hold, name="cheque_hold"),
     path("cheques/<int:pk>/bounce/", views.cheque_bounce, name="cheque_bounce"),
     path("cheques/<int:pk>/edit/", views.cheque_edit, name="cheque_edit"),
     path("cheques/<int:pk>/delete/", views.cheque_delete, name="cheque_delete"),
     path("cash-drawer/", views.cash_drawer, name="cash_drawer"),
+    path("cash-drawer/excel/", views.cash_drawer_excel, name="cash_drawer_excel"),
     # Manual top-up of the drawer (owner deposit, petty-cash return, etc.).
     path("cash-drawer/insert/", views.cash_drawer_insert, name="cash_drawer_insert"),
     # Manual entries only — both views refuse a bill-linked row. The form is a
@@ -222,6 +224,7 @@ urlpatterns = [
         name="petty_cash_reimbursement_delete",
     ),
     path("petty-cash/pdf/", views.petty_cash_pdf, name="petty_cash_pdf"),
+    path("petty-cash/excel/", views.petty_cash_excel, name="petty_cash_excel"),
 
     # ---- Material master data. Super-admin only, enforced per view.
     path(
