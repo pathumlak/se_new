@@ -63,14 +63,25 @@
     </div>
   </form>
 
-  <a href="{% url 'core:product_create' %}"
-     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
-            text-sm font-semibold text-white hover:bg-slate-800">
-    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-    </svg>
-    New Product
-  </a>
+  <div class="flex shrink-0 items-center gap-2">
+    <a href="{% url 'core:product_export_excel' %}?q={{ query|urlencode }}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if stock_view %}&view=stock{% endif %}"
+       class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2
+              text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+       title="Download the current list as an Excel sheet with today's stock">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
+      </svg>
+      Download Excel
+    </a>
+    <a href="{% url 'core:product_create' %}"
+       class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+              text-sm font-semibold text-white hover:bg-slate-800">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      New Product
+    </a>
+  </div>
 </div>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}

@@ -574,6 +574,144 @@ def product_toggle_active(request, pk):
     )
 
 
+@login_required
+def product_export_excel(request):
+    """Download every product with its current stock as an .xlsx.
+
+    Honours the same filters as product_list — ?q=, ?category=, ?view=stock
+    and ?status=active|inactive — so the user can narrow the sheet first and
+    then export exactly what they see.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    query = request.GET.get("q", "").strip()
+    category_id = request.GET.get("category", "").strip()
+    stock_view = request.GET.get("view", "").strip() == "stock"
+    status = request.GET.get("status", "").strip().lower()
+
+    products = (
+        Product.objects.select_related("category")
+        .annotate(custom_price_count=Count("customer_prices"))
+        .order_by("name", "size")
+    )
+    if query:
+        products = products.filter(name__icontains=query)
+    if category_id.isdigit():
+        products = products.filter(category_id=int(category_id))
+    if stock_view:
+        products = products.filter(qty__lte=settings.LOW_STOCK_THRESHOLD)
+    if status == "active":
+        products = products.filter(is_active=True)
+    elif status == "inactive":
+        products = products.filter(is_active=False)
+
+    today = timezone.localdate()
+    threshold = settings.LOW_STOCK_THRESHOLD
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    # Masthead
+    ws["A1"] = "Senovka Plastics — Product Stock Report"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:H1")
+
+    ws["A2"] = "As of"
+    ws["A2"].font = Font(bold=True)
+    ws["B2"] = today.strftime("%d %b %Y")
+
+    # A short "filters used" line, so the exported file is self-documenting.
+    filter_bits = []
+    if query:
+        filter_bits.append(f'Search: "{query}"')
+    if category_id.isdigit():
+        cat = Category.objects.filter(pk=int(category_id)).first()
+        if cat:
+            filter_bits.append(f"Category: {cat.name}")
+    if stock_view:
+        filter_bits.append(f"Low stock only (≤ {threshold})")
+    if status in ("active", "inactive"):
+        filter_bits.append(f"Status: {status.title()}")
+    if filter_bits:
+        ws["C2"] = "Filters"
+        ws["C2"].font = Font(bold=True)
+        ws["D2"] = " · ".join(filter_bits)
+        ws.merge_cells("D2:H2")
+
+    # Items header
+    HEADERS = [
+        "No", "Name", "Size", "Category",
+        "Qty", "Stock Status", "Default Price", "Active",
+    ]
+    header_row = 4
+    for idx, name in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    def stock_status(qty):
+        if qty < 0:
+            return "Oversold"
+        if qty == 0:
+            return "Out of Stock"
+        if qty <= threshold:
+            return "Low Stock"
+        return "In Stock"
+
+    row_num = header_row + 1
+    for i, product in enumerate(products, start=1):
+        ws.cell(row=row_num, column=1, value=i).alignment = center
+        ws.cell(row=row_num, column=2, value=product.name)
+        ws.cell(row=row_num, column=3, value=product.size or "")
+        ws.cell(row=row_num, column=4, value=product.category.name)
+
+        c_qty = ws.cell(row=row_num, column=5, value=float(product.qty))
+        c_qty.alignment = right
+        c_qty.number_format = "#,##0.000"
+
+        ws.cell(row=row_num, column=6, value=stock_status(product.qty)).alignment = center
+
+        c_price = ws.cell(row=row_num, column=7, value=float(product.default_price))
+        c_price.alignment = right
+        c_price.number_format = "#,##0.00"
+
+        ws.cell(
+            row=row_num, column=8,
+            value="Yes" if product.is_active else "No",
+        ).alignment = center
+        row_num += 1
+
+    # Freeze the masthead + header row so the header stays visible on scroll.
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    # Column widths — a rough auto-size based on typical content width.
+    widths = {"A": 5, "B": 32, "C": 12, "D": 18, "E": 12, "F": 14, "G": 14, "H": 9}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="products_stock_{today.strftime("%Y-%m-%d")}.xlsx"'
+    )
+    return response
+
+
 def _stock_ledger_rows(product):
     """Every stock movement on `product`, oldest first, with a running balance
     and running production total.
