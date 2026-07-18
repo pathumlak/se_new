@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Order Production Check · Senovka Plastics{% endblock %}
+{% block header %}Order Production Check{% endblock %}
+
+{% block content %}
+
+<!-- =========================== HEADER + FILTERS =========================== -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div>
+    <a href="{% url 'core:order_list' %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      Order Book
+    </a>
+    <h2 class="mt-2 text-xl font-semibold text-slate-900">Production check</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      What each product has been ordered for versus what's on the shelf. Rows the
+      shelf can already cover are green; the rest need production.
+    </p>
+  </div>
+
+  <form method="get" class="flex flex-wrap items-end gap-2 text-sm">
+    <div>
+      <label for="scope" class="mb-1 block text-xs font-medium text-slate-500">Scope</label>
+      <select id="scope" name="scope"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="sent"      {% if scope == 'sent' %}selected{% endif %}>Sent + confirmed</option>
+        <option value="all"       {% if scope == 'all' %}selected{% endif %}>All active (incl. drafts)</option>
+        <option value="shortages" {% if scope == 'shortages' %}selected{% endif %}>Only shortages</option>
+      </select>
+    </div>
+    <div>
+      <label for="q" class="mb-1 block text-xs font-medium text-slate-500">Product</label>
+      <input type="search" id="q" name="q" value="{{ query }}" placeholder="Search…"
+             class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+    {% if scope != 'sent' or query %}
+      <a href="{% url 'core:order_production_check' %}"
+         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<!-- =========================== SUMMARY TILES =========================== -->
+<div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Products in scope</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ totals.row_count }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total ordered</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ totals.total_ordered|floatformat:"-3" }}</p>
+  </div>
+  <div class="rounded-xl border p-4 shadow-sm
+              {% if totals.shortage_row_count > 0 %}border-amber-300 bg-amber-50/70{% else %}border-slate-200 bg-white{% endif %}">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Products short</p>
+    <p class="mt-1 text-2xl font-semibold
+              {% if totals.shortage_row_count > 0 %}text-amber-800{% else %}text-emerald-700{% endif %}">
+      {{ totals.shortage_row_count }}
+    </p>
+  </div>
+  <div class="rounded-xl border p-4 shadow-sm
+              {% if totals.total_shortage > 0 %}border-rose-300 bg-rose-50/70{% else %}border-slate-200 bg-white{% endif %}">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total to produce</p>
+    <p class="mt-1 text-2xl font-semibold
+              {% if totals.total_shortage > 0 %}text-rose-700{% else %}text-emerald-700{% endif %}">
+      {{ totals.total_shortage|floatformat:"-3" }}
+    </p>
+  </div>
+</div>
+
+<!-- =========================== MAIN TABLE =========================== -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Size</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Stock</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Ordered</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Shortage</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50
+                     {% if row.status == 'out_of_stock' %}border-l-4 border-rose-400
+                     {% elif row.status == 'short' %}border-l-4 border-amber-400
+                     {% endif %}">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+              <a href="{% url 'core:stock_ledger' row.product_id %}" class="hover:underline" title="Open stock ledger">
+                {{ row.name }}
+              </a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if row.size %}{{ row.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if row.stock <= 0 %}text-rose-700{% else %}text-slate-900{% endif %}">
+              {{ row.stock|floatformat:"-3" }}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ row.total_ordered|floatformat:"-3" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if row.shortage > 0 %}text-rose-700{% else %}text-emerald-700{% endif %}">
+              {% if row.shortage > 0 %}−{{ row.shortage|floatformat:"-3" }}{% else %}0{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if row.status == 'sufficient' %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                  Sufficient
+                </span>
+              {% elif row.status == 'short' %}
+                <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+                  Short {{ row.shortage|floatformat:"-3" }}
+                </span>
+              {% else %}
+                <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+                  Out of stock
+                </span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <button type="button"
+                      class="js-notify inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      data-product-id="{{ row.product_id }}"
+                      data-name="{{ row.name }}"
+                      data-size="{{ row.size }}"
+                      data-stock="{{ row.stock|stringformat:'.3f' }}"
+                      data-ordered="{{ row.total_ordered|stringformat:'.3f' }}"
+                      data-shortage="{{ row.shortage|stringformat:'.3f' }}">
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                </svg>
+                Notify Production
+              </button>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
+              {% if scope == 'shortages' %}
+                Nothing to produce right now — every ordered product is covered by current stock.
+              {% else %}
+                No products have been ordered on {% if scope == 'all' %}any active quotation{% else %}a sent or confirmed quotation{% endif %} yet.
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="mt-3 text-xs text-slate-400">
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 align-middle"></span> Sufficient ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Short (stock covers part) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-400 align-middle"></span> Out of stock
+</p>
+
+<!-- =========================== NOTIFY MODAL =========================== -->
+<div id="notify-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 id="n-title" class="text-base font-semibold text-slate-900">Notify production</h3>
+        <p id="n-subtitle" class="mt-0.5 text-xs text-slate-500"></p>
+      </div>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Snapshot -->
+    <dl class="mt-4 grid gap-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-3">
+      <div><dt class="text-xs text-slate-500">Stock</dt><dd id="n-stock" class="font-semibold text-slate-900">—</dd></div>
+      <div><dt class="text-xs text-slate-500">Ordered</dt><dd id="n-ordered" class="font-semibold text-slate-900">—</dd></div>
+      <div><dt class="text-xs text-slate-500">Shortage</dt><dd id="n-shortage" class="font-semibold text-rose-700">—</dd></div>
+    </dl>
+
+    <!-- Orders that pushed the shortage over the line -->
+    <div class="mt-4">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">On these orders</p>
+      <div class="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200">
+        <table class="min-w-full divide-y divide-slate-100 text-xs">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-slate-500">Ref</th>
+              <th class="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+              <th class="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-slate-500">Date</th>
+              <th class="px-3 py-1.5 text-right font-semibold uppercase tracking-wide text-slate-500">Qty</th>
+              <th class="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-slate-500">Status</th>
+            </tr>
+          </thead>
+          <tbody id="n-orders" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Ready-to-copy production message -->
+    <div class="mt-4">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Message for production</p>
+      <textarea id="n-message" rows="4" readonly
+                class="mt-1 block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800 shadow-sm"></textarea>
+      <p id="n-copy-note" class="mt-1 text-[11px] text-slate-500">
+        Hand this figure to production — either paste it in your chat/messaging app, or log it as a Production entry below.
+      </p>
+    </div>
+
+    <div class="mt-5 flex flex-wrap justify-end gap-2">
+      <button type="button" id="n-copy"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+        Copy message
+      </button>
+      <a href="{% url 'core:production_create' %}" target="_blank" rel="noopener"
+         class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
+        Open Production →
+      </a>
+      <button type="button" class="js-close rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+        Done
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script id="orders-by-product" type="application/json">{{ orders_json|safe }}</script>
+<script>
+  (function () {
+    const ORDERS = JSON.parse(document.getElementById('orders-by-product').textContent || '{}');
+
+    const modal    = document.getElementById('notify-modal');
+    const title    = document.getElementById('n-title');
+    const subtitle = document.getElementById('n-subtitle');
+    const stockEl  = document.getElementById('n-stock');
+    const ordEl    = document.getElementById('n-ordered');
+    const shortEl  = document.getElementById('n-shortage');
+    const ordersTbody = document.getElementById('n-orders');
+    const msg      = document.getElementById('n-message');
+    const copyBtn  = document.getElementById('n-copy');
+    const copyNote = document.getElementById('n-copy-note');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const mod = b.closest('[role="dialog"]'); if (mod) close(mod); });
+    });
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(modal); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !modal.classList.contains('hidden')) close(modal); });
+
+    function fmtQty(v) {
+      const n = parseFloat(v) || 0;
+      return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+    }
+
+    document.querySelectorAll('.js-notify').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const name = btn.dataset.name;
+        const size = btn.dataset.size;
+        const stock = parseFloat(btn.dataset.stock) || 0;
+        const ordered = parseFloat(btn.dataset.ordered) || 0;
+        const shortage = parseFloat(btn.dataset.shortage) || 0;
+        const label = name + (size ? ' (' + size + ')' : '');
+
+        title.textContent = 'Notify production — ' + label;
+        subtitle.textContent = shortage > 0
+          ? 'Short by ' + fmtQty(shortage) + ' — production needs to make up the difference.'
+          : 'Stock already covers all orders on this product.';
+        stockEl.textContent = fmtQty(stock);
+        ordEl.textContent = fmtQty(ordered);
+        shortEl.textContent = shortage > 0 ? fmtQty(shortage) : '0';
+        shortEl.className = 'font-semibold ' + (shortage > 0 ? 'text-rose-700' : 'text-emerald-700');
+
+        // Orders sub-table
+        const list = ORDERS[btn.dataset.productId] || [];
+        ordersTbody.innerHTML = '';
+        list.forEach(function (o) {
+          const tr = document.createElement('tr');
+          tr.innerHTML =
+            '<td class="whitespace-nowrap px-3 py-1.5 font-medium text-slate-800">' +
+              '<a href="/orders/' + o.pk + '/" class="hover:underline">' + o.ref + '</a></td>' +
+            '<td class="whitespace-nowrap px-3 py-1.5 text-slate-700">' + o.customer + '</td>' +
+            '<td class="whitespace-nowrap px-3 py-1.5 text-slate-500">' + o.date + '</td>' +
+            '<td class="whitespace-nowrap px-3 py-1.5 text-right font-medium text-slate-900">' + fmtQty(o.qty) + '</td>' +
+            '<td class="whitespace-nowrap px-3 py-1.5 text-slate-500">' + o.status + '</td>';
+          ordersTbody.appendChild(tr);
+        });
+        if (list.length === 0) {
+          ordersTbody.innerHTML = '<tr><td colspan="5" class="px-3 py-2 text-center italic text-slate-400">No orders on record.</td></tr>';
+        }
+
+        // Ready-to-copy message
+        const lines = [
+          'Senovka — Production request',
+          'Product: ' + label,
+          'Current stock: ' + fmtQty(stock),
+          'Total ordered: ' + fmtQty(ordered),
+          shortage > 0
+            ? 'Please produce at least: ' + fmtQty(shortage)
+            : 'Stock already covers all orders — no production needed right now.',
+        ];
+        msg.value = lines.join('\n');
+        copyNote.textContent = 'Copy this and paste it wherever production is notified, or use Open Production to log the run.';
+
+        open(modal);
+      });
+    });
+
+    copyBtn.addEventListener('click', function () {
+      // Fall back if the async Clipboard API is not available (older browsers,
+      // insecure contexts).
+      const done = function () {
+        copyBtn.textContent = 'Copied';
+        copyNote.textContent = 'Copied to clipboard.';
+        setTimeout(function () { copyBtn.textContent = 'Copy message'; }, 2000);
+      };
+      const failed = function () {
+        msg.focus();
+        msg.select();
+        copyNote.textContent = 'Selected — press Ctrl+C (or Cmd+C) to copy.';
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(msg.value).then(done).catch(failed);
+      } else {
+        failed();
+      }
+    });
+  })();
+</script>
+{% endblock %}

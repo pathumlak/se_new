@@ -296,6 +296,12 @@ urlpatterns = [
     # Order model docstring.
     path("orders/", views.order_list, name="order_list"),
     path("orders/create/", views.order_create, name="order_create"),
+    # Aggregated per-product view: what's been ordered vs what's in stock.
+    path(
+        "orders/production-check/",
+        views.order_production_check,
+        name="order_production_check",
+    ),
     path("orders/<int:pk>/", views.order_detail, name="order_detail"),
     path("orders/<int:pk>/edit/", views.order_edit, name="order_edit"),
     path("orders/<int:pk>/delete/", views.order_delete, name="order_delete"),

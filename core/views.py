@@ -6118,3 +6118,117 @@ def order_excel(request, pk):
         f'attachment; filename="quotation_{order.reference_no}.xlsx"'
     )
     return response
+
+
+@login_required
+def order_production_check(request):
+    """Aggregate ordered quantities per product across active orders and
+    compare against current stock. The point is a single view where the
+    operator can spot every product that needs production.
+
+    Order status scope:
+      sent      — default. Something has actually gone out to the customer.
+      confirmed — always included.
+      draft     — opt-in via ?scope=all. Drafts are still figures on paper.
+      cancelled — never included; a cancelled order isn't owed anything.
+
+    Filters:
+      scope=sent|all|shortages   — as above; 'shortages' shows only rows
+                                    that need production.
+      q=<text>                    — product name filter.
+    """
+    scope = request.GET.get("scope", "sent").strip()
+    if scope not in {"sent", "all", "shortages"}:
+        scope = "sent"
+
+    if scope == "all":
+        active_statuses = [
+            Order.Status.DRAFT, Order.Status.SENT, Order.Status.CONFIRMED,
+        ]
+    else:
+        # 'sent' and 'shortages' both start from the same base — the
+        # shortages filter is applied below on the aggregate.
+        active_statuses = [Order.Status.SENT, Order.Status.CONFIRMED]
+
+    query = request.GET.get("q", "").strip()
+
+    # One aggregate query: total qty ordered per product across the picked
+    # order statuses.
+    ordered = (
+        OrderItem.objects.filter(order__status__in=active_statuses)
+        .values("product_id", "product__name", "product__size", "product__qty")
+        .annotate(total_ordered=Coalesce(
+            Sum("qty"),
+            Decimal("0.000"),
+            output_field=DecimalField(max_digits=12, decimal_places=3),
+        ))
+        .order_by("product__name", "product__size")
+    )
+    if query:
+        ordered = ordered.filter(product__name__icontains=query)
+
+    rows = []
+    total_shortage = Decimal("0.000")
+    total_ordered_all = Decimal("0.000")
+    for row in ordered:
+        stock = row["product__qty"] or Decimal("0.000")
+        total_ordered = row["total_ordered"] or Decimal("0.000")
+        shortage = max(total_ordered - stock, Decimal("0.000"))
+
+        if stock <= 0:
+            status = "out_of_stock"
+        elif shortage > 0:
+            status = "short"
+        else:
+            status = "sufficient"
+
+        rows.append({
+            "product_id": row["product_id"],
+            "name": row["product__name"],
+            "size": row["product__size"] or "",
+            "stock": stock,
+            "total_ordered": total_ordered,
+            "shortage": shortage,
+            "status": status,
+        })
+        total_ordered_all += total_ordered
+        total_shortage += shortage
+
+    if scope == "shortages":
+        rows = [r for r in rows if r["shortage"] > 0 or r["status"] == "out_of_stock"]
+
+    # For the per-row detail modal — which orders is this product in? Kept
+    # to a small dict rather than fetched per click so the page has no
+    # extra round-trips.
+    orders_by_product = {}
+    if rows:
+        involved = OrderItem.objects.filter(
+            order__status__in=active_statuses,
+            product_id__in=[r["product_id"] for r in rows],
+        ).select_related("order").order_by("-order__order_date")
+        for oi in involved:
+            orders_by_product.setdefault(oi.product_id, []).append({
+                "ref": oi.order.reference_no,
+                "pk": oi.order_id,
+                "qty": oi.qty,
+                "customer": oi.order.display_customer,
+                "date": oi.order.order_date.strftime("%d %b %Y"),
+                "status": oi.order.get_status_display(),
+            })
+
+    return render(
+        request,
+        "core/order_production_check.html",
+        {
+            "rows": rows,
+            "scope": scope,
+            "query": query,
+            "orders_json": json.dumps(orders_by_product, default=str),
+            "totals": {
+                "row_count": len(rows),
+                "total_ordered": total_ordered_all,
+                "total_shortage": total_shortage,
+                "shortage_row_count": sum(1 for r in rows if r["shortage"] > 0),
+            },
+        },
+    )
