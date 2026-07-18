@@ -187,6 +187,7 @@
 
   /* Style Django-rendered inputs inside modals */
   #out-modal input, #out-modal select, #out-modal textarea,
+  #insert-modal input, #insert-modal select, #insert-modal textarea,
   #edit-modal input, #edit-modal select, #edit-modal textarea {
     width: 100%;
     border: 1px solid #e2e8f0;
@@ -201,10 +202,20 @@
     font-family: inherit;
   }
   #out-modal input:focus, #out-modal select:focus, #out-modal textarea:focus,
+  #insert-modal input:focus, #insert-modal select:focus, #insert-modal textarea:focus,
   #edit-modal input:focus, #edit-modal select:focus, #edit-modal textarea:focus {
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
   }
+
+  /* Emerald submit button for the Insert modal to distinguish it visually
+     from the withdrawal one. */
+  .btn-modal-insert {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #059669; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-insert:hover { background: #047857; }
 
   /* ── Modal buttons ── */
   .btn-modal-cancel {
@@ -301,11 +312,19 @@
     </p>
   </div>
 
-  <!-- Record button -->
-  <div class="flex items-start">
-    <button type="button" id="open-form" class="btn-record">
+  <!-- Record buttons -->
+  <div class="flex flex-wrap items-start gap-2">
+    <button type="button" id="open-insert-form"
+            style="background:#059669;box-shadow:0 1px 3px rgba(5,150,105,0.25)"
+            class="btn-record hover:!bg-emerald-700">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Insert Cash
+    </button>
+    <button type="button" id="open-form" class="btn-record">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/>
       </svg>
       Record Transfer / Withdrawal
     </button>
@@ -559,6 +578,63 @@
 </div>
 
 
+<!-- ═══════════════════════ INSERT MODAL ═══════════════════════ -->
+<div id="insert-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="insert-modal-title">
+  <div class="modal-box">
+    <form method="post" action="{% url 'core:cash_drawer_insert' %}" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="insert-modal-title" class="modal-title">Insert cash into the drawer</h3>
+          <p class="modal-sub">Cash coming in — top-up, petty-cash return, or a physical correction. Drawer holds <strong>{{ balance|floatformat:2|intcomma }}</strong> now.</p>
+        </div>
+        <button type="button" id="insert-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if in_form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ in_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ in_form.txn_date.id_for_label }}" class="form-label">{{ in_form.txn_date.label }}<span class="req">*</span></label>
+          {{ in_form.txn_date }}
+          {% for error in in_form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.source.id_for_label }}" class="form-label">{{ in_form.source.label }}<span class="req">*</span></label>
+          {{ in_form.source }}
+          {% for error in in_form.source.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.amount.id_for_label }}" class="form-label">Amount<span class="req">*</span></label>
+          {{ in_form.amount }}
+          {% for error in in_form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.reason.id_for_label }}" class="form-label">{{ in_form.reason.label }}<span class="req">*</span></label>
+          {{ in_form.reason }}
+          <p class="form-hint">Why the cash was added. Appears in the log next to the source.</p>
+          {% for error in in_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="insert-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-insert">Insert</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
 <!-- ═══════════════════════ EDIT MODAL ═══════════════════════ -->
 <div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
   <div class="modal-box">
@@ -698,6 +774,17 @@ function bindClose(modal, ...btns) {
   openBtn.addEventListener('click', () => openModal(modal));
   bindClose(modal, 'out-modal-close', 'out-modal-cancel');
   // Reopen if validation failed
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
+
+/* ─── Insert cash ─── */
+(function () {
+  const modal = document.getElementById('insert-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-insert-form');
+  if (openBtn) openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'insert-modal-close', 'insert-modal-cancel');
+  // Reopen if the server bounced the form back with errors.
   if (modal.querySelector('.form-error')) openModal(modal);
 })();
 

@@ -39,6 +39,7 @@ from .forms import (
     BillEditReasonForm,
     BillPaymentForm,
     CashDrawerEditForm,
+    CashDrawerInForm,
     CashDrawerOutForm,
     CategoryForm,
     ChequeForm,
@@ -3647,18 +3648,21 @@ def _is_manual(entry):
     return entry.bill_id is None
 
 
-def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None):
+def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_form=None):
     """Render the drawer log.
 
-    Shared by the list and by cash_drawer_edit, which re-renders this whole page
-    when a correction fails validation — the running balance, the totals and the
-    filters all have to come back with it, and rebuilding them is this function.
+    Shared by the list, cash_drawer_edit (which re-renders this whole page
+    when a correction fails validation), and cash_drawer_insert (same story
+    for a failed top-up) — the running balance, the totals and the filters
+    all have to come back with it, and rebuilding them is this function.
     """
     # The edit modal is one form reused by every row, filled in by JS from the
     # row's data attributes. Even with nothing being edited it has to render its
     # widgets, or there would be no fields for that script to fill.
     if edit_form is None:
         edit_form = CashDrawerEditForm()
+    if in_form is None:
+        in_form = CashDrawerInForm(initial={"txn_date": timezone.localdate()})
 
     balance = _cash_drawer_balance()
 
@@ -3719,6 +3723,7 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None):
         "core/cash_drawer.html",
         {
             "form": out_form,
+            "in_form": in_form,
             "edit_form": edit_form,
             "edit_entry": edit_entry,
             # The drawer as it stands now, whatever the filter shows.
@@ -3758,6 +3763,37 @@ def cash_drawer(request):
         messages.error(request, "That entry couldn't be saved — see the form.")
 
     return _cash_drawer_page(request, form)
+
+
+@require_POST
+@login_required
+def cash_drawer_insert(request):
+    """Record cash coming into the drawer by hand.
+
+    Mirror of `cash_drawer` for the OUT form. On success the running
+    balance updates immediately (it is summed live from the CashDrawer
+    rows on the next render). On failure the page comes back with the
+    Insert modal's bound form so the operator can fix it in place.
+    """
+    form = CashDrawerInForm(request.POST)
+    if form.is_valid():
+        with transaction.atomic():
+            entry = form.save()
+        messages.success(
+            request,
+            f"{entry.reason} — {entry.amount:,.2f} into the drawer. "
+            f"Balance: {_cash_drawer_balance():,.2f}.",
+        )
+        return redirect("core:cash_drawer")
+
+    messages.error(request, "That insert couldn't be saved — see the form.")
+    # Re-render the whole page so the Insert modal opens on the errors,
+    # matching how cash_drawer_edit handles a failed edit.
+    return _cash_drawer_page(
+        request,
+        CashDrawerOutForm(drawer_balance=_cash_drawer_balance()),
+        in_form=form,
+    )
 
 
 def _drawer_balance_without(entry):

@@ -541,6 +541,93 @@ class CashDrawerOutForm(forms.ModelForm):
         return entry
 
 
+class CashDrawerInForm(forms.ModelForm):
+    """Record cash coming *into* the drawer by hand.
+
+    The mirror of CashDrawerOutForm. Everything here is money going in, so
+    `txn_type` is not a field — it is always IN. Cash arriving from a bill
+    is written by the bill and never typed; this form is for out-of-band
+    top-ups: an owner putting cash in, a petty-cash return, a physical
+    correction after a count.
+
+    `source` is stored the same way `kind` is on the Out form — as a prefix
+    on the CashDrawer.reason text, since CashDrawer has no source column.
+    """
+
+    SOURCE_CHOICES = [
+        ("deposit", "Owner Deposit"),
+        ("petty_return", "Petty Cash Return"),
+        ("correction", "Correction — after count"),
+        ("other", "Other"),
+    ]
+
+    source = forms.ChoiceField(
+        choices=SOURCE_CHOICES,
+        label="Source",
+        widget=forms.Select(attrs={"class": SELECT_CLASSES}),
+    )
+
+    class Meta:
+        model = CashDrawer
+        fields = ["txn_date", "amount", "reason"]
+        labels = {"txn_date": "Date", "reason": "Reason"}
+        widgets = {
+            "txn_date": forms.DateInput(attrs={"class": INPUT_CLASSES, "type": "date"}),
+            "amount": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.01",
+                    "min": "0.01",
+                    "placeholder": "0.00",
+                }
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Owner topped up float, or ATM cashback",
+                }
+            ),
+        }
+
+    def clean_reason(self):
+        # Required — a cash injection with no explanation is what the audit
+        # log is trying to prevent.
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if not reason:
+            raise forms.ValidationError("Reason is required.")
+        return reason
+
+    def clean_amount(self):
+        amount = self.cleaned_data.get("amount") or Decimal("0")
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be above 0.")
+        return amount
+
+    def clean_txn_date(self):
+        d = self.cleaned_data["txn_date"]
+        if d > timezone.localdate():
+            raise forms.ValidationError("Insert can't be dated in the future.")
+        return d
+
+    def save(self, commit=True):
+        entry = super().save(commit=False)
+        entry.txn_type = CashDrawer.TxnType.IN
+
+        # Source label prefixed onto reason, mirroring CashDrawerOutForm.
+        label = dict(self.SOURCE_CHOICES)[self.cleaned_data["source"]]
+        note = self.cleaned_data.get("reason", "")
+        entry.reason = (f"{label} — {note}" if note else label)[:255]
+
+        if commit:
+            entry.save()
+        return entry
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
 class CashDrawerEditForm(forms.ModelForm):
     """Correct a manual drawer entry.
 
