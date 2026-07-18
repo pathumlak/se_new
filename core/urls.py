@@ -29,6 +29,11 @@ urlpatterns = [
     path("categories/<int:pk>/edit/", views.category_update, name="category_update"),
     path("categories/<int:pk>/delete/", views.category_delete, name="category_delete"),
     path("products/", views.product_list, name="product_list"),
+    path(
+        "products/export/excel/",
+        views.product_export_excel,
+        name="product_export_excel",
+    ),
     path("products/create/", views.product_create, name="product_create"),
     path("products/<int:pk>/edit/", views.product_update, name="product_update"),
     path("products/<int:pk>/delete/", views.product_delete, name="product_delete"),
