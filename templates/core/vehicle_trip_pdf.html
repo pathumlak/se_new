@@ -1,0 +1,159 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senovka Vehicle Trips — {{ month_filter.label }}</title>
+  {% comment %}
+  Standalone by design: no base.html, no CDN. WeasyPrint renders this with
+  no network and no JavaScript. Doubles as the browser print view when
+  WeasyPrint's GTK libraries are not installed.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+      @bottom-left {
+        content: "Senovka Plastics — vehicle trips";
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+    }
+    body { font-family: "Helvetica","Arial",sans-serif; font-size: 8.5pt; color: #0f172a; margin: 0; }
+    h1 { font-size: 15pt; margin: 0; }
+    h2 { font-size: 10pt; margin: 12pt 0 4pt; }
+
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 6pt; margin-bottom: 8pt; }
+    .muted { color: #64748b; font-size: 8pt; margin: 2pt 0 0; }
+
+    .cards { display: table; width: 100%; border-spacing: 4pt 0; margin: 8pt 0; }
+    .card { display: table-cell; width: 25%; border: 0.75pt solid #cbd5e1; border-radius: 3pt; padding: 6pt 8pt; }
+    .card-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; }
+    .card-value { font-size: 12pt; font-weight: bold; margin-top: 2pt; }
+
+    .two-col { display: table; width: 100%; border-spacing: 6pt 0; }
+    .col { display: table-cell; width: 50%; vertical-align: top; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3pt;
+      color: #64748b; background: #f1f5f9; padding: 4pt 5pt; border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 4pt 5pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; font-weight: bold; background: #f8fafc; }
+    .empty { text-align: center; color: #64748b; padding: 12pt; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Senovka Plastics — Vehicle Trips</h1>
+  <p class="muted">
+    {{ month_filter.label }}
+    · Generated {{ generated_at|date:"j M Y, g:i a" }}
+  </p>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="card-label">Total KM</div><div class="card-value">{{ total_km|floatformat:2|intcomma }}</div></div>
+  <div class="card"><div class="card-label">Total Trips</div><div class="card-value">{{ total_trips }}</div></div>
+  <div class="card">
+    <div class="card-label">Most Active Rider</div>
+    <div class="card-value">
+      {% if most_rider %}{{ most_rider.rider__name }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Most Used Vehicle</div>
+    <div class="card-value">
+      {% if most_vehicle %}{{ most_vehicle.vehicle__name }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="col">
+    <h2>By vehicle</h2>
+    <table>
+      <thead><tr><th>Vehicle</th><th class="r">Trips</th><th class="r">Total KM</th></tr></thead>
+      <tbody>
+        {% for row in by_vehicle %}
+          <tr>
+            <td>{{ row.vehicle__name }}</td>
+            <td class="r">{{ row.trips }}</td>
+            <td class="r">{{ row.total_km|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="empty">No trips this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h2>By rider</h2>
+    <table>
+      <thead><tr><th>Rider</th><th class="r">Trips</th><th class="r">Total KM</th></tr></thead>
+      <tbody>
+        {% for row in by_rider %}
+          <tr>
+            <td>{{ row.rider__name }}</td>
+            <td class="r">{{ row.trips }}</td>
+            <td class="r">{{ row.total_km|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="empty">No trips this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Trip log</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Vehicle</th>
+      <th>Rider</th>
+      <th>From</th>
+      <th>To</th>
+      <th class="r">KM</th>
+      <th>Purpose</th>
+      <th>Added by</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for trip in trips %}
+      <tr>
+        <td>{{ trip.trip_date|date:"j M Y" }}</td>
+        <td>{{ trip.vehicle.name }}</td>
+        <td>{{ trip.rider.name }}</td>
+        <td>{{ trip.from_location }}</td>
+        <td>{{ trip.to_location }}</td>
+        <td class="r">{{ trip.km|floatformat:2|intcomma }}</td>
+        <td>{% if trip.purpose %}{{ trip.purpose }}{% else %}—{% endif %}</td>
+        <td>{{ trip.added_by.username }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="empty">No trips this period.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if trips %}
+    <tfoot>
+      <tr>
+        <td colspan="5" class="r">Total</td>
+        <td class="r">{{ total_km|floatformat:2|intcomma }}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tfoot>
+  {% endif %}
+</table>
+
+</body>
+</html>

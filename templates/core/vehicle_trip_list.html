@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Vehicle Trips · Senovka Plastics{% endblock %}
+{% block header %}Vehicle Trips{% endblock %}
+
+{% block content %}
+
+<!-- ============================ HEADER + FILTERS ============================ -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div>
+    <h2 class="text-xl font-semibold text-slate-900">{{ month_filter.label }}</h2>
+    <p class="mt-1 text-sm text-slate-500">Trip log across all vehicles and riders.</p>
+  </div>
+
+  <form method="get" class="no-print flex flex-wrap items-end gap-2 text-sm">
+    <div>
+      <label for="vehicle" class="mb-1 block text-xs font-medium text-slate-500">Vehicle</label>
+      <select id="vehicle" name="vehicle"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">All vehicles</option>
+        {% for v in vehicles %}
+          <option value="{{ v.pk }}" {% if selected_vehicle == v.pk|stringformat:'s' %}selected{% endif %}>{{ v.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="rider" class="mb-1 block text-xs font-medium text-slate-500">Rider</label>
+      <select id="rider" name="rider"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">All riders</option>
+        {% for r in riders %}
+          <option value="{{ r.pk }}" {% if selected_rider == r.pk|stringformat:'s' %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="month" class="mb-1 block text-xs font-medium text-slate-500">Month</label>
+      <input type="month" id="month" name="month"
+             value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+             class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Apply
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:vehicle_trip_list' %}?month=all"
+         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+
+    <a href="{% url 'core:vehicle_trip_pdf' %}?month={{ month_filter.param }}{% if selected_vehicle %}&vehicle={{ selected_vehicle }}{% endif %}{% if selected_rider %}&rider={{ selected_rider }}{% endif %}"
+       class="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+      Export PDF
+    </a>
+    <button type="button" id="open-create"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Add Trip
+    </button>
+  </form>
+</div>
+
+<!-- ============================ SUMMARY TILES ============================ -->
+<div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-blue-700">Total KM</p>
+    <p class="mt-1 text-2xl font-semibold text-blue-900">{{ total_km|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total trips</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ total_trips }}</p>
+  </div>
+  <div class="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Most active rider</p>
+    {% if most_rider %}
+      <p class="mt-1 text-base font-semibold text-emerald-900">{{ most_rider.rider__name }}</p>
+      <p class="text-xs text-emerald-800">{{ most_rider.total_km|floatformat:2|intcomma }} km · {{ most_rider.trips }} trip{{ most_rider.trips|pluralize }}</p>
+    {% else %}
+      <p class="mt-1 text-sm italic text-emerald-800">No trips in this period.</p>
+    {% endif %}
+  </div>
+  <div class="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-indigo-700">Most used vehicle</p>
+    {% if most_vehicle %}
+      <p class="mt-1 text-base font-semibold text-indigo-900">{{ most_vehicle.vehicle__name }}</p>
+      <p class="text-xs text-indigo-800">{{ most_vehicle.total_km|floatformat:2|intcomma }} km · {{ most_vehicle.trips }} trip{{ most_vehicle.trips|pluralize }}</p>
+    {% else %}
+      <p class="mt-1 text-sm italic text-indigo-800">No trips in this period.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- ============================ TRIPS TABLE ============================ -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Rider</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">From</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">To</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">KM</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Purpose</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Added By</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for trip in trips %}
+          <tr class="{% cycle 'bg-white' 'bg-slate-50/40' %} hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ trip.trip_date|date:"j M Y" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ trip.vehicle.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ trip.rider.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-700">{{ trip.from_location }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-700">{{ trip.to_location }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">{{ trip.km|floatformat:2|intcomma }}</td>
+            <td class="px-4 py-3 text-slate-600">
+              {% if trip.purpose %}{{ trip.purpose }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ trip.added_by.username }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <button type="button"
+                      class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      data-action="{% url 'core:vehicle_trip_edit' trip.pk %}"
+                      data-date="{{ trip.trip_date|date:'Y-m-d' }}"
+                      data-vehicle="{{ trip.vehicle_id }}"
+                      data-rider="{{ trip.rider_id }}"
+                      data-from="{{ trip.from_location }}"
+                      data-to="{{ trip.to_location }}"
+                      data-km="{{ trip.km|stringformat:'.2f' }}"
+                      data-purpose="{{ trip.purpose }}">
+                Edit
+              </button>
+              <button type="button"
+                      class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      data-action="{% url 'core:vehicle_trip_delete' trip.pk %}"
+                      data-label="{{ trip.vehicle.name }} · {{ trip.km|floatformat:2 }}km · {{ trip.trip_date|date:'j M Y' }}">
+                Delete
+              </button>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="9" class="px-4 py-12 text-center text-sm text-slate-500">
+            {% if is_filtered %}No trips match these filters.{% else %}No trips logged.{% endif %}
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================ MONTHLY SUMMARY SIDE-BY-SIDE ============================ -->
+<div class="mt-5 grid gap-4 lg:grid-cols-2">
+  <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-900">By vehicle · {{ month_filter.label }}</h3>
+    </div>
+    <table class="min-w-full divide-y divide-slate-100 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Trips</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total KM</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in by_vehicle %}
+          <tr>
+            <td class="px-4 py-2 text-slate-900">{{ row.vehicle__name }}</td>
+            <td class="px-4 py-2 text-right text-slate-500">{{ row.trips }}</td>
+            <td class="px-4 py-2 text-right font-medium text-slate-900">{{ row.total_km|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="px-4 py-6 text-center text-sm text-slate-500">No trips in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-900">By rider · {{ month_filter.label }}</h3>
+    </div>
+    <table class="min-w-full divide-y divide-slate-100 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Rider</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Trips</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total KM</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in by_rider %}
+          <tr>
+            <td class="px-4 py-2 text-slate-900">{{ row.rider__name }}</td>
+            <td class="px-4 py-2 text-right text-slate-500">{{ row.trips }}</td>
+            <td class="px-4 py-2 text-right font-medium text-slate-900">{{ row.total_km|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="px-4 py-6 text-center text-sm text-slate-500">No trips in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================ TRIP MODAL (add + edit) ============================ -->
+<div id="trip-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-xl rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="trip-title" class="text-base font-semibold text-slate-900">Add Trip</h3>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="trip-form" method="post" action="{% url 'core:vehicle_trip_create' %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="t-date" class="mb-1 block text-xs font-medium text-slate-600">Date</label>
+          <input type="date" id="t-date" name="trip_date" required class="{{ form.trip_date.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="t-km" class="mb-1 block text-xs font-medium text-slate-600">KM</label>
+          <input type="number" step="0.01" min="0.01" id="t-km" name="km" required class="{{ form.km.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="t-vehicle" class="mb-1 block text-xs font-medium text-slate-600">Vehicle</label>
+          <select id="t-vehicle" name="vehicle" required class="{{ form.vehicle.field.widget.attrs.class }}">
+            {% for v in vehicles %}
+              <option value="{{ v.pk }}">{{ v.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="t-rider" class="mb-1 block text-xs font-medium text-slate-600">Rider</label>
+          <select id="t-rider" name="rider" required class="{{ form.rider.field.widget.attrs.class }}">
+            {% for r in riders %}
+              <option value="{{ r.pk }}">{{ r.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="t-from" class="mb-1 block text-xs font-medium text-slate-600">From</label>
+          <input type="text" id="t-from" name="from_location" maxlength="255" required class="{{ form.from_location.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="t-to" class="mb-1 block text-xs font-medium text-slate-600">To</label>
+          <input type="text" id="t-to" name="to_location" maxlength="255" required class="{{ form.to_location.field.widget.attrs.class }}">
+        </div>
+        <div class="sm:col-span-2">
+          <label for="t-purpose" class="mb-1 block text-xs font-medium text-slate-600">Purpose</label>
+          <input type="text" id="t-purpose" name="purpose" maxlength="500" class="{{ form.purpose.field.widget.attrs.class }}">
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Delete trip</h3>
+    <p class="mt-2 text-sm text-slate-600">Delete <span id="del-label" class="font-semibold text-slate-900"></span>?</p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="del-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const CREATE = "{% url 'core:vehicle_trip_create' %}";
+    const TODAY = new Date().toISOString().slice(0, 10);
+
+    const modal   = document.getElementById('trip-modal');
+    const form    = document.getElementById('trip-form');
+    const title   = document.getElementById('trip-title');
+    const dateEl  = document.getElementById('t-date');
+    const kmEl    = document.getElementById('t-km');
+    const vEl     = document.getElementById('t-vehicle');
+    const rEl     = document.getElementById('t-rider');
+    const fromEl  = document.getElementById('t-from');
+    const toEl    = document.getElementById('t-to');
+    const purpEl  = document.getElementById('t-purpose');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) { if (!m.classList.contains('hidden')) close(m); });
+    });
+
+    document.getElementById('open-create').addEventListener('click', function () {
+      title.textContent = 'Add Trip';
+      form.action = CREATE;
+      dateEl.value = TODAY;
+      kmEl.value = '';
+      if (vEl.options.length) vEl.selectedIndex = 0;
+      if (rEl.options.length) rEl.selectedIndex = 0;
+      fromEl.value = ''; toEl.value = ''; purpEl.value = '';
+      open(modal);
+      setTimeout(function () { kmEl.focus(); }, 30);
+    });
+
+    document.querySelectorAll('.js-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Edit Trip';
+        form.action = btn.dataset.action;
+        dateEl.value = btn.dataset.date;
+        kmEl.value = btn.dataset.km;
+        vEl.value = btn.dataset.vehicle;
+        rEl.value = btn.dataset.rider;
+        fromEl.value = btn.dataset.from;
+        toEl.value = btn.dataset.to;
+        purpEl.value = btn.dataset.purpose;
+        open(modal);
+        setTimeout(function () { kmEl.focus(); kmEl.select(); }, 30);
+      });
+    });
+
+    const delModal = document.getElementById('delete-modal');
+    const delForm  = document.getElementById('del-form');
+    const delLabel = document.getElementById('del-label');
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delForm.action = btn.dataset.action;
+        delLabel.textContent = '“' + btn.dataset.label + '”';
+        open(delModal);
+      });
+    });
+  })();
+</script>
+{% endblock %}

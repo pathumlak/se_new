@@ -275,4 +275,20 @@ urlpatterns = [
         views.material_purchase_weigh_delete,
         name="material_purchase_weigh_delete",
     ),
+
+    # ---- Vehicle tracker. Vehicle & Rider CRUD are super-admin; trip
+    # CRUD is open to any signed-in user.
+    path("vehicles/", views.vehicle_list, name="vehicle_list"),
+    path("vehicles/create/", views.vehicle_create, name="vehicle_create"),
+    path("vehicles/<int:pk>/edit/", views.vehicle_edit, name="vehicle_edit"),
+    path("vehicles/<int:pk>/delete/", views.vehicle_delete, name="vehicle_delete"),
+    path("riders/", views.rider_list, name="rider_list"),
+    path("riders/create/", views.rider_create, name="rider_create"),
+    path("riders/<int:pk>/edit/", views.rider_edit, name="rider_edit"),
+    path("riders/<int:pk>/delete/", views.rider_delete, name="rider_delete"),
+    path("vehicle-trips/", views.vehicle_trip_list, name="vehicle_trip_list"),
+    path("vehicle-trips/create/", views.vehicle_trip_create, name="vehicle_trip_create"),
+    path("vehicle-trips/<int:pk>/edit/", views.vehicle_trip_edit, name="vehicle_trip_edit"),
+    path("vehicle-trips/<int:pk>/delete/", views.vehicle_trip_delete, name="vehicle_trip_delete"),
+    path("vehicle-trips/pdf/", views.vehicle_trip_pdf, name="vehicle_trip_pdf"),
 ]

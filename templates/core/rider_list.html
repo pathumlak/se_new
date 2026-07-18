@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Riders · Senovka Plastics{% endblock %}
+{% block header %}Riders{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <p class="text-sm text-slate-500">
+    People who drive the vehicles. This-month km reads live off
+    <a href="{% url 'core:vehicle_trip_list' %}" class="font-medium text-slate-900 hover:underline">Vehicle Trips</a>.
+  </p>
+  <button type="button" id="open-create"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Rider
+  </button>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {{ month_filter.label }} km
+          </th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for r in riders %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{{ r.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if r.phone %}{{ r.phone }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">{{ r.km_this_month|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if r.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Active</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <button type="button"
+                      class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      data-action="{% url 'core:rider_edit' r.pk %}"
+                      data-name="{{ r.name }}"
+                      data-phone="{{ r.phone }}"
+                      data-active="{{ r.is_active|yesno:'1,' }}">
+                Edit
+              </button>
+              <button type="button"
+                      class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      data-action="{% url 'core:rider_delete' r.pk %}"
+                      data-label="{{ r.name }}">
+                Delete
+              </button>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="px-4 py-12 text-center text-sm text-slate-500">No riders yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Create / edit modal -->
+<div id="form-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="form-title" class="text-base font-semibold text-slate-900">New Rider</h3>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <form id="form-form" method="post" action="{% url 'core:rider_create' %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+      <div>
+        <label for="r-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+        <input type="text" id="r-name" name="name" maxlength="150" required class="{{ form.name.field.widget.attrs.class }}">
+      </div>
+      <div>
+        <label for="r-phone" class="mb-1 block text-xs font-medium text-slate-600">Phone</label>
+        <input type="text" id="r-phone" name="phone" maxlength="30" class="{{ form.phone.field.widget.attrs.class }}">
+      </div>
+      <div>
+        <label class="flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" id="r-active" name="is_active" class="{{ form.is_active.field.widget.attrs.class }}">
+          <span>Active</span>
+        </label>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Delete rider</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <span id="del-label" class="font-semibold text-slate-900"></span>?
+      Riders with existing trips can't be deleted — deactivate instead.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="del-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const CREATE = "{% url 'core:rider_create' %}";
+    const modal  = document.getElementById('form-modal');
+    const form   = document.getElementById('form-form');
+    const title  = document.getElementById('form-title');
+    const name   = document.getElementById('r-name');
+    const phone  = document.getElementById('r-phone');
+    const active = document.getElementById('r-active');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) { if (!m.classList.contains('hidden')) close(m); });
+    });
+
+    document.getElementById('open-create').addEventListener('click', function () {
+      title.textContent = 'New Rider';
+      form.action = CREATE;
+      name.value = ''; phone.value = ''; active.checked = true;
+      open(modal);
+      setTimeout(function () { name.focus(); }, 30);
+    });
+
+    document.querySelectorAll('.js-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Edit Rider';
+        form.action = btn.dataset.action;
+        name.value = btn.dataset.name;
+        phone.value = btn.dataset.phone;
+        active.checked = btn.dataset.active === '1';
+        open(modal);
+        setTimeout(function () { name.focus(); name.select(); }, 30);
+      });
+    });
+
+    const delModal = document.getElementById('delete-modal');
+    const delForm  = document.getElementById('del-form');
+    const delLabel = document.getElementById('del-label');
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delForm.action = btn.dataset.action;
+        delLabel.textContent = '“' + btn.dataset.label + '”';
+        open(delModal);
+      });
+    });
+  })();
+</script>
+{% endblock %}

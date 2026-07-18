@@ -55,9 +55,12 @@ from .forms import (
     ProductForm,
     ProductionEntryForm,
     ProductQuickForm,
+    RiderForm,
     SupplierQuickForm,
     UserCreateForm,
     UserEditForm,
+    VehicleForm,
+    VehicleTripForm,
 )
 from .models import (
     Bill,
@@ -82,9 +85,12 @@ from .models import (
     PettyCashReimbursement,
     Product,
     ProductionEntry,
+    Rider,
     SupplierBill,
     SupplierBillItem,
     User,
+    Vehicle,
+    VehicleTrip,
     generate_password,
 )
 
@@ -5371,3 +5377,321 @@ def material_purchase_weigh_delete(request, pk):
 
     messages.success(request, "Weigh entry removed.")
     return redirect("core:material_purchase_detail", pk=item.purchase_id)
+
+
+# =========================================================== vehicle tracker
+# Vehicles, riders, and a log of trips between them. No stock and no money —
+# a trip is a leg with its own km reading (not an odometer), so month totals
+# are a sum of legs. See models Vehicle / Rider / VehicleTrip.
+
+
+def _month_km_for(qs, month_filter, group_field, name_field):
+    """A small aggregation: total km and trip count per {vehicle,rider} in
+    the given month. Feeds the two summary cards on the trip page."""
+    scoped = month_filter.apply(qs, field="trip_date")
+    return (
+        scoped.values(group_field, name_field)
+        .annotate(trips=Count("id"), total_km=Coalesce(Sum("km"), ZERO, output_field=MONEY))
+        .order_by("-total_km", name_field)
+    )
+
+
+# ---- Vehicles (super-admin CRUD) ----
+
+
+@super_admin_required
+def vehicle_list(request):
+    month_filter = get_month_filter(request)
+    trips_this_month = month_filter.apply(
+        VehicleTrip.objects.all(), field="trip_date"
+    )
+    km_by_vehicle = dict(
+        trips_this_month.values("vehicle_id")
+        .annotate(total=Coalesce(Sum("km"), ZERO, output_field=MONEY))
+        .values_list("vehicle_id", "total")
+    )
+    vehicles = Vehicle.objects.order_by("name")
+    for v in vehicles:
+        v.km_this_month = km_by_vehicle.get(v.pk, ZERO)
+    page_obj = _paginate(request, vehicles)
+    return render(
+        request,
+        "core/vehicle_list.html",
+        {
+            "page_obj": page_obj,
+            "vehicles": page_obj.object_list,
+            "form": VehicleForm(),
+            "month_filter": month_filter,
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def vehicle_create(request):
+    form = VehicleForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Vehicle not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            vehicle = form.save()
+        messages.success(request, f"Vehicle '{vehicle.name}' created.")
+    return redirect("core:vehicle_list")
+
+
+@require_POST
+@super_admin_required
+def vehicle_edit(request, pk):
+    vehicle = get_object_or_404(Vehicle, pk=pk)
+    form = VehicleForm(request.POST, instance=vehicle)
+    if not form.is_valid():
+        messages.error(request, f"Vehicle not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Vehicle updated.")
+    return redirect("core:vehicle_list")
+
+
+@require_POST
+@super_admin_required
+def vehicle_delete(request, pk):
+    vehicle = get_object_or_404(
+        Vehicle.objects.annotate(trip_count=Count("trips", distinct=True)), pk=pk
+    )
+    if vehicle.trip_count:
+        messages.error(
+            request,
+            f"Cannot delete '{vehicle.name}' — {vehicle.trip_count} "
+            f"trip{'' if vehicle.trip_count == 1 else 's'} still reference it. "
+            f"Deactivate instead.",
+        )
+        return redirect("core:vehicle_list")
+    try:
+        vehicle.delete()
+        messages.success(request, f"Vehicle '{vehicle.name}' deleted.")
+    except ProtectedError:
+        messages.error(request, f"Cannot delete '{vehicle.name}' — other records reference it.")
+    return redirect("core:vehicle_list")
+
+
+# ---- Riders (super-admin CRUD) ----
+
+
+@super_admin_required
+def rider_list(request):
+    month_filter = get_month_filter(request)
+    trips_this_month = month_filter.apply(VehicleTrip.objects.all(), field="trip_date")
+    km_by_rider = dict(
+        trips_this_month.values("rider_id")
+        .annotate(total=Coalesce(Sum("km"), ZERO, output_field=MONEY))
+        .values_list("rider_id", "total")
+    )
+    riders = Rider.objects.order_by("name")
+    for r in riders:
+        r.km_this_month = km_by_rider.get(r.pk, ZERO)
+    page_obj = _paginate(request, riders)
+    return render(
+        request,
+        "core/rider_list.html",
+        {
+            "page_obj": page_obj,
+            "riders": page_obj.object_list,
+            "form": RiderForm(),
+            "month_filter": month_filter,
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def rider_create(request):
+    form = RiderForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Rider not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            rider = form.save()
+        messages.success(request, f"Rider '{rider.name}' created.")
+    return redirect("core:rider_list")
+
+
+@require_POST
+@super_admin_required
+def rider_edit(request, pk):
+    rider = get_object_or_404(Rider, pk=pk)
+    form = RiderForm(request.POST, instance=rider)
+    if not form.is_valid():
+        messages.error(request, f"Rider not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Rider updated.")
+    return redirect("core:rider_list")
+
+
+@require_POST
+@super_admin_required
+def rider_delete(request, pk):
+    rider = get_object_or_404(
+        Rider.objects.annotate(trip_count=Count("trips", distinct=True)), pk=pk
+    )
+    if rider.trip_count:
+        messages.error(
+            request,
+            f"Cannot delete '{rider.name}' — {rider.trip_count} "
+            f"trip{'' if rider.trip_count == 1 else 's'} still reference it. "
+            f"Deactivate instead.",
+        )
+        return redirect("core:rider_list")
+    try:
+        rider.delete()
+        messages.success(request, f"Rider '{rider.name}' deleted.")
+    except ProtectedError:
+        messages.error(request, f"Cannot delete '{rider.name}' — other records reference it.")
+    return redirect("core:rider_list")
+
+
+# ---- Trips ----
+
+
+def _vehicle_trip_context(request):
+    """Everything the trip page needs, whichever the caller. Reused by GET
+    and (on failure) the POST fall-back."""
+    month_filter = get_month_filter(request)
+
+    vehicle_id = request.GET.get("vehicle", "").strip()
+    rider_id = request.GET.get("rider", "").strip()
+
+    trips = (
+        VehicleTrip.objects.select_related("vehicle", "rider", "added_by")
+        .order_by("-trip_date", "-id")
+    )
+    trips = month_filter.apply(trips, field="trip_date")
+    if vehicle_id.isdigit():
+        trips = trips.filter(vehicle_id=int(vehicle_id))
+    if rider_id.isdigit():
+        trips = trips.filter(rider_id=int(rider_id))
+
+    page_obj = _paginate(request, trips)
+
+    # Summary aggregates over the same month filter.
+    scoped = month_filter.apply(VehicleTrip.objects.all(), field="trip_date")
+    totals = scoped.aggregate(
+        total_km=Coalesce(Sum("km"), ZERO, output_field=MONEY),
+        total_trips=Count("id"),
+    )
+
+    by_vehicle = _month_km_for(
+        VehicleTrip.objects.all(), month_filter, "vehicle_id", "vehicle__name"
+    )
+    by_rider = _month_km_for(
+        VehicleTrip.objects.all(), month_filter, "rider_id", "rider__name"
+    )
+    most_vehicle = next(iter(by_vehicle), None)
+    most_rider = next(iter(by_rider), None)
+
+    return {
+        "page_obj": page_obj,
+        "trips": page_obj.object_list,
+        "form": VehicleTripForm(),
+        "month_filter": month_filter,
+        "vehicles": Vehicle.objects.filter(is_active=True).order_by("name"),
+        "riders": Rider.objects.filter(is_active=True).order_by("name"),
+        "selected_vehicle": vehicle_id if vehicle_id.isdigit() else "",
+        "selected_rider": rider_id if rider_id.isdigit() else "",
+        "is_filtered": bool(vehicle_id or rider_id or not month_filter.is_all_time),
+        "total_km": totals["total_km"],
+        "total_trips": totals["total_trips"],
+        "most_vehicle": most_vehicle,
+        "most_rider": most_rider,
+        "by_vehicle": by_vehicle,
+        "by_rider": by_rider,
+    }
+
+
+@login_required
+def vehicle_trip_list(request):
+    return render(request, "core/vehicle_trip_list.html", _vehicle_trip_context(request))
+
+
+def _vehicle_trip_redirect(request):
+    """Preserve month + filter args after a write."""
+    params = []
+    for key in ("month", "vehicle", "rider"):
+        value = request.GET.get(key) or request.POST.get(key)
+        if value:
+            params.append(f"{key}={value}")
+    url = reverse("core:vehicle_trip_list")
+    return redirect(f"{url}?{'&'.join(params)}" if params else url)
+
+
+@require_POST
+@login_required
+def vehicle_trip_create(request):
+    form = VehicleTripForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Trip not saved: {form.first_error()}")
+        return _vehicle_trip_redirect(request)
+    with transaction.atomic():
+        trip = form.save(commit=False)
+        trip.added_by = request.user
+        trip.save()
+    messages.success(request, f"Trip logged: {trip.km:g}km on {trip.trip_date:%d %b %Y}.")
+    return _vehicle_trip_redirect(request)
+
+
+@require_POST
+@login_required
+def vehicle_trip_edit(request, pk):
+    trip = get_object_or_404(VehicleTrip, pk=pk)
+    form = VehicleTripForm(request.POST, instance=trip)
+    if not form.is_valid():
+        messages.error(request, f"Trip not saved: {form.first_error()}")
+        return _vehicle_trip_redirect(request)
+    with transaction.atomic():
+        form.save()
+    messages.success(request, "Trip updated.")
+    return _vehicle_trip_redirect(request)
+
+
+@require_POST
+@login_required
+def vehicle_trip_delete(request, pk):
+    trip = get_object_or_404(VehicleTrip, pk=pk)
+    with transaction.atomic():
+        trip.delete()
+    messages.success(request, "Trip removed.")
+    return _vehicle_trip_redirect(request)
+
+
+@login_required
+def vehicle_trip_pdf(request):
+    context = _vehicle_trip_context(request)
+    # The PDF is a full monthly report — replace the paged slice with the
+    # complete filtered set so nothing is cut off at page 2.
+    month_filter = context["month_filter"]
+    trips = (
+        month_filter.apply(
+            VehicleTrip.objects.select_related("vehicle", "rider", "added_by"),
+            field="trip_date",
+        )
+        .order_by("-trip_date", "-id")
+    )
+    if context["selected_vehicle"]:
+        trips = trips.filter(vehicle_id=int(context["selected_vehicle"]))
+    if context["selected_rider"]:
+        trips = trips.filter(rider_id=int(context["selected_rider"]))
+    context["trips"] = list(trips)
+    context["generated_at"] = timezone.localtime()
+    stamp = (
+        month_filter.month.strftime("%Y-%m")
+        if not month_filter.is_all_time
+        else "all-time"
+    )
+    return _pdf_response(
+        request,
+        "core/vehicle_trip_pdf.html",
+        context,
+        f"senovka-vehicle-trips-{stamp}.pdf",
+    )

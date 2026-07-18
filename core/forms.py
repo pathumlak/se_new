@@ -21,7 +21,10 @@ from .models import (
     PettyCashReimbursement,
     Product,
     ProductionEntry,
+    Rider,
     User,
+    Vehicle,
+    VehicleTrip,
 )
 
 INPUT_CLASSES = (
@@ -1462,6 +1465,118 @@ class MaterialWeighEntryForm(forms.ModelForm):
         if not checked_by:
             raise forms.ValidationError("Say who checked the weight.")
         return checked_by
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class VehicleForm(forms.ModelForm):
+    class Meta:
+        model = Vehicle
+        fields = ["name", "registration_no", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Lorry — WP ABC 1234"}),
+            "registration_no": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. WP ABC 1234"}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Name is required.")
+        return name
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class RiderForm(forms.ModelForm):
+    class Meta:
+        model = Rider
+        fields = ["name", "phone", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Nimal"}),
+            "phone": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. 077 123 4567"}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Name is required.")
+        return name
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class VehicleTripForm(forms.ModelForm):
+    """One trip. `added_by` is set by the view.
+
+    The vehicle and rider dropdowns default to active only. On edit, whichever
+    vehicle or rider the row already points at is kept in the queryset even
+    if it has since been deactivated — the operator should be able to correct
+    an old trip without losing its own references.
+    """
+
+    class Meta:
+        model = VehicleTrip
+        fields = ["trip_date", "vehicle", "rider", "from_location", "to_location", "km", "purpose"]
+        widgets = {
+            "trip_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "vehicle": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "rider": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "from_location": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Yard"}),
+            "to_location": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Kandy"}),
+            "km": forms.NumberInput(attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0.01", "placeholder": "0.00"}),
+            "purpose": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Delivery to customer"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.initial.get("trip_date") and not self.instance.pk:
+            self.initial["trip_date"] = timezone.localdate()
+
+        vehicles = Vehicle.objects.filter(is_active=True)
+        riders = Rider.objects.filter(is_active=True)
+        if self.instance and self.instance.pk:
+            if self.instance.vehicle_id:
+                vehicles = Vehicle.objects.filter(
+                    Q(is_active=True) | Q(pk=self.instance.vehicle_id)
+                )
+            if self.instance.rider_id:
+                riders = Rider.objects.filter(
+                    Q(is_active=True) | Q(pk=self.instance.rider_id)
+                )
+        self.fields["vehicle"].queryset = vehicles
+        self.fields["rider"].queryset = riders
+
+    def clean_km(self):
+        km = self.cleaned_data.get("km") or Decimal("0")
+        if km <= 0:
+            raise forms.ValidationError("KM must be above 0.")
+        return km
+
+    def clean_from_location(self):
+        return (self.cleaned_data.get("from_location") or "").strip()
+
+    def clean_to_location(self):
+        return (self.cleaned_data.get("to_location") or "").strip()
+
+    def clean_trip_date(self):
+        trip_date = self.cleaned_data["trip_date"]
+        if trip_date > timezone.localdate():
+            raise forms.ValidationError("A trip can't be dated in the future.")
+        return trip_date
 
     def first_error(self):
         for messages in self.errors.values():
