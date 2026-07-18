@@ -1,0 +1,171 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senovka Quotation {{ order.reference_no }}</title>
+  {% comment %}
+  Standalone by design: no base.html, no CDN. WeasyPrint renders this with
+  no network and no JavaScript. Doubles as the browser print view when
+  WeasyPrint's GTK libraries are not installed.
+  {% endcomment %}
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+      @bottom-left {
+        content: "Senovka Plastics — quotation {{ order.reference_no }}";
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: sans-serif; font-size: 7.5pt; color: #64748b;
+      }
+    }
+    body { font-family: "Helvetica","Arial",sans-serif; font-size: 9pt; color: #0f172a; margin: 0; }
+    h1 { font-size: 15pt; margin: 0; }
+    h2 { font-size: 11pt; margin: 12pt 0 4pt; }
+
+    /* Masthead: company block on the left, quotation label on the right */
+    .masthead { border-bottom: 1.5pt solid #0f172a; padding-bottom: 8pt; margin-bottom: 10pt; display: table; width: 100%; }
+    .masthead > div { display: table-cell; vertical-align: top; }
+    .company { font-size: 8pt; color: #475569; }
+    .company .name { font-size: 13pt; font-weight: bold; color: #0f172a; margin: 0 0 3pt; }
+    .quote-label { text-align: right; }
+    .quote-label .tag { display: inline-block; font-size: 12pt; font-weight: bold; letter-spacing: 2pt;
+                        color: #ffffff; background: #0f172a; padding: 4pt 10pt; border-radius: 2pt; }
+    .quote-label .ref { margin-top: 4pt; font-size: 11pt; font-weight: bold; color: #0f172a; }
+    .quote-label .dates { margin-top: 3pt; font-size: 8pt; color: #475569; }
+
+    .addressed { margin: 8pt 0 10pt; }
+    .addressed .to { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; margin: 0 0 2pt; }
+    .addressed .name { font-size: 11pt; font-weight: bold; color: #0f172a; margin: 0; }
+    .addressed .contact { font-size: 8pt; color: #475569; margin-top: 2pt; white-space: pre-line; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3pt;
+      color: #64748b; background: #f1f5f9; padding: 5pt 6pt; border-bottom: 0.75pt solid #cbd5e1;
+    }
+    td { padding: 5pt 6pt; border-bottom: 0.5pt solid #e2e8f0; }
+    .r { text-align: right; }
+    .c { text-align: center; }
+    tfoot td { border-top: 1pt solid #94a3b8; border-bottom: 0; background: #f8fafc; }
+    tfoot .label { text-align: right; font-weight: bold; }
+    tfoot .grand { font-size: 11pt; }
+
+    .notes { margin-top: 12pt; padding: 8pt 10pt; border: 0.5pt solid #cbd5e1; border-radius: 3pt; background: #f8fafc; }
+    .notes .label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4pt; color: #64748b; margin: 0 0 3pt; }
+    .notes p { margin: 0; font-size: 8.5pt; color: #334155; white-space: pre-line; }
+
+    .footer { margin-top: 18pt; padding-top: 6pt; border-top: 0.5pt solid #cbd5e1; font-size: 8pt; color: #64748b; text-align: center; }
+
+    .status-badge {
+      display: inline-block; margin-left: 6pt; padding: 1pt 5pt; border-radius: 6pt;
+      font-size: 7pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.3pt;
+    }
+    .status-draft     { background: #fef3c7; color: #92400e; }
+    .status-sent      { background: #e0e7ff; color: #3730a3; }
+    .status-confirmed { background: #d1fae5; color: #065f46; }
+    .status-cancelled { background: #f1f5f9; color: #475569; }
+  </style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="company">
+    <p class="name">Senovka Plastics</p>
+    <p>Manufacturers of quality plastic products</p>
+    <p>Address line here</p>
+    <p>Phone: — · Email: —</p>
+  </div>
+  <div class="quote-label">
+    <span class="tag">QUOTATION</span>
+    <div class="ref">
+      {{ order.reference_no }}
+      <span class="status-badge status-{{ order.status }}">{{ order.get_status_display }}</span>
+    </div>
+    <div class="dates">
+      Date: {{ order.order_date|date:"j M Y" }}
+      {% if order.valid_until %}<br>Valid until: {{ order.valid_until|date:"j M Y" }}{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="addressed">
+  <p class="to">Prepared for</p>
+  <p class="name">{{ order.display_customer }}</p>
+  {% if order.customer %}
+    <p class="contact">{% if order.customer.phone %}{{ order.customer.phone }}{% endif %}{% if order.customer.address %}
+{{ order.customer.address }}{% endif %}</p>
+  {% endif %}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th class="c" style="width:6%">No</th>
+      <th>Product</th>
+      <th style="width:14%">Size</th>
+      <th class="r" style="width:12%">Qty</th>
+      <th class="r" style="width:14%">Unit Price</th>
+      <th class="r" style="width:16%">Line Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+      <tr>
+        <td class="c">{{ forloop.counter }}</td>
+        <td>{{ item.product.name }}</td>
+        <td>{% if item.product.size %}{{ item.product.size }}{% else %}—{% endif %}</td>
+        <td class="r">{{ item.qty|floatformat:"-3" }}</td>
+        <td class="r">{{ item.unit_price|floatformat:2|intcomma }}</td>
+        <td class="r">{{ item.line_total|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="c" style="padding:14pt; color:#64748b; font-style:italic;">This quotation has no items.</td></tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td colspan="5" class="label">Subtotal</td>
+      <td class="r">{{ order.subtotal|floatformat:2|intcomma }}</td>
+    </tr>
+    {% if order.delivery_charge %}
+      <tr>
+        <td colspan="5" class="label">Delivery charge</td>
+        <td class="r">+{{ order.delivery_charge|floatformat:2|intcomma }}</td>
+      </tr>
+    {% endif %}
+    {% if order.discount_amount %}
+      <tr>
+        <td colspan="5" class="label">Discount{% if order.discount_reason %} — {{ order.discount_reason }}{% endif %}</td>
+        <td class="r">−{{ order.discount_amount|floatformat:2|intcomma }}</td>
+      </tr>
+    {% endif %}
+    <tr class="grand">
+      <td colspan="5" class="label">Grand total</td>
+      <td class="r">{{ order.total_amount|floatformat:2|intcomma }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+{% if order.notes %}
+  <div class="notes">
+    <p class="label">Notes</p>
+    <p>{{ order.notes }}</p>
+  </div>
+{% endif %}
+
+<div class="footer">
+  {% if order.valid_until %}
+    This quotation is valid until {{ order.valid_until|date:"j M Y" }}. Thank you for your business.
+  {% else %}
+    Thank you for your business.
+  {% endif %}
+</div>
+
+</body>
+</html>

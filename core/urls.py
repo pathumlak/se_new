@@ -291,4 +291,19 @@ urlpatterns = [
     path("vehicle-trips/<int:pk>/edit/", views.vehicle_trip_edit, name="vehicle_trip_edit"),
     path("vehicle-trips/<int:pk>/delete/", views.vehicle_trip_delete, name="vehicle_trip_delete"),
     path("vehicle-trips/pdf/", views.vehicle_trip_pdf, name="vehicle_trip_pdf"),
+
+    # ---- Order book (quotations). Nothing moves stock or money — see the
+    # Order model docstring.
+    path("orders/", views.order_list, name="order_list"),
+    path("orders/create/", views.order_create, name="order_create"),
+    path("orders/<int:pk>/", views.order_detail, name="order_detail"),
+    path("orders/<int:pk>/edit/", views.order_edit, name="order_edit"),
+    path("orders/<int:pk>/delete/", views.order_delete, name="order_delete"),
+    path(
+        "orders/<int:pk>/status/<str:status>/",
+        views.order_set_status,
+        name="order_set_status",
+    ),
+    path("orders/<int:pk>/pdf/", views.order_pdf, name="order_pdf"),
+    path("orders/<int:pk>/excel/", views.order_excel, name="order_excel"),
 ]

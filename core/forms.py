@@ -16,6 +16,7 @@ from .models import (
     MaterialPurchase,
     MaterialSupplier,
     MaterialWeighEntry,
+    Order,
     Payment,
     PettyCashEntry,
     PettyCashReimbursement,
@@ -1577,6 +1578,119 @@ class VehicleTripForm(forms.ModelForm):
         if trip_date > timezone.localdate():
             raise forms.ValidationError("A trip can't be dated in the future.")
         return trip_date
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class OrderHeaderForm(forms.ModelForm):
+    """Just the header fields of a quotation — items ride in as JSON and are
+    validated by the view. `created_by` is set by the view.
+
+    A quotation may be addressed to either an existing Customer FK or a
+    free-text `customer_name` (walk-in). The view enforces exactly one of
+    those; this form does not, because the two are set from separate UI
+    controls that the JS keeps in step.
+    """
+
+    class Meta:
+        model = Order
+        fields = [
+            "customer", "customer_name",
+            "order_date", "valid_until",
+            "notes",
+            "delivery_charge", "discount_amount", "discount_reason",
+            "edit_reason",
+        ]
+        widgets = {
+            "customer": forms.Select(attrs={"class": SELECT_CLASSES}),
+            "customer_name": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Walk-in name"}
+            ),
+            "order_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "valid_until": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "notes": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}),
+            "delivery_charge": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}
+            ),
+            "discount_amount": forms.NumberInput(
+                attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}
+            ),
+            "discount_reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "maxlength": 255, "placeholder": "Why?"}
+            ),
+            "edit_reason": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Why this correction?", "maxlength": 500}
+            ),
+        }
+
+    def __init__(self, *args, require_edit_reason=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not require_edit_reason:
+            self.fields.pop("edit_reason", None)
+        # Any active party may be quoted — including suppliers (who may buy
+        # too) — mirroring _billable_customers.
+        active = Customer.objects.filter(is_active=True, is_walk_in_account=False)
+        if self.instance and self.instance.pk and self.instance.customer_id:
+            active = Customer.objects.filter(
+                Q(is_active=True, is_walk_in_account=False)
+                | Q(pk=self.instance.customer_id)
+            )
+        self.fields["customer"].queryset = active
+        self.fields["customer"].required = False
+        if not self.initial.get("order_date") and not self.instance.pk:
+            self.initial["order_date"] = timezone.localdate()
+
+    def clean_delivery_charge(self):
+        value = self.cleaned_data.get("delivery_charge") or Decimal("0")
+        if value < 0:
+            raise forms.ValidationError("Delivery charge cannot be negative.")
+        return value
+
+    def clean_discount_amount(self):
+        value = self.cleaned_data.get("discount_amount") or Decimal("0")
+        if value < 0:
+            raise forms.ValidationError("Discount cannot be negative.")
+        return value
+
+    def clean_edit_reason(self):
+        reason = (self.cleaned_data.get("edit_reason") or "").strip()
+        if "edit_reason" in self.fields and not reason:
+            raise forms.ValidationError("Give a reason for this edit.")
+        return reason
+
+    def clean(self):
+        cleaned = super().clean()
+        customer = cleaned.get("customer")
+        walk_in_name = (cleaned.get("customer_name") or "").strip()
+
+        # Exactly one of them must be set. Two would be ambiguous (who is
+        # this quotation actually for?), zero would leave the PDF without an
+        # addressee.
+        if customer and walk_in_name:
+            raise forms.ValidationError(
+                "Pick either an existing customer or enter a walk-in name — not both."
+            )
+        if not customer and not walk_in_name:
+            raise forms.ValidationError(
+                "Pick a customer or enter a walk-in name."
+            )
+
+        if cleaned.get("discount_amount") and cleaned.get("discount_amount") > 0:
+            if not (cleaned.get("discount_reason") or "").strip():
+                self.add_error(
+                    "discount_reason", "Give a reason for the discount."
+                )
+
+        return cleaned
 
     def first_error(self):
         for messages in self.errors.values():

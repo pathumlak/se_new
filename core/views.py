@@ -50,6 +50,7 @@ from .forms import (
     MaterialPurchaseHeaderForm,
     MaterialSupplierForm,
     MaterialWeighEntryForm,
+    OrderHeaderForm,
     PettyCashExpenseForm,
     PettyCashReimbursementForm,
     ProductForm,
@@ -79,6 +80,8 @@ from .models import (
     MaterialPurchaseItem,
     MaterialSupplier,
     MaterialWeighEntry,
+    Order,
+    OrderItem,
     Payment,
     PettyCashEntry,
     PettyCashFund,
@@ -5695,3 +5698,423 @@ def vehicle_trip_pdf(request):
         context,
         f"senovka-vehicle-trips-{stamp}.pdf",
     )
+
+
+# ================================================================ order book
+# Quotations. Nothing here moves stock, balance or money — see Order for why
+# these are their own model rather than a Bill with a status. Reference
+# numbers come from ReferenceCounter, which survives deletion; see the model.
+
+
+def _order_line_price(customer_id, product):
+    """The price to quote for `product` when writing an OrderItem for
+    `customer_id`. Mirrors the bill-create path: a CustomerPrice override
+    wins over Product.default_price; a walk-in (no customer_id) gets the
+    default."""
+    if customer_id:
+        override = CustomerPrice.objects.filter(
+            customer_id=customer_id, product=product
+        ).values_list("unit_price", flat=True).first()
+        if override is not None:
+            return override
+    return product.default_price
+
+
+def _parse_order_items(raw_json, customer_id):
+    """Read the items JSON off an order POST and return validated dicts.
+
+    Refuses malformed JSON, empty lists, unknown or inactive products,
+    duplicated products, and negative numbers. Prices default to the
+    customer's own quote if the JSON omitted one — the operator does not
+    have to re-type what the AJAX endpoint pre-filled.
+    """
+    try:
+        rows = json.loads(raw_json or "[]")
+    except (ValueError, TypeError):
+        raise BillError("Item list is malformed.")
+    if not isinstance(rows, list) or not rows:
+        raise BillError("Add at least one item.")
+
+    ids = [r.get("product_id") for r in rows if isinstance(r, dict)]
+    products = {p.pk: p for p in Product.objects.filter(pk__in=ids, is_active=True)}
+
+    seen = set()
+    items = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise BillError(f"Item {index}: malformed row.")
+        product = products.get(row.get("product_id"))
+        if product is None:
+            raise BillError(f"Item {index}: product no longer available.")
+        if product.pk in seen:
+            raise BillError(f"{product} is on this order twice.")
+        seen.add(product.pk)
+
+        qty = _decimal(row.get("qty"), f"Item {index} qty", 3)
+        if qty <= ZERO:
+            raise BillError(f"Item {index}: quantity must be above 0.")
+
+        raw_price = row.get("unit_price")
+        if raw_price is None or str(raw_price).strip() == "":
+            unit_price = _order_line_price(customer_id, product)
+        else:
+            unit_price = _decimal(raw_price, f"Item {index} price", 2)
+        line_total = (qty * unit_price).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        items.append(
+            {
+                "product": product,
+                "qty": qty,
+                "unit_price": unit_price,
+                "line_total": line_total,
+            }
+        )
+    return items
+
+
+@login_required
+def order_list(request):
+    status = request.GET.get("status", "").strip()
+    valid_status = {v for v, _ in Order.Status.choices}
+    if status not in valid_status:
+        status = ""
+
+    month_filter = get_month_filter(request)
+
+    orders = (
+        Order.objects.select_related("customer", "created_by")
+        .annotate(item_count=Count("items", distinct=True))
+        .order_by("-order_date", "-id")
+    )
+    if status:
+        orders = orders.filter(status=status)
+    orders = month_filter.apply(orders, field="order_date")
+
+    page_obj = _paginate(request, orders)
+
+    return render(
+        request,
+        "core/order_list.html",
+        {
+            "page_obj": page_obj,
+            "orders": page_obj.object_list,
+            "status": status,
+            "statuses": Order.Status.choices,
+            "month_filter": month_filter,
+            "is_filtered": bool(status or not month_filter.is_all_time),
+        },
+    )
+
+
+def _order_form_context(request, form, items=None, is_edit=False, order=None):
+    """What both order form pages need. Includes annotated customers so the
+    picker shows the running balance alongside each name."""
+    return {
+        "form": form,
+        "customers": _billable_customers(),
+        "categories": Category.objects.all(),
+        "initial_items_json": json.dumps(items or []),
+        "is_edit": is_edit,
+        "order": order,
+        # The endpoint the JS calls with the picked customer id — reused
+        # verbatim from bill creation.
+        "products_url_template": reverse(
+            "core:bill_products", kwargs={"customer_id": 999999999}
+        ),
+        "walk_in_customer_id": _walk_in_customer().pk,
+        "today": timezone.localdate(),
+    }
+
+
+@login_required
+def order_create(request):
+    form = OrderHeaderForm(request.POST or None)
+
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                if not form.is_valid():
+                    raise BillError(form.first_error())
+                cust = form.cleaned_data.get("customer")
+                items = _parse_order_items(
+                    request.POST.get("items_json"),
+                    cust.pk if cust else None,
+                )
+
+                order = form.save(commit=False)
+                order.created_by = request.user
+                order.save()  # save() assigns reference_no from ReferenceCounter.
+                for item in items:
+                    OrderItem.objects.create(
+                        order=order,
+                        product=item["product"],
+                        qty=item["qty"],
+                        unit_price=item["unit_price"],
+                        line_total=item["line_total"],
+                    )
+                order.recalculate()
+        except BillError as exc:
+            messages.error(request, f"Quotation not saved: {exc}")
+        else:
+            messages.success(
+                request,
+                f"Quotation {order.reference_no} created ({len(items)} item"
+                f"{'' if len(items) == 1 else 's'}, "
+                f"{order.total_amount:,.2f}).",
+            )
+            return redirect("core:order_detail", pk=order.pk)
+
+    return render(
+        request,
+        "core/order_create.html",
+        _order_form_context(request, form),
+    )
+
+
+@login_required
+def order_edit(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+
+    if request.method == "POST":
+        # A confirmed quotation being edited is a serious enough change to
+        # want a reason on record — same as edit_reason on bills.
+        was_confirmed = order.status == Order.Status.CONFIRMED
+        form = OrderHeaderForm(
+            request.POST, instance=order, require_edit_reason=was_confirmed
+        )
+        try:
+            with transaction.atomic():
+                if not form.is_valid():
+                    raise BillError(form.first_error())
+                cust = form.cleaned_data.get("customer")
+                items = _parse_order_items(
+                    request.POST.get("items_json"),
+                    cust.pk if cust else None,
+                )
+
+                order.items.all().delete()
+                edited = form.save(commit=False)
+                if was_confirmed:
+                    edited.edit_date = timezone.localdate()
+                edited.save()
+                for item in items:
+                    OrderItem.objects.create(
+                        order=edited,
+                        product=item["product"],
+                        qty=item["qty"],
+                        unit_price=item["unit_price"],
+                        line_total=item["line_total"],
+                    )
+                edited.recalculate()
+        except BillError as exc:
+            messages.error(request, f"Quotation not saved: {exc}")
+        else:
+            messages.success(request, f"Quotation {order.reference_no} updated.")
+            return redirect("core:order_detail", pk=order.pk)
+    else:
+        was_confirmed = order.status == Order.Status.CONFIRMED
+        form = OrderHeaderForm(
+            instance=order, require_edit_reason=was_confirmed,
+            initial={
+                "customer_name": order.customer_name,
+            },
+        )
+
+    initial_items = [
+        {
+            "product_id": item.product_id,
+            "product_name": item.product.name,
+            "size": item.product.size,
+            "qty": f"{item.qty:.3f}",
+            "unit_price": f"{item.unit_price:.2f}",
+        }
+        for item in order.items.select_related("product")
+    ]
+
+    return render(
+        request,
+        "core/order_create.html",
+        _order_form_context(request, form, items=initial_items, is_edit=True, order=order),
+    )
+
+
+@require_POST
+@super_admin_required
+def order_delete(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    ref = order.reference_no
+    with transaction.atomic():
+        order.delete()  # cascades to OrderItem
+    messages.success(request, f"Quotation {ref} deleted.")
+    return redirect("core:order_list")
+
+
+@login_required
+def order_detail(request, pk):
+    order = get_object_or_404(
+        Order.objects.select_related("customer", "created_by"), pk=pk
+    )
+    items = order.items.select_related("product")
+    return render(
+        request,
+        "core/order_detail.html",
+        {
+            "order": order,
+            "items": items,
+        },
+    )
+
+
+@require_POST
+@login_required
+def order_set_status(request, pk, status):
+    order = get_object_or_404(Order, pk=pk)
+    valid = {v for v, _ in Order.Status.choices}
+    if status not in valid:
+        messages.error(request, "Unknown status.")
+        return redirect("core:order_detail", pk=pk)
+    with transaction.atomic():
+        order.status = status
+        order.save(update_fields=["status"])
+    messages.success(request, f"Quotation marked as {order.get_status_display()}.")
+    return redirect("core:order_detail", pk=pk)
+
+
+def _order_pdf_context(order):
+    return {
+        "order": order,
+        "items": list(order.items.select_related("product")),
+        "generated_at": timezone.localtime(),
+    }
+
+
+@login_required
+def order_pdf(request, pk):
+    order = get_object_or_404(
+        Order.objects.select_related("customer"), pk=pk
+    )
+    return _pdf_response(
+        request,
+        "core/order_pdf.html",
+        _order_pdf_context(order),
+        f"quotation_{order.reference_no}.pdf",
+    )
+
+
+@login_required
+def order_excel(request, pk):
+    """Same content as the PDF, in .xlsx form. openpyxl is a pure-Python
+    dependency, so unlike WeasyPrint this always works even on Windows
+    without GTK."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    order = get_object_or_404(
+        Order.objects.select_related("customer"), pk=pk
+    )
+    items = list(order.items.select_related("product"))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = order.reference_no
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    right = Alignment(horizontal="right")
+
+    # Masthead
+    ws["A1"] = "Senovka Plastics — Quotation"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:F1")
+
+    ws["A2"] = "Ref No"; ws["B2"] = order.reference_no
+    ws["C2"] = "Date"; ws["D2"] = order.order_date.strftime("%d %b %Y")
+    ws["E2"] = "Status"; ws["F2"] = order.get_status_display()
+
+    ws["A3"] = "Customer"; ws["B3"] = order.display_customer
+    if order.valid_until:
+        ws["C3"] = "Valid until"
+        ws["D3"] = order.valid_until.strftime("%d %b %Y")
+
+    for row in (2, 3):
+        for col in ("A", "C", "E"):
+            cell = ws[f"{col}{row}"]
+            if cell.value:
+                cell.font = Font(bold=True)
+
+    # Items header
+    HEADERS = ["No", "Product", "Size", "Qty", "Unit Price", "Line Total"]
+    header_row = 5
+    for idx, name in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Items rows
+    row_num = header_row + 1
+    for i, item in enumerate(items, start=1):
+        ws.cell(row=row_num, column=1, value=i)
+        ws.cell(row=row_num, column=2, value=item.product.name)
+        ws.cell(row=row_num, column=3, value=item.product.size or "—")
+        c_qty = ws.cell(row=row_num, column=4, value=float(item.qty))
+        c_price = ws.cell(row=row_num, column=5, value=float(item.unit_price))
+        c_total = ws.cell(row=row_num, column=6, value=float(item.line_total))
+        c_qty.alignment = right
+        c_price.alignment = right
+        c_total.alignment = right
+        c_price.number_format = "#,##0.00"
+        c_total.number_format = "#,##0.00"
+        c_qty.number_format = "#,##0.000"
+        row_num += 1
+
+    # Totals
+    row_num += 1
+
+    def totals_row(label, value, bold=False):
+        nonlocal row_num
+        ws.cell(row=row_num, column=5, value=label).alignment = right
+        c = ws.cell(row=row_num, column=6, value=float(value))
+        c.alignment = right
+        c.number_format = "#,##0.00"
+        if bold:
+            ws.cell(row=row_num, column=5).font = Font(bold=True)
+            c.font = Font(bold=True)
+        row_num += 1
+
+    totals_row("Subtotal", order.subtotal)
+    if order.delivery_charge:
+        totals_row("Delivery", order.delivery_charge)
+    if order.discount_amount:
+        totals_row("Discount", -order.discount_amount)
+    totals_row("Grand total", order.total_amount, bold=True)
+
+    if order.notes:
+        row_num += 1
+        ws.cell(row=row_num, column=1, value="Notes").font = Font(bold=True)
+        ws.cell(row=row_num, column=2, value=order.notes)
+        ws.merge_cells(
+            start_row=row_num, start_column=2,
+            end_row=row_num, end_column=6,
+        )
+
+    # Column widths — a rough auto-size based on content length in each column.
+    widths = {"A": 5, "B": 32, "C": 12, "D": 10, "E": 14, "F": 14}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="quotation_{order.reference_no}.xlsx"'
+    )
+    return response

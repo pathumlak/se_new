@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{% if is_edit %}Edit Quotation {{ order.reference_no }}{% else %}New Quotation{% endif %} · Senovka Plastics{% endblock %}
+{% block header %}{% if is_edit %}Edit Quotation {{ order.reference_no }}{% else %}New Quotation{% endif %}{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% if is_edit %}{% url 'core:order_detail' order.pk %}{% else %}{% url 'core:order_list' %}{% endif %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    {% if is_edit %}Back to Quotation{% else %}Back to Order Book{% endif %}
+  </a>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="items_json" id="items-json" value="{{ initial_items_json }}">
+
+  <div class="grid gap-5 lg:grid-cols-3">
+
+    <!-- =================== LEFT: HEADER + PRODUCT GRID =================== -->
+    <div class="lg:col-span-2 space-y-5">
+
+      <!-- Header card -->
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        {% if form.non_field_errors %}
+          <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+            {{ form.non_field_errors|join:" " }}
+          </div>
+        {% endif %}
+
+        <!-- Who -->
+        <div class="mb-4">
+          <span class="mb-1.5 block text-xs font-medium text-slate-600">For</span>
+          <div class="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-0.5" role="tablist">
+            <label class="cursor-pointer rounded-md px-3 py-1 text-xs font-semibold text-slate-500 has-[:checked]:bg-white has-[:checked]:text-slate-900 has-[:checked]:shadow-sm">
+              <input type="radio" name="_who" value="existing" class="sr-only" id="who-existing" checked>
+              Existing customer
+            </label>
+            <label class="cursor-pointer rounded-md px-3 py-1 text-xs font-semibold text-slate-500 has-[:checked]:bg-white has-[:checked]:text-slate-900 has-[:checked]:shadow-sm">
+              <input type="radio" name="_who" value="walkin" class="sr-only" id="who-walkin">
+              Walk-in
+            </label>
+          </div>
+
+          <div id="who-existing-panel" class="mt-3">
+            <select name="customer" id="{{ form.customer.id_for_label }}"
+                    class="{{ form.customer.field.widget.attrs.class }}">
+              <option value="">Choose a customer…</option>
+              {% for c in customers %}
+                <option value="{{ c.pk }}"
+                        data-balance="{{ c.balance|stringformat:'.2f' }}"
+                        {% if form.customer.value|stringformat:'s' == c.pk|stringformat:'s' %}selected{% endif %}>
+                  {{ c.name }} (Balance: {{ c.balance|floatformat:2|intcomma }})
+                </option>
+              {% endfor %}
+            </select>
+            {% for e in form.customer.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+
+          <div id="who-walkin-panel" class="mt-3 hidden">
+            <input type="text" name="customer_name" id="{{ form.customer_name.id_for_label }}"
+                   maxlength="255" placeholder="Walk-in name for this quotation"
+                   value="{{ form.customer_name.value|default_if_none:'' }}"
+                   class="{{ form.customer_name.field.widget.attrs.class }}">
+            {% for e in form.customer_name.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <!-- Dates + notes -->
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="{{ form.order_date.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Quotation date <span class="text-rose-500">*</span></label>
+            {{ form.order_date }}
+            {% for e in form.order_date.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ form.valid_until.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Valid until <span class="text-slate-300">(optional)</span></label>
+            {{ form.valid_until }}
+          </div>
+          <div class="sm:col-span-2">
+            <label for="{{ form.notes.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Notes</label>
+            {{ form.notes }}
+          </div>
+          {% if is_edit and form.edit_reason %}
+            <div class="sm:col-span-2">
+              <label for="{{ form.edit_reason.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Reason for edit <span class="text-rose-500">*</span></label>
+              {{ form.edit_reason }}
+              {% for e in form.edit_reason.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Product picker -->
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h3 class="text-sm font-semibold text-slate-900">Add items</h3>
+          <div class="relative">
+            <span class="pointer-events-none absolute left-3 top-1.5 text-slate-400">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+              </svg>
+            </span>
+            <input type="search" id="product-search" placeholder="Search…" autocomplete="off"
+                   class="w-56 rounded-lg border border-slate-300 py-1.5 pl-8 pr-3 text-sm text-slate-900 shadow-sm
+                          focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+          </div>
+        </div>
+
+        <!-- Category tabs -->
+        <div class="mb-3 flex flex-wrap gap-1.5" id="category-tabs">
+          <button type="button" data-category="" aria-pressed="true"
+                  class="js-cat rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white">All</button>
+          {% for c in categories %}
+            <button type="button" data-category="{{ c.pk }}" aria-pressed="false"
+                    class="js-cat rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">
+              {{ c.name }}
+            </button>
+          {% endfor %}
+        </div>
+
+        <div id="panel-idle" class="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          Loading products…
+        </div>
+        <div id="panel-loading" class="hidden rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          Loading products…
+        </div>
+        <div id="panel-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm text-rose-700">
+          <p id="error-text"></p>
+        </div>
+        <div id="panel-grid" class="hidden">
+          <div id="product-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+          <p id="grid-empty" class="hidden py-8 text-center text-sm text-slate-500">No products match that search.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================== RIGHT: ITEMS PANEL + TOTALS =================== -->
+    <div class="lg:col-span-1">
+      <div class="sticky top-20 rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-900">
+            Items <span id="items-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
+          </h3>
+        </div>
+        <div id="items-list" class="max-h-96 divide-y divide-slate-100 overflow-y-auto"></div>
+        <p id="items-empty" class="px-4 py-8 text-center text-sm text-slate-400">
+          Click a product to add it.
+        </p>
+
+        <!-- Delivery + discount -->
+        <div class="grid gap-3 border-t border-slate-200 px-4 py-3 sm:grid-cols-2">
+          <div class="flex items-center justify-between gap-2">
+            <label for="{{ form.delivery_charge.id_for_label }}" class="text-sm text-slate-500">Delivery</label>
+            {{ form.delivery_charge }}
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <label for="{{ form.discount_amount.id_for_label }}" class="text-sm text-slate-500">Discount</label>
+            {{ form.discount_amount }}
+          </div>
+          <div id="discount-reason-row" class="sm:col-span-2 {% if not form.discount_amount.value %}hidden{% endif %}">
+            <label for="{{ form.discount_reason.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Discount reason <span class="text-rose-500">*</span></label>
+            {{ form.discount_reason }}
+            {% for e in form.discount_reason.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <!-- Totals -->
+        <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
+          <dl class="space-y-1 text-sm">
+            <div class="flex items-center justify-between text-slate-500"><dt>Subtotal</dt><dd id="tot-subtotal">0.00</dd></div>
+            <div class="flex items-center justify-between text-slate-500"><dt>+ Delivery</dt><dd id="tot-delivery">0.00</dd></div>
+            <div class="flex items-center justify-between text-slate-500"><dt>− Discount</dt><dd id="tot-discount">0.00</dd></div>
+            <div class="mt-1 flex items-baseline justify-between border-t border-slate-200 pt-2">
+              <dt class="font-semibold text-slate-900">Grand total</dt>
+              <dd id="grand-total" class="text-xl font-semibold text-slate-900">0.00</dd>
+            </div>
+          </dl>
+
+          <button type="submit" id="save-order" disabled
+                  class="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white
+                         transition hover:bg-slate-800 disabled:opacity-50">
+            {% if is_edit %}Save Changes{% else %}Save Quotation{% endif %}
+          </button>
+          <p id="save-note" class="mt-1.5 text-center text-xs text-slate-400">Pick a customer or a walk-in name, then add at least one item.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<template id="item-row-tmpl">
+  <div class="js-item p-3 hover:bg-slate-50">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <p class="js-name truncate text-sm font-medium text-slate-900"></p>
+        <p class="js-size text-xs text-slate-500"></p>
+      </div>
+      <button type="button" class="js-remove shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-300 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove">&times;</button>
+    </div>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Qty</span>
+        <input type="number" step="0.001" min="0.001" required
+               class="js-qty block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Unit price</span>
+        <input type="number" step="0.01" min="0" required
+               class="js-price block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+    </div>
+    <p class="mt-1 text-right text-xs text-slate-500">
+      Line total: <span class="js-line-total font-semibold text-slate-900">0.00</span>
+    </p>
+  </div>
+</template>
+
+{% endblock %}
+
+{% block extra_js %}
+<script id="initial-items-data" type="application/json">{{ initial_items_json|safe }}</script>
+<script>
+  (function () {
+    // Reuses /api/bill/products/<customer_id>/ — same shape as the bill
+    // create page. A walk-in still needs *some* customer id to price
+    // against, so the page falls back to the walk-in holding account.
+    const URL_TEMPLATE   = "{{ products_url_template }}";
+    const WALK_IN_ID     = "{{ walk_in_customer_id }}";
+    const INITIAL_ITEMS  = JSON.parse(document.getElementById('initial-items-data').textContent || '[]');
+
+    const searchEl  = document.getElementById('product-search');
+    const idle      = document.getElementById('panel-idle');
+    const loading   = document.getElementById('panel-loading');
+    const errPanel  = document.getElementById('panel-error');
+    const errText   = document.getElementById('error-text');
+    const gridPanel = document.getElementById('panel-grid');
+    const grid      = document.getElementById('product-grid');
+    const gridEmpty = document.getElementById('grid-empty');
+
+    const itemsList  = document.getElementById('items-list');
+    const itemsEmpty = document.getElementById('items-empty');
+    const itemsCount = document.getElementById('items-count');
+    const grandEl    = document.getElementById('grand-total');
+    const subEl      = document.getElementById('tot-subtotal');
+    const delEl      = document.getElementById('tot-delivery');
+    const discEl     = document.getElementById('tot-discount');
+    const saveBtn    = document.getElementById('save-order');
+    const saveNote   = document.getElementById('save-note');
+    const jsonEl     = document.getElementById('items-json');
+    const rowTmpl    = document.getElementById('item-row-tmpl');
+
+    const deliveryEl = document.getElementById('{{ form.delivery_charge.id_for_label }}');
+    const discountEl = document.getElementById('{{ form.discount_amount.id_for_label }}');
+    const reasonRow  = document.getElementById('discount-reason-row');
+    const reasonEl   = document.getElementById('{{ form.discount_reason.id_for_label }}');
+
+    const custSelect = document.getElementById('{{ form.customer.id_for_label }}');
+    const walkinInput = document.getElementById('{{ form.customer_name.id_for_label }}');
+    const whoExisting = document.getElementById('who-existing');
+    const whoWalkin   = document.getElementById('who-walkin');
+    const panelExisting = document.getElementById('who-existing-panel');
+    const panelWalkin   = document.getElementById('who-walkin-panel');
+
+    let loaded = [];             // full product list from the endpoint
+    let currentCategory = '';
+    let requestToken = 0;
+    const rows = new Map();       // product_id -> DOM node
+
+    const MONEY = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function money(n) { return MONEY.format(n); }
+    function num(v) { const n = parseFloat(v); return isFinite(n) ? n : NaN; }
+    function round(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+    // ---- who ----
+    function applyWho() {
+      const walkin = whoWalkin.checked;
+      panelExisting.classList.toggle('hidden', walkin);
+      panelWalkin.classList.toggle('hidden', !walkin);
+      if (walkin) custSelect.value = '';
+      else walkinInput.value = '';
+      loadProducts();
+      pushTotals();
+    }
+    whoExisting.addEventListener('change', applyWho);
+    whoWalkin.addEventListener('change', applyWho);
+    custSelect.addEventListener('change', function () { loadProducts(); pushTotals(); });
+
+    // ---- load products for the picked customer ----
+    function currentPriceId() {
+      if (whoWalkin.checked) return WALK_IN_ID;
+      return custSelect.value || '';
+    }
+
+    function loadProducts() {
+      const id = currentPriceId();
+      if (!id) {
+        loaded = [];
+        showPanel('idle');
+        idle.textContent = 'Choose who this quotation is for to load prices.';
+        return;
+      }
+
+      const token = ++requestToken;
+      showPanel('loading');
+      const url = URL_TEMPLATE.replace('999999999', id);
+      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json().catch(function () { return null; }).then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (result) {
+          if (token !== requestToken) return;
+          let list = null;
+          if (result.data && Array.isArray(result.data.products)) list = result.data.products;
+          else if (Array.isArray(result.data)) list = result.data;
+          if (!result.ok || !Array.isArray(list)) throw new Error((result.data && result.data.error) || 'Could not load products.');
+          loaded = list;
+          renderGrid();
+          showPanel('grid');
+        })
+        .catch(function (err) {
+          if (token !== requestToken) return;
+          errText.textContent = err.message;
+          showPanel('error');
+        });
+    }
+
+    function showPanel(name) {
+      idle.classList.toggle('hidden', name !== 'idle');
+      loading.classList.toggle('hidden', name !== 'loading');
+      errPanel.classList.toggle('hidden', name !== 'error');
+      gridPanel.classList.toggle('hidden', name !== 'grid');
+    }
+
+    // ---- grid + cards ----
+    function visibleProducts() {
+      const term = searchEl.value.trim().toLowerCase();
+      return loaded.filter(function (p) {
+        if (currentCategory && String(p.category_id) !== currentCategory) return false;
+        if (!term) return true;
+        const hay = (p.name + ' ' + (p.size || '')).toLowerCase();
+        return hay.indexOf(term) !== -1;
+      });
+    }
+    function renderGrid() {
+      const list = visibleProducts();
+      grid.replaceChildren();
+      list.forEach(function (p) { grid.appendChild(buildCard(p)); });
+      gridEmpty.classList.toggle('hidden', list.length > 0);
+    }
+    function buildCard(product) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.dataset.id = product.id;
+      const on = rows.has(product.id);
+      card.className = 'js-card relative rounded-xl border-2 p-3 text-left transition ' +
+        (on ? 'border-emerald-500 bg-emerald-50/40' : 'border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm');
+      card.innerHTML =
+        '<p class="truncate text-sm font-semibold text-slate-900">' + product.name + '</p>' +
+        '<p class="truncate text-xs ' + (product.size ? 'text-slate-500' : 'text-slate-300') + '">' + (product.size || 'No size') + '</p>' +
+        '<p class="mt-2 text-base font-semibold text-slate-900">' + product.unit_price + '</p>' +
+        '<p class="text-[10px] font-semibold uppercase tracking-wide ' + (product.has_custom_price ? 'text-indigo-600' : 'text-slate-400') + '">' +
+          (product.has_custom_price ? 'Custom price' : 'Default price') + '</p>';
+      card.addEventListener('click', function () { addProduct(product); });
+      return card;
+    }
+    searchEl.addEventListener('input', renderGrid);
+    document.querySelectorAll('.js-cat').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        currentCategory = btn.dataset.category;
+        document.querySelectorAll('.js-cat').forEach(function (b) {
+          const on = b === btn;
+          b.classList.toggle('bg-slate-900', on); b.classList.toggle('text-white', on);
+          b.classList.toggle('bg-slate-100', !on); b.classList.toggle('text-slate-600', !on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        renderGrid();
+      });
+    });
+
+    // ---- items panel ----
+    function addProduct(product) {
+      if (rows.has(product.id)) {
+        rows.get(product.id).querySelector('.js-qty').focus();
+        return;
+      }
+      addRow({
+        product_id: product.id,
+        product_name: product.name,
+        size: product.size,
+        qty: '1',
+        unit_price: product.unit_price,
+      });
+      renderGrid();
+    }
+    function addRow(item) {
+      const node = rowTmpl.content.firstElementChild.cloneNode(true);
+      node.dataset.id = item.product_id;
+      node.querySelector('.js-name').textContent = item.product_name;
+      node.querySelector('.js-size').textContent = item.size || '';
+      const qtyEl = node.querySelector('.js-qty');
+      const priceEl = node.querySelector('.js-price');
+      const totalEl = node.querySelector('.js-line-total');
+      qtyEl.value = item.qty;
+      priceEl.value = item.unit_price;
+      function recalc() {
+        const q = num(qtyEl.value), p = num(priceEl.value);
+        const t = (isNaN(q) || isNaN(p)) ? 0 : round(q * p);
+        totalEl.textContent = money(t);
+        pushTotals();
+      }
+      qtyEl.addEventListener('input', recalc);
+      priceEl.addEventListener('input', recalc);
+      node.querySelector('.js-remove').addEventListener('click', function () {
+        rows.delete(item.product_id);
+        node.remove();
+        pushTotals();
+        renderGrid();
+      });
+      itemsList.appendChild(node);
+      rows.set(item.product_id, node);
+      recalc();
+    }
+
+    // ---- totals + save gate ----
+    function pushTotals() {
+      let subtotal = 0, bad = 0;
+      const payload = [];
+      rows.forEach(function (node, id) {
+        const q = num(node.querySelector('.js-qty').value);
+        const p = num(node.querySelector('.js-price').value);
+        if (!(q > 0) || !(p >= 0)) { bad++; return; }
+        subtotal += q * p;
+        payload.push({ product_id: id, qty: q.toFixed(3), unit_price: p.toFixed(2) });
+      });
+      const delivery = Math.max(num(deliveryEl.value) || 0, 0);
+      const discount = Math.max(num(discountEl.value) || 0, 0);
+      subEl.textContent = money(round(subtotal));
+      delEl.textContent = money(round(delivery));
+      discEl.textContent = money(round(discount));
+      grandEl.textContent = money(round(subtotal + delivery - discount));
+
+      itemsCount.textContent = rows.size;
+      itemsEmpty.classList.toggle('hidden', rows.size > 0);
+      jsonEl.value = JSON.stringify(payload);
+
+      reasonRow.classList.toggle('hidden', discount <= 0);
+
+      const hasCustomer = !!custSelect.value || (whoWalkin.checked && walkinInput.value.trim().length > 0);
+      const discountOk = discount <= 0 || (reasonEl.value || '').trim().length > 0;
+      const canSave = rows.size > 0 && bad === 0 && hasCustomer && discountOk;
+      saveBtn.disabled = !canSave;
+      if (rows.size === 0) saveNote.textContent = 'Add at least one item.';
+      else if (bad > 0) saveNote.textContent = 'Fill qty and price on every row.';
+      else if (!hasCustomer) saveNote.textContent = 'Pick a customer or a walk-in name.';
+      else if (!discountOk) saveNote.textContent = 'Give a reason for the discount.';
+      else saveNote.textContent = ' ';
+    }
+    deliveryEl.addEventListener('input', pushTotals);
+    discountEl.addEventListener('input', pushTotals);
+    reasonEl.addEventListener('input', pushTotals);
+    walkinInput.addEventListener('input', pushTotals);
+
+    // ---- init ----
+    {% if is_edit and order.customer_id %}
+      whoExisting.checked = true;
+    {% elif is_edit and not order.customer_id %}
+      whoWalkin.checked = true;
+      panelExisting.classList.add('hidden');
+      panelWalkin.classList.remove('hidden');
+    {% endif %}
+    loadProducts();
+    INITIAL_ITEMS.forEach(addRow);
+    pushTotals();
+  })();
+</script>
+{% endblock %}
