@@ -106,3 +106,13 @@ systemctl restart erp
 
 
 ok
+
+
+cd /var/www/senovka_erp && \
+git pull origin main && \
+source venv/bin/activate && \
+pip install -r requirements.txt && \
+python manage.py migrate && \
+python manage.py collectstatic --no-input && \
+sudo systemctl restart senovka_erp && \
+sudo systemctl reload nginx
