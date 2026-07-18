@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Daily Run · {{ when|date:"j M Y" }} · Senovka Plastics{% endblock %}
+{% block header %}Daily Running Machine{% endblock %}
+
+{% block content %}
+
+<!-- ============================ HEADER + DATE NAV ============================ -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div>
+    <div class="flex items-center gap-2">
+      <a href="?date={{ yesterday|date:'Y-m-d' }}"
+         class="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+         title="Previous day">←</a>
+      <h2 class="text-xl font-semibold text-slate-900">{{ when|date:"l, j M Y" }}</h2>
+      {% if is_today %}
+        <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Today</span>
+      {% endif %}
+      <a href="?date={{ tomorrow|date:'Y-m-d' }}"
+         class="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+         title="Next day">→</a>
+    </div>
+    <p class="mt-1 text-sm text-slate-500">
+      Log every active machine's status and operator for the day, plus one
+      row for driver / material supply / material mixing / other works.
+    </p>
+  </div>
+
+  <div class="flex flex-wrap items-end gap-2">
+    <form method="get" class="flex items-end gap-2">
+      <div>
+        <label for="date" class="mb-1 block text-xs font-medium text-slate-500">Jump to</label>
+        <input type="date" id="date" name="date" value="{{ when|date:'Y-m-d' }}"
+               class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+      <button type="submit"
+              class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Go
+      </button>
+    </form>
+    <a href="{% url 'core:daily_run_history' %}"
+       class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      History
+    </a>
+  </div>
+</div>
+
+{% if not any_active_machines %}
+  <div class="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+    <p class="font-semibold">No active machines yet.</p>
+    <p class="mt-1 text-xs">
+      Add machines from
+      <a href="{% url 'core:machine_list' %}" class="font-medium underline">Machines</a>
+      first — then this page will list one row per machine for the day.
+    </p>
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="date" value="{{ when|date:'Y-m-d' }}">
+
+  <!-- ==================== MACHINES TABLE ==================== -->
+  <div class="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-900">Machines · {{ machine_rows|length }}</h3>
+      <p class="mt-0.5 text-xs text-slate-500">
+        Not running today? Flip the toggle — operator and product will grey out.
+      </p>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-slate-200 text-sm">
+        <thead class="bg-slate-50">
+          <tr>
+            <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Machine</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Operator</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for row in machine_rows %}
+            <tr class="js-machine-row hover:bg-slate-50" data-prefix="m-{{ row.machine.pk }}">
+              <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900 align-middle">
+                {{ row.machine.name }}
+              </td>
+
+              
+              <td class="whitespace-nowrap px-4 py-3 align-middle">
+                <div class="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-0.5" role="tablist">
+                  <label class="cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-semibold has-[:checked]:bg-emerald-600 has-[:checked]:text-white text-slate-500">
+                    <input type="radio" name="m-{{ row.machine.pk }}-status" value="running" class="js-status-radio sr-only"
+                           {% if row.status == 'running' %}checked{% endif %}>
+                    Running
+                  </label>
+                  <label class="cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-semibold has-[:checked]:bg-rose-600 has-[:checked]:text-white text-slate-500">
+                    <input type="radio" name="m-{{ row.machine.pk }}-status" value="not_working" class="js-status-radio sr-only"
+                           {% if row.status == 'not_working' %}checked{% endif %}>
+                    Not working
+                  </label>
+                </div>
+              </td>
+
+              <td class="whitespace-nowrap px-4 py-3 align-middle">
+                <input type="text" name="m-{{ row.machine.pk }}-operator" value="{{ row.operator }}" maxlength="150"
+                       placeholder="Operator name"
+                       class="js-operator w-44 rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              </td>
+
+              <td class="whitespace-nowrap px-4 py-3 align-middle">
+                <select name="m-{{ row.machine.pk }}-product"
+                        class="js-product w-56 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+                  <option value="">— Pick a product —</option>
+                  {% for p in products %}
+                    <option value="{{ p.pk }}" {% if p.pk == row.product_id %}selected{% endif %}>
+                      {{ p.name }}{% if p.size %} · {{ p.size }}{% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </td>
+
+              <td class="px-4 py-3 align-middle">
+                <input type="text" name="m-{{ row.machine.pk }}-notes" value="{{ row.notes }}" maxlength="500"
+                       placeholder="Any note"
+                       class="js-notes w-full min-w-[10rem] rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="5" class="px-4 py-10 text-center text-sm text-slate-500">
+                No active machines to log.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== OTHER WORKS ==================== -->
+  <div class="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-900">Other works</h3>
+      <p class="mt-0.5 text-xs text-slate-500">
+        One row for the day — driver, material supply, material mixing, and anything else.
+      </p>
+    </div>
+    <div class="grid gap-4 p-4 sm:grid-cols-2">
+      <div>
+        <label for="{{ other_form.driver.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Driver</label>
+        {{ other_form.driver }}
+      </div>
+      <div>
+        <label for="{{ other_form.material_supply.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Material supply</label>
+        {{ other_form.material_supply }}
+      </div>
+      <div>
+        <label for="{{ other_form.material_mixing.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Material mixing</label>
+        {{ other_form.material_mixing }}
+      </div>
+      <div>
+        <label for="{{ other_form.other.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Other</label>
+        {{ other_form.other }}
+      </div>
+    </div>
+    {% if other %}
+      <p class="border-t border-slate-100 bg-slate-50 px-4 py-2 text-[11px] text-slate-500">
+        Last saved by {{ other.logged_by.username }} on {{ other.created_at|date:"j M Y, g:i a" }}
+        {% if other.edit_date %} · edited {{ other.edit_date|date:"j M Y" }}{% endif %}.
+      </p>
+    {% endif %}
+  </div>
+
+  <div class="flex items-center justify-end gap-2">
+    <a href="?date={{ when|date:'Y-m-d' }}"
+       class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Discard changes
+    </a>
+    <button type="submit"
+            class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+      Save daily log
+    </button>
+  </div>
+</form>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    // Grey out operator/product on a machine row when its status is not_working —
+    // the fields still POST (so an operator name typed before the toggle
+    // was flipped is preserved on the row), but they read as inert.
+    function paintRow(row) {
+      let running = true;
+      row.querySelectorAll('.js-status-radio').forEach(function (r) {
+        if (r.checked && r.value === 'not_working') running = false;
+      });
+      const op = row.querySelector('.js-operator');
+      const pr = row.querySelector('.js-product');
+      [op, pr].forEach(function (el) {
+        if (!el) return;
+        el.classList.toggle('opacity-50', !running);
+        el.classList.toggle('bg-slate-100', !running);
+      });
+    }
+
+    document.querySelectorAll('.js-machine-row').forEach(function (row) {
+      paintRow(row);
+      row.querySelectorAll('.js-status-radio').forEach(function (r) {
+        r.addEventListener('change', function () { paintRow(row); });
+      });
+    });
+  })();
+</script>
+{% endblock %}

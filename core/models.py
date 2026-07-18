@@ -1329,3 +1329,102 @@ class StockAdjustment(models.Model):
     def __str__(self):
         sign = "+" if self.qty >= 0 else ""
         return f"{self.product} · {sign}{self.qty} on {self.adjustment_date}"
+
+
+class Machine(models.Model):
+    """A production machine on the floor.
+
+    `is_active` here is permanent — a decommissioned machine that will never
+    run again. Whether it ran on any given day is a separate question,
+    answered by the DailyMachineRun row for that (date, machine).
+    """
+
+    name = models.CharField(max_length=150, unique=True)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class DailyMachineRun(models.Model):
+    """One machine's story for one day.
+
+    Exactly one row per (run_date, machine), enforced by unique_together.
+    A day where a machine did not run is a row with status=NOT_WORKING and
+    the operator/product left blank — the absence of a row means the
+    operator hasn't logged that machine yet, which is different from "the
+    machine sat idle".
+    """
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "Running"
+        NOT_WORKING = "not_working", "Not working"
+
+    run_date = models.DateField()
+    machine = models.ForeignKey(
+        Machine,
+        on_delete=models.PROTECT,
+        related_name="daily_runs",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.RUNNING
+    )
+    operator = models.CharField(max_length=150, blank=True)
+    # Nullable: a machine that isn't running doesn't have a product on it.
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="daily_runs",
+        null=True,
+        blank=True,
+    )
+    notes = models.CharField(max_length=500, blank=True)
+    logged_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="daily_machine_runs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("run_date", "machine")
+        ordering = ["-run_date", "machine__name"]
+
+    def __str__(self):
+        return f"{self.machine} · {self.run_date} · {self.get_status_display()}"
+
+
+class DailyOtherWork(models.Model):
+    """Everything else that happened on the floor that day.
+
+    One row per date (enforced by unique). Fields are free text because the
+    operator's shorthand ("Nimal drove to Kandy, Kamal did resin mixing")
+    is what the record is for; making them structured would ask the
+    operator to standardise language that only they need to read back.
+    """
+
+    run_date = models.DateField(unique=True)
+    driver = models.CharField(max_length=500, blank=True)
+    material_supply = models.CharField(max_length=500, blank=True)
+    material_mixing = models.CharField(max_length=500, blank=True)
+    other = models.TextField(blank=True)
+
+    logged_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="daily_other_works",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    edit_reason = models.CharField(max_length=500, blank=True)
+    edit_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-run_date"]
+
+    def __str__(self):
+        return f"Other work · {self.run_date}"

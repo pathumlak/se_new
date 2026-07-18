@@ -12,6 +12,8 @@ from .models import (
     Cheque,
     Customer,
     CustomerBalanceAdjustment,
+    DailyOtherWork,
+    Machine,
     Material,
     MaterialPurchase,
     MaterialSupplier,
@@ -1761,6 +1763,53 @@ class StockAdjustmentForm(forms.ModelForm):
         if d > timezone.localdate():
             raise forms.ValidationError("Adjustment can't be dated in the future.")
         return d
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class MachineForm(forms.ModelForm):
+    class Meta:
+        model = Machine
+        fields = ["name", "is_active", "notes"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Blowing Machine 1"}),
+            "notes": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}),
+            "is_active": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Name is required.")
+        return name
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class DailyOtherWorkForm(forms.ModelForm):
+    class Meta:
+        model = DailyOtherWork
+        fields = ["driver", "material_supply", "material_mixing", "other"]
+        widgets = {
+            "driver": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Who drove today, where to"}
+            ),
+            "material_supply": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Who supplied material to which machine"}
+            ),
+            "material_mixing": forms.TextInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "Who mixed which material"}
+            ),
+            "other": forms.Textarea(
+                attrs={"class": INPUT_CLASSES, "rows": 3, "placeholder": "Anything else worth logging"}
+            ),
+        }
 
     def first_error(self):
         for messages in self.errors.values():

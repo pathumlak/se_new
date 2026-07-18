@@ -324,4 +324,13 @@ urlpatterns = [
     ),
     path("orders/<int:pk>/pdf/", views.order_pdf, name="order_pdf"),
     path("orders/<int:pk>/excel/", views.order_excel, name="order_excel"),
+
+    # ---- Daily running machine log. Machine master is super-admin;
+    # the daily log itself is open to any signed-in user.
+    path("machines/", views.machine_list, name="machine_list"),
+    path("machines/create/", views.machine_create, name="machine_create"),
+    path("machines/<int:pk>/edit/", views.machine_edit, name="machine_edit"),
+    path("machines/<int:pk>/delete/", views.machine_delete, name="machine_delete"),
+    path("daily-run/", views.daily_run, name="daily_run"),
+    path("daily-run/history/", views.daily_run_history, name="daily_run_history"),
 ]

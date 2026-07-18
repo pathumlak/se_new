@@ -46,6 +46,8 @@ from .forms import (
     CustomerForm,
     CustomerPriceForm,
     CustomerSettlementForm,
+    DailyOtherWorkForm,
+    MachineForm,
     MaterialForm,
     MaterialPurchaseHeaderForm,
     MaterialSupplierForm,
@@ -75,7 +77,10 @@ from .models import (
     Customer,
     CustomerBalanceAdjustment,
     CustomerPrice,
+    DailyMachineRun,
+    DailyOtherWork,
     HeldBill,
+    Machine,
     Material,
     MaterialPurchase,
     MaterialPurchaseItem,
@@ -6418,5 +6423,286 @@ def order_production_check(request):
                 "total_shortage": total_shortage,
                 "shortage_row_count": sum(1 for r in rows if r["shortage"] > 0),
             },
+        },
+    )
+
+
+# =========================================================== daily machine run
+# The floor log: which machines ran today, who operated them, what they
+# were making. Plus a single "other works" row per day for driver,
+# material supply, material mixing, and anything else worth noting.
+
+
+# ---- Machines master (super-admin CRUD) ----
+
+
+@super_admin_required
+def machine_list(request):
+    machines = (
+        Machine.objects.annotate(run_count=Count("daily_runs", distinct=True))
+        .order_by("name")
+    )
+    page_obj = _paginate(request, machines)
+    return render(
+        request,
+        "core/machine_list.html",
+        {
+            "page_obj": page_obj,
+            "machines": page_obj.object_list,
+            "form": MachineForm(),
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def machine_create(request):
+    form = MachineForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Machine not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            machine = form.save()
+        messages.success(request, f"Machine '{machine.name}' added.")
+    return redirect("core:machine_list")
+
+
+@require_POST
+@super_admin_required
+def machine_edit(request, pk):
+    machine = get_object_or_404(Machine, pk=pk)
+    form = MachineForm(request.POST, instance=machine)
+    if not form.is_valid():
+        messages.error(request, f"Machine not saved: {form.first_error()}")
+    else:
+        with transaction.atomic():
+            form.save()
+        messages.success(request, "Machine updated.")
+    return redirect("core:machine_list")
+
+
+@require_POST
+@super_admin_required
+def machine_delete(request, pk):
+    machine = get_object_or_404(
+        Machine.objects.annotate(run_count=Count("daily_runs", distinct=True)),
+        pk=pk,
+    )
+    if machine.run_count:
+        messages.error(
+            request,
+            f"Cannot delete '{machine.name}' — {machine.run_count} "
+            f"daily entr{'y' if machine.run_count == 1 else 'ies'} still "
+            f"reference it. Deactivate instead.",
+        )
+        return redirect("core:machine_list")
+    try:
+        machine.delete()
+        messages.success(request, f"Machine '{machine.name}' deleted.")
+    except ProtectedError:
+        messages.error(request, f"Cannot delete '{machine.name}' — other records reference it.")
+    return redirect("core:machine_list")
+
+
+# ---- The daily run page ----
+
+
+def _daily_run_date(request):
+    """The date this daily-run page is looking at.
+
+    Bookmarked and hand-edited URLs land here too, so garbage should
+    default to today rather than 500 — same shape as _parse_date and
+    get_month_filter.
+    """
+    raw = (request.GET.get("date") or request.POST.get("date") or "").strip()
+    parsed = _parse_date(raw)
+    if parsed is None:
+        return timezone.localdate()
+    return parsed
+
+
+@login_required
+def daily_run(request):
+    """The floor log for one day.
+
+    GET renders the form pre-populated with whatever has been logged for
+    the picked date. POST processes every machine row + the other-works
+    row in one transaction — if any row fails, none of them save, and the
+    page re-renders with the fresh POST values so nothing is lost.
+    """
+    when = _daily_run_date(request)
+    if when > timezone.localdate():
+        messages.warning(request, "Future dates land on today.")
+        when = timezone.localdate()
+
+    machines = Machine.objects.filter(is_active=True).order_by("name")
+    existing = {
+        r.machine_id: r
+        for r in DailyMachineRun.objects.filter(run_date=when).select_related("machine")
+    }
+    products = Product.objects.filter(is_active=True).order_by("name", "size")
+
+    other = DailyOtherWork.objects.filter(run_date=when).first()
+
+    if request.method == "POST":
+        errors = []
+        with transaction.atomic():
+            # Machines: one form-set of hidden fields per machine, plus
+            # status/operator/product/notes. Machine rows the operator did
+            # not touch (all fields blank + status default) are ignored so
+            # they do not clutter the audit log.
+            for machine in machines:
+                prefix = f"m-{machine.pk}"
+                status = (request.POST.get(f"{prefix}-status") or "").strip()
+                operator = (request.POST.get(f"{prefix}-operator") or "").strip()[:150]
+                product_id = (request.POST.get(f"{prefix}-product") or "").strip()
+                notes = (request.POST.get(f"{prefix}-notes") or "").strip()[:500]
+
+                if status not in {
+                    DailyMachineRun.Status.RUNNING,
+                    DailyMachineRun.Status.NOT_WORKING,
+                }:
+                    # The picker only offers these two, so anything else is
+                    # a bookmark from before the choices were fixed. Fall
+                    # back to blank rather than 500 so the rest of the
+                    # page's data can still save.
+                    status = DailyMachineRun.Status.RUNNING
+
+                # Skip rows the operator plainly did not fill in — they
+                # would otherwise write a "running with no operator"
+                # blank row every time the page is saved.
+                already = existing.get(machine.pk)
+                if (
+                    already is None
+                    and status == DailyMachineRun.Status.RUNNING
+                    and not operator and not product_id and not notes
+                ):
+                    continue
+
+                product = None
+                if status == DailyMachineRun.Status.RUNNING and product_id.isdigit():
+                    product = Product.objects.filter(
+                        pk=int(product_id), is_active=True
+                    ).first()
+
+                if status == DailyMachineRun.Status.RUNNING and not operator:
+                    errors.append(
+                        f"{machine.name}: enter an operator or mark the machine as not working."
+                    )
+                    continue
+
+                run, _ = DailyMachineRun.objects.update_or_create(
+                    run_date=when,
+                    machine=machine,
+                    defaults={
+                        "status": status,
+                        "operator": operator if status == DailyMachineRun.Status.RUNNING else "",
+                        "product": product if status == DailyMachineRun.Status.RUNNING else None,
+                        "notes": notes,
+                        "logged_by": request.user,
+                    },
+                )
+
+            # Other works: single row per day. update_or_create is idempotent
+            # under the unique(run_date), so re-saving the page is safe.
+            other_form = DailyOtherWorkForm(
+                request.POST, instance=other or DailyOtherWork(run_date=when)
+            )
+            if other_form.is_valid():
+                other_row = other_form.save(commit=False)
+                other_row.run_date = when
+                other_row.logged_by = request.user
+                if other:
+                    other_row.edit_date = timezone.localdate()
+                other_row.save()
+            else:
+                errors.append(f"Other works: {other_form.first_error()}")
+
+            if errors:
+                # Roll back everything — a half-saved daily log confuses the
+                # accounting more than a re-typing.
+                transaction.set_rollback(True)
+
+        if errors:
+            for msg in errors:
+                messages.error(request, msg)
+        else:
+            messages.success(
+                request,
+                f"Daily log for {when:%d %b %Y} saved.",
+            )
+        return redirect(f"{reverse('core:daily_run')}?date={when.isoformat()}")
+
+    # GET — hand the template a per-machine snapshot of what is on record.
+    machine_rows = []
+    for machine in machines:
+        run = existing.get(machine.pk)
+        machine_rows.append({
+            "machine": machine,
+            "run": run,
+            "status": run.status if run else DailyMachineRun.Status.RUNNING,
+            "operator": run.operator if run else "",
+            "product_id": run.product_id if run and run.product_id else "",
+            "notes": run.notes if run else "",
+        })
+
+    return render(
+        request,
+        "core/daily_run.html",
+        {
+            "when": when,
+            "yesterday": when - timedelta(days=1),
+            "tomorrow": when + timedelta(days=1),
+            "is_today": when == timezone.localdate(),
+            "machine_rows": machine_rows,
+            "products": products,
+            "other": other,
+            "other_form": DailyOtherWorkForm(instance=other) if other else DailyOtherWorkForm(),
+            "any_active_machines": bool(machines),
+        },
+    )
+
+
+@login_required
+def daily_run_history(request):
+    """Every date that has anything logged — machine runs or other works —
+    paginated. Read as a jump list into the per-day page."""
+    machine_dates = set(
+        DailyMachineRun.objects.values_list("run_date", flat=True).distinct()
+    )
+    other_dates = set(
+        DailyOtherWork.objects.values_list("run_date", flat=True)
+    )
+    dates = sorted(machine_dates | other_dates, reverse=True)
+
+    # Cheap counts per date — one query each, indexed on run_date.
+    from collections import Counter
+    machine_counts = Counter(
+        DailyMachineRun.objects.filter(status=DailyMachineRun.Status.RUNNING)
+        .values_list("run_date", flat=True)
+    )
+    not_working_counts = Counter(
+        DailyMachineRun.objects.filter(status=DailyMachineRun.Status.NOT_WORKING)
+        .values_list("run_date", flat=True)
+    )
+    has_other = {d for d in other_dates}
+
+    rows = [
+        {
+            "date": d,
+            "running": machine_counts.get(d, 0),
+            "not_working": not_working_counts.get(d, 0),
+            "has_other": d in has_other,
+        }
+        for d in dates
+    ]
+    page_obj = _paginate(request, rows)
+
+    return render(
+        request,
+        "core/daily_run_history.html",
+        {
+            "page_obj": page_obj,
+            "rows": page_obj.object_list,
         },
     )
