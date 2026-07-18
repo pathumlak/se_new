@@ -23,6 +23,7 @@ from .models import (
     Product,
     ProductionEntry,
     Rider,
+    StockAdjustment,
     User,
     Vehicle,
     VehicleTrip,
@@ -1697,3 +1698,71 @@ class OrderHeaderForm(forms.ModelForm):
             return messages[0] if messages else "Could not save."
         return "Could not save."
 
+
+class StockAdjustmentForm(forms.ModelForm):
+    """One manual stock correction for a product.
+
+    `qty` is signed: positive adds to the shelf, negative removes. `product`
+    and `adjusted_by` are set by the view.
+    """
+
+    class Meta:
+        model = StockAdjustment
+        fields = ["adjustment_date", "qty", "reason"]
+        labels = {
+            "adjustment_date": "Adjustment date",
+            "qty": "Adjustment (signed)",
+            "reason": "Reason",
+        }
+        widgets = {
+            "adjustment_date": forms.DateInput(
+                format="%Y-%m-%d",
+                attrs={"class": INPUT_CLASSES, "type": "date"},
+            ),
+            "qty": forms.NumberInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "step": "0.001",
+                    "placeholder": "+ to add, − to remove (e.g. 100 or -20)",
+                }
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": INPUT_CLASSES,
+                    "placeholder": "e.g. Counted shelf 100 short, or scrap 20 damaged",
+                    "maxlength": 500,
+                }
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.initial.get("adjustment_date") and not self.instance.pk:
+            self.initial["adjustment_date"] = timezone.localdate()
+
+    def clean_qty(self):
+        qty = self.cleaned_data.get("qty")
+        if qty is None:
+            raise forms.ValidationError("Enter a quantity.")
+        if qty == 0:
+            raise forms.ValidationError(
+                "Adjustment cannot be zero — nothing would change."
+            )
+        return qty
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for this adjustment.")
+        return reason
+
+    def clean_adjustment_date(self):
+        d = self.cleaned_data["adjustment_date"]
+        if d > timezone.localdate():
+            raise forms.ValidationError("Adjustment can't be dated in the future.")
+        return d
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."

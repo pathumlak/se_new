@@ -57,6 +57,7 @@ from .forms import (
     ProductionEntryForm,
     ProductQuickForm,
     RiderForm,
+    StockAdjustmentForm,
     SupplierQuickForm,
     UserCreateForm,
     UserEditForm,
@@ -89,6 +90,7 @@ from .models import (
     Product,
     ProductionEntry,
     Rider,
+    StockAdjustment,
     SupplierBill,
     SupplierBillItem,
     User,
@@ -653,6 +655,30 @@ def _stock_ledger_rows(product):
             }
         )
 
+    # Manual stock corrections. Signed qty: positive rides in the PRODUCTION
+    # column (also bumps the running total, since the shelf gained it),
+    # negative rides in the SALES column (the shelf lost it, though not to
+    # a sale). The kind='adjust_up' / 'adjust_down' tint keeps them
+    # visually distinct from real production or a customer sale.
+    for adj in StockAdjustment.objects.filter(product=product).select_related("adjusted_by"):
+        is_up = adj.qty >= 0
+        events.append(
+            {
+                "date": adj.adjustment_date,
+                # Same day, after production and supplier receipts (kind=2)
+                # but before same-day sales (they'd read as adjusting to a
+                # position before the day's selling started).
+                "_sort": (adj.adjustment_date, 0, adj.created_at, adj.pk),
+                "kind": "adjust_up" if is_up else "adjust_down",
+                "production": adj.qty if is_up else None,
+                "sales": (-adj.qty) if not is_up else None,
+                "customer": f"Adjustment — {adj.reason} · by {adj.adjusted_by.username}",
+                "bill_number": f"ADJ-{adj.pk}",
+                # For the delete button in the template.
+                "adjustment_pk": adj.pk,
+            }
+        )
+
     events.sort(key=lambda e: e["_sort"])
 
     total_in = sum(
@@ -698,6 +724,7 @@ def _stock_ledger_rows(product):
                     "bill_number": e["bill_number"],
                     "kind": e["kind"],
                     "bill_pk": e.get("bill_pk"),
+                    "adjustment_pk": e.get("adjustment_pk"),
                 }
             )
         else:
@@ -715,6 +742,7 @@ def _stock_ledger_rows(product):
                     "bill_number": e["bill_number"],
                     "kind": e["kind"],
                     "bill_pk": e.get("bill_pk"),
+                    "adjustment_pk": e.get("adjustment_pk"),
                 }
             )
 
@@ -725,6 +753,62 @@ def _stock_ledger_rows(product):
         "total_sold": total_out,
         "closing_balance": balance,
     }
+
+
+@require_POST
+@login_required
+def stock_adjust_create(request, pk):
+    """Manually correct a product's shelf.
+
+    Signed qty: positive adds, negative removes. Wraps the shelf update
+    and the audit row in one transaction — a mid-flight failure must not
+    leave Product.qty half-moved.
+    """
+    product = get_object_or_404(Product, pk=pk)
+    form = StockAdjustmentForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Adjustment not saved: {form.first_error()}")
+        return redirect("core:stock_ledger", pk=product.pk)
+
+    with transaction.atomic():
+        # Fresh read so a concurrent sale/production is priced in.
+        current = Product.objects.values_list("qty", flat=True).get(pk=product.pk)
+        entry = form.save(commit=False)
+        entry.product = product
+        entry.adjusted_by = request.user
+        entry.stock_before = current
+        entry.stock_after = current + entry.qty
+        entry.save()
+        Product.objects.filter(pk=product.pk).update(qty=F("qty") + entry.qty)
+
+    sign = "+" if entry.qty >= 0 else ""
+    messages.success(
+        request,
+        f"Stock adjusted by {sign}{entry.qty} on {product.name}. "
+        f"New shelf: {entry.stock_after}.",
+    )
+    return redirect("core:stock_ledger", pk=product.pk)
+
+
+@require_POST
+@super_admin_required
+def stock_adjust_delete(request, pk):
+    """Reverse an adjustment: undo its stock movement and drop the row.
+
+    Super-admin only — an adjustment is what accountability rests on for
+    counted-shelf and scrap corrections, so managers can create them but
+    only a super admin can rewind one.
+    """
+    entry = get_object_or_404(
+        StockAdjustment.objects.select_related("product"), pk=pk
+    )
+    product = entry.product
+    with transaction.atomic():
+        Product.objects.filter(pk=product.pk).update(qty=F("qty") - entry.qty)
+        entry.delete()
+
+    messages.success(request, f"Adjustment on {product.name} reversed.")
+    return redirect("core:stock_ledger", pk=product.pk)
 
 
 @login_required
@@ -962,9 +1046,19 @@ def _customers():
     """Customers annotated with everything the list and detail pages report.
 
     `owed` is the positive amount a debtor owes us: balances run negative when
-    the customer owes, positive when we owe them. Available credit is the limit
-    less what they already owe, floored at zero — someone past their limit has
-    none left, never a negative amount.
+    the customer owes, positive when we owe them.
+
+    `pending_cheques` is the sum of Cheque.amount for cheques we're holding
+    against this customer that haven't yet been banked. They were already
+    added to Customer.balance when received — so the ledger sees them as
+    paid — but for credit-limit purposes they are still promises, not money.
+    We add them back to the effective debt so a customer can't stack the
+    limit up with pending cheques and buy again on top of them. Once one
+    of those cheques deposits, it drops out of this sum and the available
+    credit rises automatically.
+
+    Available credit = credit_limit − (owed + pending_cheques), floored at
+    zero — someone past their limit has none left, never a negative amount.
     """
     owed = Case(
         When(balance__lt=0, then=Value(0) - F("balance")),
@@ -974,8 +1068,21 @@ def _customers():
     return (
         Customer.objects.annotate(owed=owed)
         .annotate(
+            pending_cheques=Coalesce(
+                Sum(
+                    "cheques__amount",
+                    filter=Q(cheques__status=Cheque.Status.PENDING),
+                    output_field=MONEY,
+                ),
+                ZERO,
+                output_field=MONEY,
+            )
+        )
+        .annotate(
             available_credit=Greatest(
-                F("credit_limit") - F("owed"), Value(ZERO), output_field=MONEY
+                F("credit_limit") - F("owed") - F("pending_cheques"),
+                Value(ZERO),
+                output_field=MONEY,
             )
         )
         # distinct=True: without it these four joins multiply each other's rows
@@ -1366,6 +1473,28 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "kind": 2,
                 "pk": payment.pk,
                 "description": f"{payment.get_method_display()} received",
+                "sale": None,
+                "credit": payment.amount,
+                "is_note": False,
+            }
+        )
+
+    # Detached payments — money booked against the customer without a bill
+    # behind it (opening-balance settlement, top-up sitting as credit). See
+    # _allocate_settlement's spillover.
+    direct_payments = (
+        Payment.objects.filter(bill__isnull=True, customer=customer)
+        .exclude(
+            cheques__status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
+        )
+    )
+    for payment in direct_payments:
+        entries.append(
+            {
+                "date": timezone.localdate(payment.paid_at),
+                "kind": 2,
+                "pk": payment.pk,
+                "description": f"{payment.get_method_display()} received (against balance)",
                 "sale": None,
                 "credit": payment.amount,
                 "is_note": False,
@@ -1961,20 +2090,39 @@ def _check_credit_limit(customer, total, parts, user):
         )
 
 
-def _record_payments(bill, customer, parts):
+def _record_payments(bill, customer, parts, when=None):
     """Payment rows, and the paper trail each one leaves behind.
 
     One Payment for the cash leg (if any). One Payment plus one Cheque per
-    cheque row on the bill, so a bill carrying five cheques writes five
-    Payment rows and five Cheque rows — all linked to the same Bill, which
-    keeps _reverse_bill's payments.delete() cascade correct without any
-    per-type branching.
+    cheque row on the bill.
+
+    If `bill` is None, this is a *detached* settlement — a payment against a
+    customer's account with no specific bill behind it (typically an opening
+    balance). In that case Payment.bill is left NULL and Payment.customer is
+    set instead; CashDrawer and Cheque rows are still written, dated by
+    `when` (defaulting to today) and labelled by the customer's name.
+
+    `when` is the date the operator is booking the money on — the bill's
+    date for a bill-attached call, or the settlement date for a detached
+    one. Kept explicit so a corrective settlement on last month's date
+    lands in last month's cash drawer, not today's.
     """
     now = timezone.now()
+    if when is None:
+        when = bill.bill_date if bill is not None else timezone.localdate()
+
+    # A short label used on CashDrawer.reason so a drawer entry can be read
+    # back without joining anything.
+    if bill is not None:
+        source_label = f"Bill #{bill.pk}"
+    else:
+        who = customer.name if customer is not None else "settlement"
+        source_label = f"Settlement · {who}"
 
     if parts["cash"] > ZERO:
         payment = Payment.objects.create(
             bill=bill,
+            customer=customer if bill is None else None,
             method=Payment.Method.CASH,
             amount=parts["cash"],
             account=parts["cash_account"],
@@ -1991,31 +2139,32 @@ def _record_payments(bill, customer, parts):
             # left it for the bank; writing only the transfer would take the
             # drawer down by money it never held.
             CashDrawer.objects.create(
-                txn_date=bill.bill_date,
+                txn_date=when,
                 txn_type=CashDrawer.TxnType.IN,
                 amount=parts["cash"],
-                reason=f"Bill #{bill.pk} cash",
+                reason=f"{source_label} cash",
                 bill=bill,
             )
             CashDrawer.objects.create(
-                txn_date=bill.bill_date,
+                txn_date=when,
                 txn_type=CashDrawer.TxnType.TRANSFER,
                 amount=parts["cash"],
-                reason=f"Bill #{bill.pk} cash to {payment.get_account_display()}",
+                reason=f"{source_label} cash to {payment.get_account_display()}",
                 bill=bill,
             )
         else:
             CashDrawer.objects.create(
-                txn_date=bill.bill_date,
+                txn_date=when,
                 txn_type=CashDrawer.TxnType.IN,
                 amount=parts["cash"],
-                reason=f"Bill #{bill.pk} cash",
+                reason=f"{source_label} cash",
                 bill=bill,
             )
 
     for cheque in parts["cheques"]:
         payment = Payment.objects.create(
             bill=bill,
+            customer=customer if bill is None else None,
             method=Payment.Method.CHEQUE,
             amount=cheque["amount"],
             paid_at=now,
@@ -2567,30 +2716,34 @@ def _outstanding_bills_for(customer):
     return [b for b in bills if b.remaining_balance > ZERO]
 
 
-def _allocate_settlement(customer, cash, cash_account, cheques, user):
-    """Fan a lump settlement out across the customer's outstanding bills.
+def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None):
+    """Fan a lump settlement out across the customer's outstanding bills,
+    then spill anything left over into detached payments against the
+    customer's account.
 
-    Cash goes first, split across bills oldest→newest up to each bill's
-    remaining balance. Cheques attach whole (they are physical instruments —
-    a cheque cannot be split) to the current oldest unpaid bill.
-
-    Any excess after all bills are settled lands on Customer.balance as
-    credit, which is what balance_change carries forward the next time a
-    bill is written.
+    Order of operations:
+      1. Cash pass — split cash oldest→newest across bills, up to each
+         bill's remaining balance.
+      2. Cheque pass — each cheque is one physical instrument, attached
+         whole to the oldest bill still owing.
+      3. Spillover — any remaining cash and any remaining cheques land on
+         detached Payment rows (Payment.bill = NULL, Payment.customer set).
+         This is what covers a payment against an opening balance, or
+         against a customer with no bills at all.
+      4. Customer.balance rises by the whole lump. If bills didn't need
+         all of it, the extra sits as credit for the next bill; if there
+         weren't any bills, the balance moves directly toward zero.
 
     Must run inside a transaction — a half-allocated settlement would leave
-    Payment rows against bills whose paid_amount was never updated.
+    orphan Payment rows against bills whose paid_amount was never updated.
     """
     outstanding = _outstanding_bills_for(customer)
-    if not outstanding:
-        return {"allocations": [], "excess": cash + sum((c["amount"] for c in cheques), ZERO)}
-
     # Snapshot so the local remaining tracks alongside the DB update — the
     # F() update on Bill.paid_amount leaves the in-memory object stale.
     remaining = {b.pk: b.remaining_balance for b in outstanding}
     allocations = []
 
-    # --- cash pass ---
+    # --- cash pass across bills ---
     cash_left = cash
     for bill in outstanding:
         if cash_left <= ZERO:
@@ -2608,11 +2761,11 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user):
         cash_left -= take
         allocations.append(("cash", bill.pk, take))
 
-    # --- cheque pass ---
-    # Each cheque is a whole physical instrument, so it attaches to one bill.
-    # Pick the oldest bill still owing; if none, attach to the oldest overall
-    # (over-paying it, which is what carries the excess into balance_change).
-    cheque_total = ZERO
+    # --- cheque pass across bills ---
+    # Each cheque is a whole physical instrument. Attach it to the oldest
+    # bill still owing; if all bills are settled, drop it into the
+    # spillover below rather than over-paying an already-settled bill.
+    cheques_left = []
     for cheque in cheques:
         target = None
         for bill in outstanding:
@@ -2620,7 +2773,8 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user):
                 target = bill
                 break
         if target is None:
-            target = outstanding[0]
+            cheques_left.append(cheque)
+            continue
 
         parts = {"cash": ZERO, "cash_account": "", "cheques": [cheque]}
         _record_payments(target, customer, parts)
@@ -2629,14 +2783,29 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user):
             balance_change=F("balance_change") + cheque["amount"],
         )
         remaining[target.pk] -= cheque["amount"]
-        cheque_total += cheque["amount"]
         allocations.append(("cheque", target.pk, cheque["amount"]))
 
+    # --- spillover into detached payments against the customer ---
+    # Either bills were absent, or the payment overshot what they owed.
+    # Anything landing here reduces the customer's opening/prior balance.
+    if cash_left > ZERO or cheques_left:
+        parts = {
+            "cash": cash_left,
+            "cash_account": cash_account,
+            "cheques": cheques_left,
+        }
+        _record_payments(None, customer, parts, when=when)
+        allocations.append(("detached-cash", None, cash_left))
+        for c in cheques_left:
+            allocations.append(("detached-cheque", None, c["amount"]))
+
+    cheque_total = sum((c["amount"] for c in cheques), ZERO)
     total_paid = cash + cheque_total
 
-    # Customer.balance rises by the whole lump. Any excess over what the
-    # bills owed rolls in as credit for the next bill — no separate posting
-    # needed because bill.balance_change already went up by the same total.
+    # Customer.balance rises by the whole lump — this is the one place
+    # that reconciles the amount collected with what the account was
+    # standing at. Bills the money hit already had their own
+    # balance_change bumped inside the loop, so the sum still nets right.
     Customer.objects.filter(pk=customer.pk).update(
         balance=F("balance") + total_paid
     )
@@ -2674,29 +2843,48 @@ def customer_settle(request, pk):
         cheques = form.parsed_cheques
         total_paid = data["_total_paid"]
 
-        if not outstanding:
-            messages.info(
-                request,
-                f"{customer.name} has no outstanding bills to settle.",
-            )
-            return redirect("core:customer_ledger", pk=customer.pk)
-
+        # Settlement is allowed whenever the operator wants to record a
+        # payment — no bills is fine (the payment sits as detached against
+        # the customer, chipping away at an opening balance or piling up
+        # as credit if the account is already square).
         with transaction.atomic():
             _allocate_settlement(customer, cash, account, cheques, request.user)
 
-        excess = total_paid - total_owed
-        if excess > ZERO:
-            messages.success(
-                request,
-                f"Settled {total_owed:,.2f} across {len(outstanding)} bill"
-                f"{'' if len(outstanding) == 1 else 's'}. "
-                f"{excess:,.2f} kept as credit on {customer.name}'s account.",
-            )
+        if outstanding:
+            excess = total_paid - total_owed
+            if excess > ZERO:
+                messages.success(
+                    request,
+                    f"Settled {total_owed:,.2f} across {len(outstanding)} bill"
+                    f"{'' if len(outstanding) == 1 else 's'}. "
+                    f"{excess:,.2f} kept as credit on {customer.name}'s account.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Recorded {total_paid:,.2f} against {customer.name}'s bills.",
+                )
         else:
-            messages.success(
-                request,
-                f"Recorded {total_paid:,.2f} against {customer.name}'s bills.",
-            )
+            # No bills at all — the whole lump sat down on the account.
+            customer.refresh_from_db()
+            if customer.balance > ZERO:
+                messages.success(
+                    request,
+                    f"Recorded {total_paid:,.2f} for {customer.name}. "
+                    f"Account now stands at +{customer.balance:,.2f} credit.",
+                )
+            elif customer.balance == ZERO:
+                messages.success(
+                    request,
+                    f"Recorded {total_paid:,.2f} for {customer.name}. "
+                    f"Account cleared.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Recorded {total_paid:,.2f} for {customer.name}. "
+                    f"Still owes {-customer.balance:,.2f}.",
+                )
         return redirect("core:customer_ledger", pk=customer.pk)
 
     if request.method == "POST":

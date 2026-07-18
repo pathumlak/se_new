@@ -396,10 +396,24 @@ class Payment(models.Model):
         SENOVKA = "senovka", "Senovka"
         DINUSHA = "dinusha", "Dinusha"
 
+    # Nullable so a settlement can arrive without a bill behind it — a
+    # payment against an opening balance, or a top-up that sits as customer
+    # credit for the next bill. When `bill` is set the payment cascades on
+    # bill delete as before; when it isn't, it hangs off `customer` instead
+    # so the ledger and the cheque list can still find it.
     bill = models.ForeignKey(
         Bill,
         on_delete=models.CASCADE,
         related_name="payments",
+        null=True,
+        blank=True,
+    )
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.PROTECT,
+        related_name="direct_payments",
+        null=True,
+        blank=True,
     )
     method = models.CharField(max_length=20, choices=Method.choices)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -410,7 +424,10 @@ class Payment(models.Model):
         ordering = ["-paid_at", "-id"]
 
     def __str__(self):
-        return f"{self.get_method_display()} {self.amount} · Bill #{self.bill_id}"
+        who = f"Bill #{self.bill_id}" if self.bill_id else (
+            f"customer #{self.customer_id}" if self.customer_id else "detached"
+        )
+        return f"{self.get_method_display()} {self.amount} · {who}"
 
 
 class Cheque(models.Model):
@@ -1265,3 +1282,50 @@ class ProductionEntry(models.Model):
 
     def __str__(self):
         return f"{self.product} × {self.qty_produced} on {self.production_date}"
+
+
+class StockAdjustment(models.Model):
+    """A manual correction to a product's on-hand stock.
+
+    Not a ProductionEntry: that model models real manufacture (qty > 0) and
+    the stock ledger draws it under a "Production" heading. An adjustment is
+    a *correction* — someone counted the shelf and it was ten short, or
+    twenty were damaged and thrown out — and it can go either way. Sharing
+    the model would blur the difference between "we made this" and "we
+    reconciled to this", which is exactly the distinction the operator
+    reaches for when they audit the ledger later.
+
+    `qty` is signed: positive adds to the shelf, negative removes from it.
+    stock_before / stock_after are snapshots kept for the same reason
+    ProductionEntry keeps them — once a later movement touches Product.qty
+    there is no way to work out what this row found or left behind.
+    """
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="stock_adjustments",
+    )
+    adjustment_date = models.DateField()
+    # Signed. Store `qty` and read the sign — a magnitude with a separate
+    # direction flag would let a "-100 add" and a "+100 remove" both exist
+    # and neither the ledger nor the operator could tell them apart.
+    qty = models.DecimalField(max_digits=12, decimal_places=3)
+    reason = models.CharField(max_length=500)
+
+    stock_before = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    stock_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+
+    adjusted_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="stock_adjustments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-adjustment_date", "-id"]
+
+    def __str__(self):
+        sign = "+" if self.qty >= 0 else ""
+        return f"{self.product} · {sign}{self.qty} on {self.adjustment_date}"

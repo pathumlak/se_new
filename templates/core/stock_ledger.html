@@ -23,7 +23,16 @@
     </p>
   </div>
 
-  <div class="flex shrink-0 flex-wrap items-center gap-2">
+  <div class="flex shrink-0 flex-wrap items-center gap-3">
+    <button type="button" id="open-adjust"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+            title="Manually add to or remove from the shelf">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16"/>
+      </svg>
+      Adjust Stock
+    </button>
+
     <div class="text-right">
       <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current stock</p>
       <p class="text-2xl font-semibold
@@ -113,11 +122,15 @@
                      {% elif row.kind == 'production' %}border-l-4 border-emerald-400
                      {% elif row.kind == 'supplier' %}border-l-4 border-sky-400
                      {% elif row.kind == 'sale' %}border-l-4 border-rose-300
+                     {% elif row.kind == 'adjust_up' %}border-l-4 border-amber-400 bg-amber-50/40
+                     {% elif row.kind == 'adjust_down' %}border-l-4 border-amber-500 bg-amber-50/40
                      {% endif %}">
             <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ row.date|date:"j M Y" }}</td>
 
             <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
-                       {% if row.kind == 'oversale' %}text-rose-700{% else %}text-emerald-700{% endif %}">
+                       {% if row.kind == 'oversale' %}text-rose-700
+                       {% elif row.kind == 'adjust_up' %}text-amber-700
+                       {% else %}text-emerald-700{% endif %}">
               {% if row.production is not None %}
                 +{{ row.production|floatformat:"-3" }}
               {% endif %}
@@ -127,7 +140,8 @@
               {% if row.total is not None %}{{ row.total|floatformat:"-3" }}{% endif %}
             </td>
 
-            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium text-rose-700">
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
+                       {% if row.kind == 'adjust_down' %}text-amber-700{% else %}text-rose-700{% endif %}">
               {% if row.sales is not None %}
                 −{{ row.sales|floatformat:"-3" }}
               {% endif %}
@@ -150,6 +164,17 @@
                    class="font-medium text-slate-700 hover:underline">
                   {{ row.bill_number }}
                 </a>
+              {% elif row.adjustment_pk %}
+                <span class="font-medium text-amber-700">{{ row.bill_number }}</span>
+                {% if is_super_admin %}
+                  <button type="button"
+                          class="js-adj-delete ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 hover:bg-rose-50"
+                          data-action="{% url 'core:stock_adjust_delete' row.adjustment_pk %}"
+                          data-label="{{ row.customer }}"
+                          title="Reverse this adjustment">
+                    Delete
+                  </button>
+                {% endif %}
               {% else %}
                 {{ row.bill_number }}
               {% endif %}
@@ -171,7 +196,172 @@
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 align-middle"></span> Production ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400 align-middle"></span> Supplier receipt ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 align-middle"></span> Sale ·
-  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto)
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Manual adjustment
 </p>
 
+<!-- ============================ ADJUST STOCK MODAL ============================ -->
+<div id="adjust-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="adjust-title">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 id="adjust-title" class="text-base font-semibold text-slate-900">Adjust stock</h3>
+        <p class="mt-0.5 text-xs text-slate-500">
+          {{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}
+          — currently <span class="font-semibold text-slate-800">{{ current_stock|floatformat:"-3" }}</span> on shelf.
+        </p>
+      </div>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form method="post" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="a-date" class="mb-1 block text-xs font-medium text-slate-600">Adjustment date</label>
+          <input type="date" id="a-date" name="adjustment_date" required
+                 value="{{ month_filter.start|date:'Y-m-d' }}"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label for="a-qty" class="mb-1 block text-xs font-medium text-slate-600">
+            Adjustment <span class="text-[10px] font-normal text-slate-400">(+ to add, − to remove)</span>
+          </label>
+          <input type="number" step="0.001" id="a-qty" name="qty" required placeholder="e.g. 100 or -20"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+      </div>
+
+      <div>
+        <label for="a-reason" class="mb-1 block text-xs font-medium text-slate-600">Reason</label>
+        <input type="text" id="a-reason" name="reason" required maxlength="500"
+               placeholder="e.g. Counted shelf 100 short · Scrap 20 damaged"
+               class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+
+      <div id="a-preview" class="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        Enter a quantity above to see the new shelf figure.
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
+          Save adjustment
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============================ DELETE MODAL (adjustments) ============================ -->
+{% if is_super_admin %}
+<div id="adj-del-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Reverse adjustment</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <span id="adj-del-label" class="font-semibold text-slate-900"></span>?
+      The shelf will move back by the same amount.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="adj-del-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const TODAY = new Date().toISOString().slice(0, 10);
+    const CURRENT_STOCK = parseFloat("{{ current_stock|floatformat:'-3' }}") || 0;
+
+    const modal = document.getElementById('adjust-modal');
+    const qtyEl = document.getElementById('a-qty');
+    const dateEl = document.getElementById('a-date');
+    const reasonEl = document.getElementById('a-reason');
+    const preview = document.getElementById('a-preview');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+        if (!m.classList.contains('hidden')) close(m);
+      });
+    });
+
+    function fmt(n) {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+    }
+
+    function refreshPreview() {
+      const raw = qtyEl.value;
+      if (raw === '' || raw === '-' || isNaN(parseFloat(raw))) {
+        preview.textContent = 'Enter a quantity above to see the new shelf figure.';
+        preview.className = 'rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500';
+        return;
+      }
+      const qty = parseFloat(raw);
+      if (qty === 0) {
+        preview.textContent = 'Zero has no effect — enter a positive or negative number.';
+        preview.className = 'rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800';
+        return;
+      }
+      const next = Math.round((CURRENT_STOCK + qty) * 1000) / 1000;
+      const sign = qty > 0 ? '+' : '−';
+      const abs = Math.abs(qty);
+      preview.innerHTML =
+        (qty > 0 ? 'Add' : 'Remove') + ' <strong>' + sign + fmt(abs) + '</strong>' +
+        ' — shelf ' + fmt(CURRENT_STOCK) + ' → <strong>' + fmt(next) + '</strong>';
+      preview.className = 'rounded-lg px-3 py-2 text-sm ' +
+        (next < 0 ? 'bg-rose-50 text-rose-800' :
+         qty > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800');
+    }
+
+    document.getElementById('open-adjust').addEventListener('click', function () {
+      dateEl.value = TODAY;
+      qtyEl.value = '';
+      reasonEl.value = '';
+      refreshPreview();
+      open(modal);
+      setTimeout(function () { qtyEl.focus(); }, 30);
+    });
+    qtyEl.addEventListener('input', refreshPreview);
+
+    // Adjustment delete (super-admin)
+    const delModal = document.getElementById('adj-del-modal');
+    if (delModal) {
+      const delForm = document.getElementById('adj-del-form');
+      const delLabel = document.getElementById('adj-del-label');
+      document.querySelectorAll('.js-adj-delete').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          delForm.action = btn.dataset.action;
+          delLabel.textContent = '“' + btn.dataset.label + '”';
+          open(delModal);
+        });
+      });
+    }
+  })();
+</script>
 {% endblock %}

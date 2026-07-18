@@ -45,6 +45,18 @@ urlpatterns = [
         views.stock_ledger,
         name="stock_ledger",
     ),
+    # Manual per-product stock corrections. Anyone can add; only a super
+    # admin can rewind one.
+    path(
+        "products/<int:pk>/adjust-stock/",
+        views.stock_adjust_create,
+        name="stock_adjust_create",
+    ),
+    path(
+        "stock-adjustments/<int:pk>/delete/",
+        views.stock_adjust_delete,
+        name="stock_adjust_delete",
+    ),
     path("customers/", views.customer_list, name="customer_list"),
     path("customers/create/", views.customer_create, name="customer_create"),
     path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),
