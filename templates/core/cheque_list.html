@@ -59,6 +59,17 @@
       </a>
     {% endif %}
   </div>
+
+  {# Excel download — forwards whatever filters are active right now #}
+  <a id="excel-download-btn"
+     href="{% url 'core:cheque_list_excel' %}"
+     class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round"
+            d="M12 16v-8m0 8l-3-3m3 3l3-3M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1"/>
+    </svg>
+    Download Excel
+  </a>
 </form>
 
 {% if due_count %}
@@ -407,6 +418,28 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
     });
+  })();
+  // ---- keep the Excel download link in sync with the filter form ----
+  (function () {
+    const btn      = document.getElementById('excel-download-btn');
+    const BASE_URL = "{% url 'core:cheque_list_excel' %}";
+    const fields   = ['status', 'customer', 'from_date', 'to_date'];
+
+    function syncHref() {
+      const params = new URLSearchParams();
+      fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el && el.value) params.set(id, el.value);
+      });
+      const qs = params.toString();
+      btn.href = BASE_URL + (qs ? '?' + qs : '');
+    }
+
+    fields.forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', syncHref);
+    });
+    syncHref(); // initialise on page load
   })();
 </script>
 {% endblock %}
