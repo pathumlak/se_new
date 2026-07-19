@@ -39,6 +39,14 @@
        class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
       All months
     </a>
+    <a href="{% url 'core:petty_cash_excel' %}{% if not month_filter.is_all_time %}?month={{ month_filter.param }}{% else %}?month=all{% endif %}"
+       class="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+       title="Download this month's petty cash as an Excel sheet">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
+      </svg>
+      Download Excel
+    </a>
     <a href="{% url 'core:petty_cash_pdf' %}{% if not month_filter.is_all_time %}?month={{ month_filter.param }}{% endif %}"
        class="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">

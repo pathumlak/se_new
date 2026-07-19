@@ -386,6 +386,15 @@
         Clear
       </a>
     {% endif %}
+    <a href="{% url 'core:cash_drawer_excel' %}?from_date={% if from_date %}{{ from_date|date:'Y-m-d' }}{% endif %}&to_date={% if to_date %}{{ to_date|date:'Y-m-d' }}{% endif %}"
+       class="btn-filter"
+       style="border-color:#a7f3d0;background:#ecfdf5;color:#065f46"
+       title="Download the drawer log as an Excel sheet">
+      <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
+      </svg>
+      Download Excel
+    </a>
   </div>
 </form>
 

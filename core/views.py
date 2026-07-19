@@ -574,6 +574,144 @@ def product_toggle_active(request, pk):
     )
 
 
+@login_required
+def product_export_excel(request):
+    """Download every product with its current stock as an .xlsx.
+
+    Honours the same filters as product_list — ?q=, ?category=, ?view=stock
+    and ?status=active|inactive — so the user can narrow the sheet first and
+    then export exactly what they see.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    query = request.GET.get("q", "").strip()
+    category_id = request.GET.get("category", "").strip()
+    stock_view = request.GET.get("view", "").strip() == "stock"
+    status = request.GET.get("status", "").strip().lower()
+
+    products = (
+        Product.objects.select_related("category")
+        .annotate(custom_price_count=Count("customer_prices"))
+        .order_by("name", "size")
+    )
+    if query:
+        products = products.filter(name__icontains=query)
+    if category_id.isdigit():
+        products = products.filter(category_id=int(category_id))
+    if stock_view:
+        products = products.filter(qty__lte=settings.LOW_STOCK_THRESHOLD)
+    if status == "active":
+        products = products.filter(is_active=True)
+    elif status == "inactive":
+        products = products.filter(is_active=False)
+
+    today = timezone.localdate()
+    threshold = settings.LOW_STOCK_THRESHOLD
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    # Masthead
+    ws["A1"] = "Senovka Plastics — Product Stock Report"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:H1")
+
+    ws["A2"] = "As of"
+    ws["A2"].font = Font(bold=True)
+    ws["B2"] = today.strftime("%d %b %Y")
+
+    # A short "filters used" line, so the exported file is self-documenting.
+    filter_bits = []
+    if query:
+        filter_bits.append(f'Search: "{query}"')
+    if category_id.isdigit():
+        cat = Category.objects.filter(pk=int(category_id)).first()
+        if cat:
+            filter_bits.append(f"Category: {cat.name}")
+    if stock_view:
+        filter_bits.append(f"Low stock only (≤ {threshold})")
+    if status in ("active", "inactive"):
+        filter_bits.append(f"Status: {status.title()}")
+    if filter_bits:
+        ws["C2"] = "Filters"
+        ws["C2"].font = Font(bold=True)
+        ws["D2"] = " · ".join(filter_bits)
+        ws.merge_cells("D2:H2")
+
+    # Items header
+    HEADERS = [
+        "No", "Name", "Size", "Category",
+        "Qty", "Stock Status", "Default Price", "Active",
+    ]
+    header_row = 4
+    for idx, name in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    def stock_status(qty):
+        if qty < 0:
+            return "Oversold"
+        if qty == 0:
+            return "Out of Stock"
+        if qty <= threshold:
+            return "Low Stock"
+        return "In Stock"
+
+    row_num = header_row + 1
+    for i, product in enumerate(products, start=1):
+        ws.cell(row=row_num, column=1, value=i).alignment = center
+        ws.cell(row=row_num, column=2, value=product.name)
+        ws.cell(row=row_num, column=3, value=product.size or "")
+        ws.cell(row=row_num, column=4, value=product.category.name)
+
+        c_qty = ws.cell(row=row_num, column=5, value=float(product.qty))
+        c_qty.alignment = right
+        c_qty.number_format = "#,##0.000"
+
+        ws.cell(row=row_num, column=6, value=stock_status(product.qty)).alignment = center
+
+        c_price = ws.cell(row=row_num, column=7, value=float(product.default_price))
+        c_price.alignment = right
+        c_price.number_format = "#,##0.00"
+
+        ws.cell(
+            row=row_num, column=8,
+            value="Yes" if product.is_active else "No",
+        ).alignment = center
+        row_num += 1
+
+    # Freeze the masthead + header row so the header stays visible on scroll.
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    # Column widths — a rough auto-size based on typical content width.
+    widths = {"A": 5, "B": 32, "C": 12, "D": 18, "E": 12, "F": 14, "G": 14, "H": 9}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="products_stock_{today.strftime("%Y-%m-%d")}.xlsx"'
+    )
+    return response
+
+
 def _stock_ledger_rows(product):
     """Every stock movement on `product`, oldest first, with a running balance
     and running production total.
@@ -3567,6 +3705,124 @@ def cheque_edit(request, pk):
 
 
 @login_required
+@login_required
+def cheque_list_excel(request):
+    """Download the cheque list as an .xlsx, honouring the same status /
+    customer / maturity-range filters as the page."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    status = request.GET.get("status", "").strip()
+    if status not in {value for value, _ in Cheque.Status.choices}:
+        status = ""
+    customer_id = request.GET.get("customer", "").strip()
+    selected_customer = int(customer_id) if customer_id.isdigit() else None
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    cheques = Cheque.objects.select_related("customer")
+    if status:
+        cheques = cheques.filter(status=status)
+    if selected_customer:
+        cheques = cheques.filter(customer_id=selected_customer)
+    if from_date:
+        cheques = cheques.filter(maturity_date__gte=from_date)
+    if to_date:
+        cheques = cheques.filter(maturity_date__lte=to_date)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cheques"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    ws["A1"] = "Senovka Plastics — Cheques"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:I1")
+
+    # Filter summary
+    filter_bits = []
+    if status:
+        label = dict(Cheque.Status.choices).get(status, status.title())
+        filter_bits.append(f"Status: {label}")
+    if selected_customer:
+        cust = Customer.objects.filter(pk=selected_customer).first()
+        if cust:
+            filter_bits.append(f"Customer: {cust.name}")
+    if from_date:
+        filter_bits.append(f"Maturity from {from_date.strftime('%d %b %Y')}")
+    if to_date:
+        filter_bits.append(f"Maturity to {to_date.strftime('%d %b %Y')}")
+
+    ws["A2"] = "Filters"
+    ws["A2"].font = Font(bold=True)
+    ws["B2"] = " · ".join(filter_bits) if filter_bits else "None"
+    ws.merge_cells("B2:F2")
+    ws["G2"] = "Generated"
+    ws["G2"].font = Font(bold=True)
+    ws["H2"] = timezone.localtime().strftime("%d %b %Y %H:%M")
+    ws.merge_cells("H2:I2")
+
+    HEADERS = [
+        "No", "Cheque No", "Customer", "Bank", "Branch",
+        "Amount", "Received", "Maturity", "Status",
+    ]
+    header_row = 4
+    for idx, name in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    row = header_row + 1
+    total = Decimal("0.00")
+    for i, cheque in enumerate(cheques, start=1):
+        ws.cell(row=row, column=1, value=i).alignment = center
+        ws.cell(row=row, column=2, value=cheque.cheque_no)
+        ws.cell(row=row, column=3, value=cheque.customer.name)
+        ws.cell(row=row, column=4, value=cheque.bank_name)
+        ws.cell(row=row, column=5, value=cheque.branch or "")
+        c = ws.cell(row=row, column=6, value=float(cheque.amount))
+        c.number_format = "#,##0.00"; c.alignment = right
+        ws.cell(row=row, column=7, value=cheque.received_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=8, value=cheque.maturity_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=9, value=cheque.get_status_display()).alignment = center
+        total += cheque.amount
+        row += 1
+
+    # Total
+    ws.cell(row=row, column=5, value="Total").font = Font(bold=True)
+    ws.cell(row=row, column=5).alignment = right
+    c = ws.cell(row=row, column=6, value=float(total))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    widths = {"A": 5, "B": 14, "C": 26, "D": 20, "E": 16, "F": 14, "G": 12, "H": 12, "I": 12}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    today = timezone.localdate()
+    stamp = today.strftime("%Y-%m-%d")
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="cheques_{stamp}.xlsx"'
+    )
+    return response
+
+
 def cheque_list(request):
     today = timezone.localdate()
     horizon = today + timedelta(days=CHEQUE_WARNING_DAYS)
@@ -3747,6 +4003,155 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
             "kind_choices": CashDrawerOutForm.KIND_CHOICES,
         },
     )
+
+
+@login_required
+def cash_drawer_excel(request):
+    """Download the cash drawer log as an .xlsx, honouring the from/to date
+    filters.
+
+    Same running-balance / totals arithmetic as the page, so the sheet reads
+    as a printable copy of what is on screen — including the opening balance
+    row when a date range is applied.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    entries = CashDrawer.objects.select_related("bill", "bill__customer")
+    if from_date:
+        entries = entries.filter(txn_date__gte=from_date)
+    if to_date:
+        entries = entries.filter(txn_date__lte=to_date)
+    entries = entries.order_by("txn_date", "id")
+
+    opening = (
+        _cash_drawer_balance(CashDrawer.objects.filter(txn_date__lt=from_date))
+        if from_date
+        else ZERO
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cash Drawer"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    ws["A1"] = "Senovka Plastics — Cash Drawer Log"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:F1")
+
+    ws["A2"] = "From"
+    ws["A2"].font = Font(bold=True)
+    ws["B2"] = from_date.strftime("%d %b %Y") if from_date else "—"
+    ws["C2"] = "To"
+    ws["C2"].font = Font(bold=True)
+    ws["D2"] = to_date.strftime("%d %b %Y") if to_date else "—"
+    ws["E2"] = "Generated"
+    ws["E2"].font = Font(bold=True)
+    ws["F2"] = timezone.localtime().strftime("%d %b %Y %H:%M")
+
+    HEADERS = ["Date", "Description", "In (+)", "Out (−)", "Running Balance", "Source"]
+    header_row = 4
+    for idx, name in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    row = header_row + 1
+
+    # Opening balance line — only when a range is applied. Everything before
+    # the range still happened, so the running column starts where the drawer
+    # actually stood.
+    if from_date:
+        ws.cell(row=row, column=1, value=from_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=2, value="Opening balance").font = Font(italic=True)
+        c = ws.cell(row=row, column=5, value=float(opening))
+        c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+        row += 1
+
+    running = opening
+    total_in = ZERO
+    total_out = ZERO
+
+    for entry in entries:
+        is_in = entry.txn_type == CashDrawer.TxnType.IN
+        running += entry.amount if is_in else -entry.amount
+        if is_in:
+            total_in += entry.amount
+        else:
+            total_out += entry.amount
+
+        # Description mirrors what the page shows.
+        if entry.bill_id:
+            desc = f"Bill #{entry.bill_id}"
+            if entry.bill and entry.bill.customer_id:
+                desc += f" · {entry.bill.customer.name}"
+            if entry.reason:
+                desc += f" — {entry.reason}"
+        elif entry.reason:
+            desc = entry.reason
+        else:
+            desc = entry.get_txn_type_display()
+
+        source = f"Bill #{entry.bill_id}" if entry.bill_id else "Manual"
+
+        ws.cell(row=row, column=1, value=entry.txn_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=2, value=desc)
+
+        if is_in:
+            c = ws.cell(row=row, column=3, value=float(entry.amount))
+            c.number_format = "#,##0.00"; c.alignment = right
+        else:
+            c = ws.cell(row=row, column=4, value=float(entry.amount))
+            c.number_format = "#,##0.00"; c.alignment = right
+
+        c = ws.cell(row=row, column=5, value=float(running))
+        c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+
+        ws.cell(row=row, column=6, value=source).alignment = center
+        row += 1
+
+    # Totals + closing balance.
+    row += 1
+    ws.cell(row=row, column=2, value="Totals").font = Font(bold=True)
+    c = ws.cell(row=row, column=3, value=float(total_in))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+    c = ws.cell(row=row, column=4, value=float(total_out))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+    row += 1
+    ws.cell(row=row, column=2, value="Closing balance").font = Font(bold=True)
+    c = ws.cell(row=row, column=5, value=float(running))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    widths = {"A": 12, "B": 42, "C": 14, "D": 14, "E": 16, "F": 18}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    today = timezone.localdate()
+    stamp = today.strftime("%Y-%m-%d")
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="cash_drawer_{stamp}.xlsx"'
+    )
+    return response
 
 
 @login_required
@@ -5110,6 +5515,157 @@ def petty_cash_reimbursement_delete(request, pk):
 
     messages.success(request, "Reimbursement removed.")
     return _petty_cash_redirect(request)
+
+
+@login_required
+def petty_cash_excel(request):
+    """Download the current fund's month (or all months) as an .xlsx.
+
+    Honours the same ?month= filter the page uses, so the sheet matches
+    exactly what the operator is looking at.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    context = _petty_cash_context(request)
+    fund = context["fund"]
+    month_filter = context["month_filter"]
+
+    if month_filter.is_all_time:
+        expense_qs = PettyCashEntry.objects.filter(
+            entry_type=PettyCashEntry.EntryType.EXPENSE
+        ).select_related("fund", "added_by").order_by("-date", "-id")
+        reimb_qs = PettyCashReimbursement.objects.select_related(
+            "fund", "added_by"
+        ).order_by("-date", "-id")
+    else:
+        expense_qs = fund.entries.filter(
+            entry_type=PettyCashEntry.EntryType.EXPENSE
+        ).select_related("added_by").order_by("-date", "-id")
+        reimb_qs = fund.reimbursements.select_related("added_by").order_by(
+            "-date", "-id"
+        )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Petty Cash"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    section_font = Font(bold=True, size=12)
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    # Masthead
+    ws["A1"] = "Senovka Plastics — Petty Cash"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:F1")
+
+    ws["A2"] = "Period"
+    ws["A2"].font = Font(bold=True)
+    ws["B2"] = month_filter.label
+    ws["D2"] = "Generated"
+    ws["D2"].font = Font(bold=True)
+    ws["E2"] = timezone.localtime().strftime("%d %b %Y %H:%M")
+
+    # Summary block (only meaningful for a single month)
+    row = 4
+    if not month_filter.is_all_time:
+        ws.cell(row=row, column=1, value="Opening balance").font = Font(bold=True)
+        c = ws.cell(row=row, column=2, value=float(fund.opening_balance))
+        c.number_format = "#,##0.00"; c.alignment = right
+        row += 1
+        ws.cell(row=row, column=1, value="Total reimbursements").font = Font(bold=True)
+        c = ws.cell(row=row, column=2, value=float(fund.total_reimbursements))
+        c.number_format = "#,##0.00"; c.alignment = right
+        row += 1
+        ws.cell(row=row, column=1, value="Total expenses").font = Font(bold=True)
+        c = ws.cell(row=row, column=2, value=float(fund.total_expenses))
+        c.number_format = "#,##0.00"; c.alignment = right
+        row += 1
+        ws.cell(row=row, column=1, value="Closing balance").font = Font(bold=True)
+        c = ws.cell(row=row, column=2, value=float(fund.closing_balance))
+        c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+        row += 2
+
+    # Expenses table
+    ws.cell(row=row, column=1, value="Expenses").font = section_font
+    row += 1
+    EXP_HEADERS = ["No", "Date", "Category", "Description", "Receipt No", "Amount"]
+    for idx, name in enumerate(EXP_HEADERS, start=1):
+        cell = ws.cell(row=row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+    row += 1
+
+    expense_total = Decimal("0.00")
+    for i, entry in enumerate(expense_qs, start=1):
+        ws.cell(row=row, column=1, value=i).alignment = center
+        ws.cell(row=row, column=2, value=entry.date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=3, value=entry.get_category_display())
+        ws.cell(row=row, column=4, value=entry.description)
+        ws.cell(row=row, column=5, value=entry.receipt_no or "")
+        c = ws.cell(row=row, column=6, value=float(entry.amount))
+        c.number_format = "#,##0.00"; c.alignment = right
+        expense_total += entry.amount
+        row += 1
+
+    ws.cell(row=row, column=5, value="Total").font = Font(bold=True)
+    ws.cell(row=row, column=5).alignment = right
+    c = ws.cell(row=row, column=6, value=float(expense_total))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+    row += 2
+
+    # Reimbursements table
+    ws.cell(row=row, column=1, value="Reimbursements").font = section_font
+    row += 1
+    REIMB_HEADERS = ["No", "Date", "Given By", "Reason", "", "Amount"]
+    for idx, name in enumerate(REIMB_HEADERS, start=1):
+        cell = ws.cell(row=row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+    row += 1
+
+    reimb_total = Decimal("0.00")
+    for i, reimb in enumerate(reimb_qs, start=1):
+        ws.cell(row=row, column=1, value=i).alignment = center
+        ws.cell(row=row, column=2, value=reimb.date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=3, value=reimb.given_by)
+        ws.cell(row=row, column=4, value=reimb.reason)
+        c = ws.cell(row=row, column=6, value=float(reimb.amount))
+        c.number_format = "#,##0.00"; c.alignment = right
+        reimb_total += reimb.amount
+        row += 1
+
+    ws.cell(row=row, column=5, value="Total").font = Font(bold=True)
+    ws.cell(row=row, column=5).alignment = right
+    c = ws.cell(row=row, column=6, value=float(reimb_total))
+    c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
+
+    widths = {"A": 5, "B": 12, "C": 16, "D": 40, "E": 16, "F": 14}
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+
+    if month_filter.is_all_time:
+        stamp = "all-months"
+    else:
+        stamp = fund.month.strftime("%Y-%m")
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="petty_cash_{stamp}.xlsx"'
+    )
+    return response
 
 
 @login_required
