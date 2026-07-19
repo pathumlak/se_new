@@ -1291,6 +1291,39 @@ def customer_list(request):
 
     page_obj = _paginate(request, customers)
 
+    # Summary cards — aggregated over the *full* filtered set, not just this page,
+    # so the totals are always consistent regardless of pagination.
+    # balance < 0  → customer owes us   (outstanding)
+    # balance > 0  → we owe the customer
+    balance_totals = customers.aggregate(
+        total_outstanding=Coalesce(
+            Sum(
+                Case(
+                    When(balance__lt=0, then=Value(0) - F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )
+            ),
+            ZERO,
+            output_field=MONEY,
+        ),
+        we_owe=Coalesce(
+            Sum(
+                Case(
+                    When(balance__gt=0, then=F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )
+            ),
+            ZERO,
+            output_field=MONEY,
+        ),
+    )
+    customer_stats = {
+        "total_outstanding": balance_totals["total_outstanding"],
+        "we_owe": balance_totals["we_owe"],
+    }
+
     # Supplier management stats — cheap aggregates over the full supplier set
     # (not just this page) so the header reads the same on every page.
     supplier_stats = None
@@ -1333,6 +1366,7 @@ def customer_list(request):
             "kind": kind,
             "status": status,
             "is_filtered": bool(query or kind or status),
+            "customer_stats": customer_stats,
             "supplier_stats": supplier_stats,
         },
     )
