@@ -764,11 +764,14 @@ def _stock_ledger_rows(product):
 @require_POST
 @login_required
 def stock_adjust_create(request, pk):
-    """Manually correct a product's shelf.
+    """Manually set a product's shelf to an exact quantity.
 
-    Signed qty: positive adds, negative removes. Wraps the shelf update
-    and the audit row in one transaction — a mid-flight failure must not
-    leave Product.qty half-moved.
+    The form's `qty` field holds the *target* stock value the operator
+    wants on the shelf.  The actual delta applied to Product.qty is
+    (target − current), computed here after a fresh DB read so that a
+    concurrent sale or production is priced in before the delta lands.
+    Wrapping the shelf update and audit row in one transaction means a
+    mid-flight failure cannot leave Product.qty half-moved.
     """
     product = get_object_or_404(Product, pk=pk)
     form = StockAdjustmentForm(request.POST)
@@ -779,19 +782,21 @@ def stock_adjust_create(request, pk):
     with transaction.atomic():
         # Fresh read so a concurrent sale/production is priced in.
         current = Product.objects.values_list("qty", flat=True).get(pk=product.pk)
+        target = form.cleaned_data["qty"]  # desired final stock value
+        delta = target - current           # signed change to apply
         entry = form.save(commit=False)
         entry.product = product
         entry.adjusted_by = request.user
         entry.stock_before = current
-        entry.stock_after = current + entry.qty
+        entry.stock_after = target
+        entry.qty = delta                  # store delta so ledger & delete work
         entry.save()
-        Product.objects.filter(pk=product.pk).update(qty=F("qty") + entry.qty)
+        Product.objects.filter(pk=product.pk).update(qty=target)
 
-    sign = "+" if entry.qty >= 0 else ""
     messages.success(
         request,
-        f"Stock adjusted by {sign}{entry.qty} on {product.name}. "
-        f"New shelf: {entry.stock_after}.",
+        f"Stock set to {target} on {product.name}. "
+        f"(Changed by {'+' if delta >= 0 else ''}{delta}.)",
     )
     return redirect("core:stock_ledger", pk=product.pk)
 

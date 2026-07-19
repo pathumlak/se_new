@@ -1791,8 +1791,11 @@ class OrderHeaderForm(forms.ModelForm):
 class StockAdjustmentForm(forms.ModelForm):
     """One manual stock correction for a product.
 
-    `qty` is signed: positive adds to the shelf, negative removes. `product`
-    and `adjusted_by` are set by the view.
+    `qty` is the *target* stock value the operator wants on the shelf.
+    The view computes the signed delta (target − current) and stores it
+    back into `entry.qty` before saving, so the ledger and delete-reversal
+    logic continue to work on the delta. `product` and `adjusted_by` are
+    set by the view.
     """
 
     class Meta:
@@ -1800,7 +1803,7 @@ class StockAdjustmentForm(forms.ModelForm):
         fields = ["adjustment_date", "qty", "reason"]
         labels = {
             "adjustment_date": "Adjustment date",
-            "qty": "Adjustment (signed)",
+            "qty": "New stock quantity",
             "reason": "Reason",
         }
         widgets = {
@@ -1812,13 +1815,13 @@ class StockAdjustmentForm(forms.ModelForm):
                 attrs={
                     "class": INPUT_CLASSES,
                     "step": "0.001",
-                    "placeholder": "+ to add, − to remove (e.g. 100 or -20)",
+                    "placeholder": "Enter the exact stock quantity to set (e.g. 500 or -500)",
                 }
             ),
             "reason": forms.TextInput(
                 attrs={
                     "class": INPUT_CLASSES,
-                    "placeholder": "e.g. Counted shelf 100 short, or scrap 20 damaged",
+                    "placeholder": "e.g. Physical count found 500 units on shelf",
                     "maxlength": 500,
                 }
             ),
@@ -1833,10 +1836,6 @@ class StockAdjustmentForm(forms.ModelForm):
         qty = self.cleaned_data.get("qty")
         if qty is None:
             raise forms.ValidationError("Enter a quantity.")
-        if qty == 0:
-            raise forms.ValidationError(
-                "Adjustment cannot be zero — nothing would change."
-            )
         return qty
 
     def clean_reason(self):
