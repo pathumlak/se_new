@@ -1536,6 +1536,215 @@ def customer_list(request):
 
 
 @login_required
+def customer_list_excel(request):
+    """Export the list of customers/suppliers to an Excel sheet.
+    Respects any active filters (query q, kind, status).
+    """
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from django.utils import timezone
+
+    query = request.GET.get("q", "").strip()
+    kind = request.GET.get("kind", "").strip()
+    if kind not in {"customers", "suppliers"}:
+        kind = ""
+    status = request.GET.get("status", "").strip()
+    if status not in {"active", "inactive"}:
+        status = ""
+
+    customers = _customers()
+    if query:
+        customers = customers.filter(name__icontains=query)
+    if kind:
+        customers = customers.filter(is_supplier=kind == "suppliers")
+    if status:
+        customers = customers.filter(is_active=status == "active")
+
+    # Aggregate stats over the exported set
+    balance_totals = customers.aggregate(
+        total_outstanding=Coalesce(
+            Sum(
+                Case(
+                    When(balance__lt=0, then=Value(0) - F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )
+            ),
+            ZERO,
+            output_field=MONEY,
+        ),
+        we_owe=Coalesce(
+            Sum(
+                Case(
+                    When(balance__gt=0, then=F("balance")),
+                    default=Value(ZERO),
+                    output_field=MONEY,
+                )
+            ),
+            ZERO,
+            output_field=MONEY,
+        ),
+        total_limit=Coalesce(Sum("credit_limit"), ZERO, output_field=MONEY),
+        total_avail=Coalesce(Sum("available_credit"), ZERO, output_field=MONEY),
+        total_count=Count("pk"),
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Customer List"
+
+    # Style definitions
+    thin = Side(style="thin")
+    border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
+    bold = Font(bold=True)
+    bold_large = Font(bold=True, size=14)
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    header_fill = PatternFill("solid", fgColor="1F2937") # Dark gray
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    # Highlight lines where balance indicates they owe us (outstanding) or we owe them
+    fill_outstanding = PatternFill("solid", fgColor="FFF1F2") # Rose tint
+    fill_we_owe = PatternFill("solid", fgColor="ECFDF5") # Emerald tint
+    fill_normal = PatternFill("solid", fgColor="FFFFFF")
+
+    # Set Column Widths (8 columns A-H)
+    ws.column_dimensions["A"].width = 30 # Name
+    ws.column_dimensions["B"].width = 16 # Phone
+    ws.column_dimensions["C"].width = 32 # Address
+    ws.column_dimensions["D"].width = 16 # Balance
+    ws.column_dimensions["E"].width = 16 # Credit Limit
+    ws.column_dimensions["F"].width = 18 # Available Credit
+    ws.column_dimensions["G"].width = 15 # Type
+    ws.column_dimensions["H"].width = 12 # Status
+
+    # --- Title Block ---
+    report_title = "Senovka Plastics — Customer List"
+    if kind == "suppliers":
+        report_title = "Senovka Plastics — Supplier List"
+    ws["A1"] = report_title
+    ws["A1"].font = bold_large
+    ws.merge_cells("A1:H1")
+
+    now = timezone.localtime(timezone.now())
+    ws["A2"] = f"Exported: {now.strftime('%d %b %Y, %I:%M %p')}"
+    ws["A2"].font = Font(italic=True)
+    ws.merge_cells("A2:H2")
+
+    # --- Summary Metrics Block ---
+    ws["A4"] = "Total Count"; ws["B4"] = balance_totals["total_count"]
+    ws["C4"] = "Total Outstanding (They Owe)"; ws["D4"] = float(balance_totals["total_outstanding"])
+    ws["E4"] = "Total We Owe"; ws["F4"] = float(balance_totals["we_owe"])
+    ws["G4"] = "Total Credit Limit"; ws["H4"] = float(balance_totals["total_limit"])
+
+    ws["B4"].font = bold; ws["D4"].font = bold; ws["F4"].font = bold; ws["H4"].font = bold
+    for cell_addr in ["A4", "C4", "E4", "G4"]:
+        ws[cell_addr].font = Font(bold=True)
+
+    # --- Table Header ---
+    headers = [
+        "Name", "Phone", "Address", "Balance", "Credit Limit", 
+        "Available Credit", "Type", "Status"
+    ]
+    header_row = 6
+    for idx, name in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = border_all
+
+    # --- Item Rows ---
+    row_num = header_row + 1
+    for customer in customers:
+        # Determine styling & coloring based on balance
+        row_fill = fill_normal
+        if customer.balance < 0:
+            row_fill = fill_outstanding
+        elif customer.balance > 0:
+            row_fill = fill_we_owe
+
+        # Type text
+        if customer.is_supplier:
+            cust_type = "Supplier"
+        else:
+            cust_type = "Customer"
+
+        # Status text
+        cust_status = "Active" if customer.is_active else "Inactive"
+
+        # Write cells
+        c_name = ws.cell(row=row_num, column=1, value=customer.name)
+        c_phone = ws.cell(row=row_num, column=2, value=customer.phone or "—")
+        c_addr = ws.cell(row=row_num, column=3, value=customer.address or "—")
+        c_bal = ws.cell(row=row_num, column=4, value=float(customer.balance))
+        c_limit = ws.cell(row=row_num, column=5, value=float(customer.credit_limit))
+        c_avail = ws.cell(row=row_num, column=6, value=float(customer.available_credit))
+        c_type = ws.cell(row=row_num, column=7, value=cust_type)
+        c_status = ws.cell(row=row_num, column=8, value=cust_status)
+
+        # Formatting
+        c_name.alignment = left
+        c_phone.alignment = center
+        c_addr.alignment = left
+        c_bal.alignment = right
+        c_limit.alignment = right
+        c_avail.alignment = right
+        c_type.alignment = center
+        c_status.alignment = center
+
+        for cell in (c_bal, c_limit, c_avail):
+            cell.number_format = "#,##0.00"
+
+        # Apply borders and fills to all cells in the row
+        for c_idx in range(1, 9):
+            cell = ws.cell(row=row_num, column=c_idx)
+            cell.border = border_all
+            cell.fill = row_fill
+
+        row_num += 1
+
+    # Add double line for totals at the bottom
+    totals_row = row_num
+    ws.cell(row=totals_row, column=1, value="Totals").font = bold
+    ws.cell(row=totals_row, column=4, value=float(sum((c.balance for c in customers), ZERO))).font = bold
+    ws.cell(row=totals_row, column=5, value=float(balance_totals["total_limit"])).font = bold
+    ws.cell(row=totals_row, column=6, value=float(balance_totals["total_avail"])).font = bold
+
+    ws.cell(row=totals_row, column=4).number_format = "#,##0.00"
+    ws.cell(row=totals_row, column=5).number_format = "#,##0.00"
+    ws.cell(row=totals_row, column=6).number_format = "#,##0.00"
+
+    ws.cell(row=totals_row, column=4).alignment = right
+    ws.cell(row=totals_row, column=5).alignment = right
+    ws.cell(row=totals_row, column=6).alignment = right
+
+    double_border = Border(top=thin, bottom=Side(style="double"))
+    for c_idx in range(1, 9):
+        cell = ws.cell(row=totals_row, column=c_idx)
+        cell.border = double_border
+
+    # --- Write stream ---
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    
+    file_label = "customers" if kind != "suppliers" else "suppliers"
+    filename_date = now.strftime("%Y-%m-%d")
+    response["Content-Disposition"] = (
+        f'attachment; filename="{file_label}_list_{filename_date}.xlsx"'
+    )
+    return response
+
+
+@login_required
 def customer_detail(request, pk):
     customer = get_object_or_404(_customers(), pk=pk)
 

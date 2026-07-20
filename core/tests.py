@@ -6321,3 +6321,34 @@ class StockLedgerTests(UserFactoryMixin, TestCase):
         self.assertIn("stock_ledger_elbow_", response["Content-Disposition"])
 
 
+class CustomerListExcelTests(UserFactoryMixin, TestCase):
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        self.customer1 = Customer.objects.create(name="Customer A", phone="123", balance=-500)
+        self.customer2 = Customer.objects.create(name="Supplier B", phone="456", balance=300, is_supplier=True)
+
+    def test_customer_list_excel_download(self):
+        url = reverse("core:customer_list_excel")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("customers_list_", response["Content-Disposition"])
+
+    def test_supplier_list_excel_download(self):
+        url = reverse("core:customer_list_excel") + "?kind=suppliers"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("suppliers_list_", response["Content-Disposition"])
+
+
+
