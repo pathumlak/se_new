@@ -264,6 +264,7 @@ class CustomerForm(forms.ModelForm):
         fields = [
             "name",
             "phone",
+            "email",
             "address",
             "balance",
             "credit_limit",
@@ -283,6 +284,9 @@ class CustomerForm(forms.ModelForm):
             ),
             "phone": forms.TextInput(
                 attrs={"class": INPUT_CLASSES, "placeholder": "e.g. 077 123 4567"}
+            ),
+            "email": forms.EmailInput(
+                attrs={"class": INPUT_CLASSES, "placeholder": "e.g. info@example.com"}
             ),
             "address": forms.Textarea(
                 attrs={
@@ -311,6 +315,7 @@ class CustomerForm(forms.ModelForm):
         }
         help_texts = {
             "phone": "Leave blank if you don't have one.",
+            "email": "Leave blank if you don't have one.",
             "address": "Leave blank if you don't have one.",
             "balance": "Positive = we owe the customer. Negative = customer owes us. Leave 0 for a fresh account.",
             "credit_limit": "How much this customer may owe before new credit sales should be refused.",

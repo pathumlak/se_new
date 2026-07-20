@@ -76,6 +76,7 @@ class Customer(models.Model):
 
     name = models.CharField(max_length=150)
     phone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField(max_length=254, blank=True, default="")
     address = models.TextField(blank=True)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -96,6 +97,7 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.name
+
 
 
 class CustomerBalanceAdjustment(models.Model):

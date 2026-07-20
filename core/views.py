@@ -1572,6 +1572,57 @@ def customer_list(request):
     )
 
 
+
+@login_required
+def customer_contacts(request):
+    """Customer Details page — search, view and quick-edit contact info
+    (name, phone, email, address) for any existing customer.
+    This is a dedicated contacts directory; it does NOT create new customers.
+    """
+    query = request.GET.get("q", "").strip()
+    pk = request.GET.get("pk")
+    selected = None
+    save_success = False
+
+    # Build the list (exclude walk-in holding account)
+    customers = Customer.objects.filter(is_walk_in_account=False).order_by("name")
+    if query:
+        customers = customers.filter(
+            Q(name__icontains=query)
+            | Q(phone__icontains=query)
+            | Q(email__icontains=query)
+        )
+
+    # Load the selected customer for the detail/edit panel
+    if pk:
+        try:
+            selected = Customer.objects.get(pk=pk, is_walk_in_account=False)
+        except Customer.DoesNotExist:
+            selected = None
+
+    # Handle inline edit POST
+    if request.method == "POST" and selected:
+        # Only update contact fields — never touch balance/credit_limit/flags
+        selected.name = request.POST.get("name", selected.name).strip() or selected.name
+        selected.phone = request.POST.get("phone", "").strip()
+        selected.email = request.POST.get("email", "").strip()
+        selected.address = request.POST.get("address", "").strip()
+        selected.save(update_fields=["name", "phone", "email", "address"])
+        messages.success(request, f"Contact details for '{selected.name}' saved.")
+        save_success = True
+
+    return render(
+        request,
+        "core/customer_contacts.html",
+        {
+            "customers": customers,
+            "query": query,
+            "selected": selected,
+            "save_success": save_success,
+        },
+    )
+
+
 @login_required
 def customer_list_excel(request):
     """Export the list of customers/suppliers to an Excel sheet.

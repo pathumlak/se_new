@@ -69,6 +69,7 @@ urlpatterns = [
     ),
     path("customers/", views.customer_list, name="customer_list"),
     path("customers/excel/", views.customer_list_excel, name="customer_list_excel"),
+    path("customers/contacts/", views.customer_contacts, name="customer_contacts"),
     path("customers/create/", views.customer_create, name="customer_create"),
     path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),
     path("customers/<int:pk>/edit/", views.customer_update, name="customer_update"),
