@@ -123,6 +123,7 @@ urlpatterns = [
         name="held_bill_delete",
     ),
     path("bills/", views.bill_list, name="bill_list"),
+    path("bills/excel/", views.bill_list_excel, name="bill_list_excel"),
     path("bills/<int:pk>/", views.bill_detail, name="bill_detail"),
     # GET renders the form; POST rewrites the bill.
     path("bills/<int:pk>/edit/", views.bill_edit, name="bill_edit"),

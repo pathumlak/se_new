@@ -216,6 +216,38 @@ def dashboard(request):
         .order_by("balance")[:5]
     )
 
+    # Chart Data: Sales Trend (last 7 days)
+    sales_labels = []
+    sales_values = []
+    bill_counts = []
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        sales_labels.append(d.strftime("%a"))
+        
+        day_bills = Bill.objects.filter(bill_date=d).exclude(status=Bill.Status.CANCELLED)
+        day_sales = day_bills.aggregate(total=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY))["total"]
+        
+        sales_values.append(float(day_sales))
+        bill_counts.append(day_bills.count())
+
+    # Chart Data: Payment Mix (last 30 days)
+    thirty_days_ago = today - timedelta(days=30)
+    payment_mix = (
+        Bill.objects.filter(bill_date__gte=thirty_days_ago)
+        .exclude(status=Bill.Status.CANCELLED)
+        .values("payment_type")
+        .annotate(total=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY))
+        .order_by("-total")
+    )
+    payment_labels = []
+    payment_values = []
+    payment_type_map = dict(Bill.PaymentType.choices)
+    
+    for pm in payment_mix:
+        if pm["total"] > 0:
+            payment_labels.append(payment_type_map.get(pm["payment_type"], pm["payment_type"]))
+            payment_values.append(float(pm["total"]))
+
     return render(
         request,
         "core/dashboard.html",
@@ -232,6 +264,11 @@ def dashboard(request):
             "top_customers": top_customers,
             "warning_days": CHEQUE_WARNING_DAYS,
             "today": today,
+            "sales_labels_json": json.dumps(sales_labels),
+            "sales_values_json": json.dumps(sales_values),
+            "bill_counts_json": json.dumps(bill_counts),
+            "payment_labels_json": json.dumps(payment_labels),
+            "payment_values_json": json.dumps(payment_values),
         },
     )
 
@@ -3869,8 +3906,7 @@ def held_bill_delete(request, pk):
     return redirect("core:held_bill_list")
 
 
-@login_required
-def bill_list(request):
+def _filtered_bills(request):
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
@@ -3903,6 +3939,13 @@ def bill_list(request):
     if status:
         bills = bills.filter(status=status)
 
+    return bills, from_date, to_date, selected_customer, payment_type, status
+
+
+@login_required
+def bill_list(request):
+    bills, from_date, to_date, selected_customer, payment_type, status = _filtered_bills(request)
+
     # Paginate before the per-row work below: _reversal_summary queries per
     # bill, so priced over the whole filtered set it would cost a page's worth
     # of queries for every bill the operator cannot see.
@@ -3931,6 +3974,81 @@ def bill_list(request):
             ),
         },
     )
+
+
+@login_required
+def bill_list_excel(request):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    bills, _, _, _, _, _ = _filtered_bills(request)
+    # Re-order the queryset for excel output if needed, though they should be in default order
+    # Let's ensure it's ordered properly
+    bills = bills.order_by("-bill_date", "-pk")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bills"
+
+    headers = [
+        "Bill No",
+        "Date",
+        "Customer Name",
+        "Status",
+        "Payment Type",
+        "Total Amount",
+        "Paid Amount",
+        "Outstanding",
+    ]
+    
+    header_font = Font(bold=True)
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.font = header_font
+
+    total_amount_sum = Decimal("0.00")
+    paid_amount_sum = Decimal("0.00")
+    outstanding_sum = Decimal("0.00")
+
+    row = 2
+    for bill in bills:
+        customer_name = bill.walk_in_name if bill.is_walk_in else (bill.customer.name if bill.customer else "")
+        total_amount = bill.total_amount
+        paid_amount = bill.paid_amount
+        outstanding = bill.outstanding
+
+        total_amount_sum += total_amount
+        paid_amount_sum += paid_amount
+        outstanding_sum += outstanding
+
+        ws.cell(row=row, column=1, value=f"#{bill.pk:04d}")
+        ws.cell(row=row, column=2, value=bill.bill_date.strftime("%Y-%m-%d") if bill.bill_date else "")
+        ws.cell(row=row, column=3, value=customer_name)
+        ws.cell(row=row, column=4, value=bill.get_status_display())
+        ws.cell(row=row, column=5, value=bill.get_payment_type_display())
+        ws.cell(row=row, column=6, value=float(total_amount))
+        ws.cell(row=row, column=7, value=float(paid_amount))
+        ws.cell(row=row, column=8, value=float(outstanding))
+        row += 1
+
+    # Add totals row
+    ws.cell(row=row, column=5, value="Totals:")
+    ws.cell(row=row, column=5).font = header_font
+    
+    total_cell = ws.cell(row=row, column=6, value=float(total_amount_sum))
+    total_cell.font = header_font
+    
+    paid_cell = ws.cell(row=row, column=7, value=float(paid_amount_sum))
+    paid_cell.font = header_font
+    
+    out_cell = ws.cell(row=row, column=8, value=float(outstanding_sum))
+    out_cell.font = header_font
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = 'attachment; filename="bills.xlsx"'
+    wb.save(response)
+    return response
 
 
 # ------------------------------------------------------------------ cheques

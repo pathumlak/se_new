@@ -109,7 +109,7 @@
           <p class="text-[10px] font-semibold text-blue-400 tracking-widest uppercase mt-0.5">Plastics ERP</p>
         </div>
       </a>
-      <button id="sidebar-close" class="text-slate-500 hover:text-white lg:hidden" aria-label="Close">
+      <button class="sidebar-toggle text-slate-500 hover:text-white lg:hidden" aria-label="Close">
         <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
         </svg>
@@ -344,11 +344,11 @@
   </aside>
 
   <!-- ═══════════════════════ MAIN ═══════════════════════ -->
-  <div class="lg:pl-64">
+  <div id="main-content" class="transition-all duration-200 ease-in-out lg:pl-64">
 
     <!-- Top bar -->
     <header class="topbar sticky top-0 z-20 flex h-14 items-center gap-4 px-4 sm:px-6">
-      <button id="sidebar-open" class="text-slate-500 hover:text-slate-800 lg:hidden" aria-label="Open navigation">
+      <button class="sidebar-toggle text-slate-500 hover:text-slate-800" aria-label="Toggle navigation">
         <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
         </svg>
@@ -417,23 +417,51 @@
   (function () {
     const sidebar = document.getElementById('sidebar');
     const backdrop = document.getElementById('sidebar-backdrop');
-    const openBtn = document.getElementById('sidebar-open');
-    const closeBtn = document.getElementById('sidebar-close');
-    function openSidebar() {
-      sidebar.classList.remove('-translate-x-full');
-      backdrop.classList.remove('hidden');
-      document.body.classList.add('overflow-hidden');
+    const toggleBtns = document.querySelectorAll('.sidebar-toggle');
+    const mainContent = document.getElementById('main-content');
+
+    function toggleSidebar() {
+      const isDesktop = window.innerWidth >= 1024;
+      
+      if (isDesktop) {
+        sidebar.classList.toggle('lg:translate-x-0');
+        mainContent.classList.toggle('lg:pl-64');
+      } else {
+        if (sidebar.classList.contains('-translate-x-full')) {
+          sidebar.classList.remove('-translate-x-full');
+          backdrop.classList.remove('hidden');
+          document.body.classList.add('overflow-hidden');
+        } else {
+          sidebar.classList.add('-translate-x-full');
+          backdrop.classList.add('hidden');
+          document.body.classList.remove('overflow-hidden');
+        }
+      }
     }
-    function closeSidebar() {
-      sidebar.classList.add('-translate-x-full');
-      backdrop.classList.add('hidden');
-      document.body.classList.remove('overflow-hidden');
+
+    function closeMobileSidebar() {
+      const isDesktop = window.innerWidth >= 1024;
+      if (!isDesktop && !sidebar.classList.contains('-translate-x-full')) {
+        sidebar.classList.add('-translate-x-full');
+        backdrop.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+      }
     }
-    openBtn.addEventListener('click', openSidebar);
-    closeBtn.addEventListener('click', closeSidebar);
-    backdrop.addEventListener('click', closeSidebar);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSidebar(); });
-    window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => { if (e.matches) closeSidebar(); });
+
+    toggleBtns.forEach(btn => btn.addEventListener('click', toggleSidebar));
+    backdrop.addEventListener('click', closeMobileSidebar);
+    document.addEventListener('keydown', (e) => { 
+      if (e.key === 'Escape') closeMobileSidebar(); 
+    });
+    
+    window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => { 
+      if (e.matches) {
+        // Reset mobile specific open states when resizing to desktop
+        sidebar.classList.add('-translate-x-full');
+        backdrop.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+      } 
+    });
   })();
 </script>
 

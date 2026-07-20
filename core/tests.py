@@ -6352,3 +6352,28 @@ class CustomerListExcelTests(UserFactoryMixin, TestCase):
 
 
 
+class BillListExcelTests(UserFactoryMixin, TestCase):
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        
+        self.customer = Customer.objects.create(name="Bill Customer", phone="123")
+        self.bill = Bill.objects.create(
+            customer=self.customer,
+            bill_date=timezone.now().date(),
+            total_amount=Decimal("150.00"),
+            paid_amount=Decimal("50.00"),
+            status=Bill.Status.PAID,
+            payment_type=Bill.PaymentType.FULL_CASH,
+        )
+
+    def test_bill_list_excel_download(self):
+        url = reverse("core:bill_list_excel")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("bills.xlsx", response["Content-Disposition"])
