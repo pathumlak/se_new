@@ -7766,6 +7766,44 @@ def order_delivery_note_excel(request, pk):
                 
             cell.border = Border(top=top, bottom=bottom, left=left, right=right)
 
+    # ===================== WATERMARK LOGO =====================
+    import os
+    from openpyxl.drawing.image import Image as XLImage
+
+    logo_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "static", "images", "logo.jpeg"
+    )
+    if os.path.exists(logo_path):
+        try:
+            from PIL import Image as PILImage
+            # Open and convert to RGBA so we can set opacity
+            pil_img = PILImage.open(logo_path).convert("RGBA")
+
+            # Scale to a nice watermark size (200x200 max, keeping aspect ratio)
+            pil_img.thumbnail((200, 200), PILImage.LANCZOS)
+            w, h = pil_img.size
+
+            # Apply 20% opacity for a subtle watermark effect
+            r_ch, g_ch, b_ch, a_ch = pil_img.split()
+            a_ch = a_ch.point(lambda p: int(p * 0.20))
+            pil_img = PILImage.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
+
+            # Save the faded image to a BytesIO buffer as PNG
+            wm_buf = BytesIO()
+            pil_img.save(wm_buf, format="PNG")
+            wm_buf.seek(0)
+
+            xl_img = XLImage(wm_buf)
+            xl_img.width = w
+            xl_img.height = h
+
+            # Position roughly in the centre of the sheet (around row 10, col C)
+            xl_img.anchor = "C10"
+            ws.add_image(xl_img)
+        except Exception:
+            pass  # Never let watermark failure break the download
+
     # --------------- write and return ---------------
     stream = BytesIO()
     wb.save(stream)
