@@ -3194,13 +3194,25 @@ def bill_detail(request, pk):
         balance_before = ZERO
         owed_now = ZERO
 
+    import re
+    items_qs = bill.items.select_related("product")
+    items = []
+    for item in items_qs:
+        size_str = item.product.size or ""
+        clean_name = item.product.name
+        if size_str and clean_name.upper().startswith(size_str.upper()):
+            clean_name = clean_name[len(size_str):].strip()
+        clean_name = re.sub(r'\s*-\s*(SENOVKA|KRISHAN|SURESH)$', '', clean_name, flags=re.IGNORECASE).strip()
+        item.clean_name = clean_name
+        items.append(item)
+
     return render(
         request,
         "core/bill_detail.html",
         {
             "bill": bill,
             "reverses": json.dumps(_reversal_summary(bill)),
-            "items": bill.items.select_related("product"),
+            "items": items,
             "payments": bill.payments.prefetch_related("cheques", "transfers"),
             # The bill records how it moved the balance, so the reading at the
             # time it was saved can be recovered without a full ledger replay.

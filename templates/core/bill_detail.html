@@ -7,14 +7,66 @@
 {% block extra_head %}
 <style>
   @media print {
-    #sidebar, #sidebar-backdrop, header, .no-print { display: none !important; }
-    .lg\:pl-64 { padding-left: 0 !important; }
-    main { padding: 0 !important; }
-    body { background: #fff !important; }
-    .print-plain { border: 0 !important; box-shadow: none !important; }
-    thead { display: table-header-group; }
-    tr { break-inside: avoid; }
-    @page { size: A4; margin: 12mm; }
+    /* Hide everything else */
+    body > div, body > header, body > main, .no-print, #sidebar, #sidebar-backdrop {
+      display: none !important;
+    }
+    
+    /* Show print container */
+    #print-container, #print-container * {
+      visibility: visible !important;
+      display: block !important;
+    }
+    
+    #print-container {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      color: #000000 !important;
+      background: #ffffff !important;
+      font-size: 13px;
+    }
+    
+    #print-container table {
+      display: table !important;
+      width: 100% !important;
+      border-collapse: collapse !important;
+    }
+    
+    #print-container tr {
+      display: table-row !important;
+    }
+    
+    #print-container th, #print-container td {
+      display: table-cell !important;
+      border: 1px solid #000000 !important;
+      color: #000000 !important;
+    }
+    
+    #print-container thead {
+      display: table-header-group !important;
+    }
+    
+    #print-container .flex-layout {
+      display: flex !important;
+      justify-content: space-between !important;
+    }
+    
+    #print-container .grid-layout {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      gap: 15px !important;
+    }
+
+    #print-container .no-border-table td {
+      border: none !important;
+    }
+    
+    @page {
+      size: A4;
+      margin: 15mm 10mm 15mm 10mm;
+    }
   }
 </style>
 {% endblock %}
@@ -124,10 +176,10 @@
             {% for item in items %}
               <tr>
                 <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-                  {{ item.product.name }}
+                  {{ item.clean_name }}
                   <a href="{% url 'core:stock_ledger' item.product.pk %}"
                      class="no-print ml-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 hover:underline"
-                     title="Open the stock ledger for {{ item.product.name }}">
+                     title="Open the stock ledger for {{ item.clean_name }}">
                     Stock
                   </a>
                 </td>
@@ -324,6 +376,134 @@
   </div>
 </div>
 
+  <!-- ===================== PRINT ONLY INVOICE ===================== -->
+  <div id="print-container" class="hidden">
+    <!-- Watermark Logo -->
+    <div style="position: absolute; top: 35%; left: 25%; opacity: 0.08; z-index: -1; pointer-events: none;">
+      <img src="/static/images/logo.jpeg" alt="Watermark" style="width: 320px; filter: grayscale(100%);">
+    </div>
+
+    <!-- Header Section -->
+    <div class="flex-layout" style="border-bottom: 2px solid #000000; padding-bottom: 12px; margin-bottom: 20px;">
+      <div>
+        <img src="/static/images/logo.jpeg" alt="Logo" style="height: 55px; filter: grayscale(100%);">
+        <h1 style="font-size: 20px; font-weight: 800; color: #000000; margin: 5px 0 0 0; text-transform: uppercase; letter-spacing: 0.5px;">SENOVKA PLASTICS</h1>
+        <p style="font-size: 11px; margin: 2px 0 0 0; color: #000000; font-weight: 500;">High Quality PVC Products & Accessories</p>
+      </div>
+      <div style="text-align: right;">
+        <h2 style="font-size: 22px; font-weight: 800; color: #000000; margin: 0 0 5px 0; text-transform: uppercase;">INVOICE / BILL</h2>
+        <p style="font-size: 13px; font-weight: 700; color: #000000; margin: 2px 0;">Invoice No: #{{ bill.pk }}</p>
+        <p style="font-size: 12px; color: #000000; margin: 2px 0;">Date: {{ bill.bill_date|date:"j M Y" }}</p>
+        <p style="font-size: 12px; color: #000000; margin: 2px 0;">Payment: {{ bill.get_payment_type_display }}</p>
+      </div>
+    </div>
+
+    <!-- Details Section -->
+    <div class="grid-layout" style="margin-bottom: 20px;">
+      <div>
+        <h3 style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #000000; margin-bottom: 4px; border-bottom: 1px solid #000000; padding-bottom: 2px; width: 60px;">Bill To:</h3>
+        <p style="font-size: 13px; font-weight: 800; color: #000000; margin: 2px 0;">
+          {% if bill.is_walk_in %}{{ bill.walk_in_name }} (Walk-in){% else %}{{ bill.customer.name }}{% endif %}
+        </p>
+        {% if not bill.is_walk_in %}
+          {% if bill.customer.phone %}<p style="font-size: 11px; color: #000000; margin: 2px 0;">Phone: {{ bill.customer.phone }}</p>{% endif %}
+          {% if bill.customer.email %}<p style="font-size: 11px; color: #000000; margin: 2px 0;">Email: {{ bill.customer.email }}</p>{% endif %}
+          {% if bill.customer.address %}<p style="font-size: 11px; color: #000000; margin: 2px 0; white-space: pre-wrap;">Address: {{ bill.customer.address }}</p>{% endif %}
+        {% endif %}
+      </div>
+      <div style="text-align: right;">
+        <h3 style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #000000; margin-bottom: 4px; border-bottom: 1px solid #000000; padding-bottom: 2px; display: inline-block; width: 60px;">Status:</h3>
+        <p style="font-size: 14px; font-weight: 800; text-transform: uppercase; color: #000000; margin: 2px 0;">{{ bill.get_status_display }}</p>
+      </div>
+    </div>
+
+    <!-- Items Table -->
+    <table style="width: 100%; border: 1px solid #000000; margin-bottom: 25px;">
+      <thead>
+        <tr style="background-color: #f3f4f6;">
+          <th style="padding: 6px; text-align: left; font-size: 11px; font-weight: 800; text-transform: uppercase; width: 35px;">#</th>
+          <th style="padding: 6px; text-align: left; font-size: 11px; font-weight: 800; text-transform: uppercase;">Product</th>
+          <th style="padding: 6px; text-align: left; font-size: 11px; font-weight: 800; text-transform: uppercase; width: 80px;">Size</th>
+          <th style="padding: 6px; text-align: right; font-size: 11px; font-weight: 800; text-transform: uppercase; width: 60px;">Qty</th>
+          <th style="padding: 6px; text-align: right; font-size: 11px; font-weight: 800; text-transform: uppercase; width: 100px;">Price</th>
+          <th style="padding: 6px; text-align: right; font-size: 11px; font-weight: 800; text-transform: uppercase; width: 120px;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td style="padding: 6px; font-size: 12px; color: #000000;">{{ forloop.counter }}</td>
+            <td style="padding: 6px; font-size: 12px; font-weight: 700; color: #000000;">{{ item.clean_name }}</td>
+            <td style="padding: 6px; font-size: 12px; color: #000000;">{{ item.product.size|default:"—" }}</td>
+            <td style="padding: 6px; text-align: right; font-size: 12px; color: #000000;">{{ item.qty|floatformat:"-3" }}</td>
+            <td style="padding: 6px; text-align: right; font-size: 12px; color: #000000;">{{ item.unit_price|floatformat:2|intcomma }}</td>
+            <td style="padding: 6px; text-align: right; font-size: 12px; font-weight: 700; color: #000000;">{{ item.line_total|floatformat:2|intcomma }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <!-- Totals & Notes -->
+    <div class="flex-layout" style="align-items: flex-start;">
+      <div style="width: 55%;">
+        {% if bill.notes %}
+          <h4 style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #000000; margin: 0 0 4px 0;">Notes:</h4>
+          <p style="font-size: 11px; color: #000000; margin: 0; line-height: 1.4; white-space: pre-wrap;">{{ bill.notes }}</p>
+        {% endif %}
+      </div>
+      <div style="width: 40%;">
+        <table class="no-border-table" style="width: 100%; font-size: 12px;">
+          <tr>
+            <td style="padding: 3px 0; color: #000000; font-weight: 500;">Subtotal</td>
+            <td style="padding: 3px 0; text-align: right; color: #000000; font-weight: 700;">{{ bill.subtotal|floatformat:2|intcomma }}</td>
+          </tr>
+          {% if bill.delivery_charge %}
+            <tr>
+              <td style="padding: 3px 0; color: #000000; font-weight: 500;">Delivery charge</td>
+              <td style="padding: 3px 0; text-align: right; color: #000000; font-weight: 700;">+{{ bill.delivery_charge|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endif %}
+          {% if bill.discount_amount %}
+            <tr>
+              <td style="padding: 3px 0; color: #000000; font-weight: 500;">Discount</td>
+              <td style="padding: 3px 0; text-align: right; color: #000000; font-weight: 700;">-{{ bill.discount_amount|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endif %}
+          <tr style="border-t: 1px solid #000000 !important;">
+            <td style="padding: 6px 0; color: #000000; font-weight: 800; font-size: 13px;">Grand Total</td>
+            <td style="padding: 6px 0; text-align: right; color: #000000; font-weight: 800; font-size: 14px;">Rs {{ bill.total_amount|floatformat:2|intcomma }}</td>
+          </tr>
+          {% if bill.credit_applied %}
+            <tr>
+              <td style="padding: 3px 0; color: #000000; font-weight: 500;">Credit Applied</td>
+              <td style="padding: 3px 0; text-align: right; color: #000000; font-weight: 700;">-{{ bill.credit_applied|floatformat:2|intcomma }}</td>
+            </tr>
+            <tr style="border-t: 1px solid #000000 !important;">
+              <td style="padding: 6px 0; color: #000000; font-weight: 800; font-size: 13px;">Amount to Collect</td>
+              <td style="padding: 6px 0; text-align: right; color: #000000; font-weight: 800; font-size: 14px;">Rs {{ bill.amount_to_collect|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+
+    <!-- Signatures -->
+    <div class="flex-layout" style="margin-top: 70px; border-top: 1px dashed #000000; padding-top: 15px; text-align: center;">
+      <div style="width: 30%;">
+        <div style="border-bottom: 1px solid #000000; width: 120px; margin: 0 auto 5px auto; height: 35px;"></div>
+        <p style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #000000; margin: 0;">Customer Signature</p>
+      </div>
+      <div style="width: 30%;">
+        <div style="border-bottom: 1px solid #000000; width: 120px; margin: 0 auto 5px auto; height: 35px;"></div>
+        <p style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #000000; margin: 0;">Prepared By</p>
+      </div>
+      <div style="width: 30%;">
+        <div style="border-bottom: 1px solid #000000; width: 120px; margin: 0 auto 5px auto; height: 35px;"></div>
+        <p style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #000000; margin: 0;">Authorized Signature</p>
+      </div>
+    </div>
+  </div>
+
 {% if is_super_admin %}
   {% include "core/_bill_delete_modal.html" %}
 {% endif %}
@@ -333,7 +513,17 @@
 <script>
   (function () {
     const btn = document.getElementById('print-bill');
-    if (btn) btn.addEventListener('click', function () { window.print(); });
+    if (btn) {
+      btn.addEventListener('click', function () { window.print(); });
+    }
+    
+    // Auto-trigger print if ?print=1 is in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('print') === '1') {
+      window.onload = function() {
+        window.print();
+      }
+    }
   })();
 </script>
 {% endblock %}

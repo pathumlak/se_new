@@ -159,6 +159,10 @@
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   View
                 </a>
+                <a href="{% url 'core:bill_detail' bill.pk %}?print=1" target="_blank"
+                   class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  Print
+                </a>
                 <a href="{% url 'core:bill_edit' bill.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
