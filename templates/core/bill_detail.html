@@ -7,25 +7,36 @@
 {% block extra_head %}
 <style>
   @media print {
-    /* Hide everything else */
-    body > div, body > header, body > main, .no-print, #sidebar, #sidebar-backdrop {
+    /* Hide specific non-printed elements only */
+    #sidebar, #sidebar-backdrop, header, .no-print {
       display: none !important;
     }
     
-    /* Show print container */
+    /* Reset main layout styles so the content starts at the top-left */
+    #main-content {
+      padding-left: 0 !important;
+      margin: 0 !important;
+    }
+    
+    main {
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    
+    /* Ensure print container shows up */
     #print-container, #print-container * {
       visibility: visible !important;
       display: block !important;
     }
     
     #print-container {
-      position: absolute;
-      left: 0;
-      top: 0;
-      width: 100%;
+      position: absolute !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
       color: #000000 !important;
       background: #ffffff !important;
-      font-size: 13px;
+      font-size: 13px !important;
     }
     
     #print-container table {
@@ -72,6 +83,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="no-print">
 
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -375,6 +387,7 @@
     </div>
   </div>
 </div>
+</div> <!-- /no-print -->
 
   <!-- ===================== PRINT ONLY INVOICE ===================== -->
   <div id="print-container" class="hidden">
