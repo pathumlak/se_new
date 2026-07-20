@@ -7442,6 +7442,7 @@ def order_delivery_note_excel(request, pk):
     Columns like 'Issued quantity' and 'Checked at customers place' are left
     blank for manual filling after printing.
     """
+    import re
     from io import BytesIO
 
     from openpyxl import Workbook
@@ -7482,9 +7483,10 @@ def order_delivery_note_excel(request, pk):
         return cell
 
     # --------------- column widths (6 columns: A-F) ---------------
-    ws.column_dimensions["A"].width = 16
+    # We will compute auto column widths later, but set some reasonable minimums
+    ws.column_dimensions["A"].width = 12
     ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["C"].width = 25
     ws.column_dimensions["D"].width = 14
     ws.column_dimensions["E"].width = 18
     ws.column_dimensions["F"].width = 24
@@ -7565,9 +7567,19 @@ def order_delivery_note_excel(request, pk):
     # ===================== ITEM ROWS =====================
     r = 9
     for i, item in enumerate(items, start=1):
+        size_str = item.product.size or ""
+        clean_name = item.product.name
+        
+        # Remove size prefix if present
+        if size_str and clean_name.upper().startswith(size_str.upper()):
+            clean_name = clean_name[len(size_str):].strip()
+            
+        # Remove brand suffixes like - SENOVKA, -SURESH, -KRISHAN
+        clean_name = re.sub(r'\s*-\s*(SENOVKA|KRISHAN|SURESH)$', '', clean_name, flags=re.IGNORECASE).strip()
+
         styled_cell(r, 1, i, alignment=center)
-        styled_cell(r, 2, item.product.size or "", alignment=center)
-        styled_cell(r, 3, item.product.name, alignment=center)
+        styled_cell(r, 2, size_str, alignment=center)
+        styled_cell(r, 3, clean_name, alignment=center)
         styled_cell(r, 4, int(item.qty) if item.qty == int(item.qty) else float(item.qty),
                     alignment=center)
         styled_cell(r, 5, "", alignment=center)  # Issued quantity — blank
@@ -7658,6 +7670,50 @@ def order_delivery_note_excel(request, pk):
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 1
     ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    # ===================== GLOBAL FORMATTING =====================
+    from openpyxl.utils import get_column_letter
+
+    grid_end_row = r - 2  # The "RECEIVED" row
+
+    # 1. Row height 25
+    for row_idx in range(1, r + 1):
+        ws.row_dimensions[row_idx].height = 25
+
+    # 2. Auto column adjust (based on table headers and content)
+    for col_idx in range(1, 7):
+        max_length = 0
+        letter = get_column_letter(col_idx)
+        for row_idx in range(8, r):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val:
+                max_length = max(max_length, len(str(val)))
+        
+        # Make sure the minimum isn't too small, give it some padding
+        ws.column_dimensions[letter].width = max(max_length + 3, 14)
+
+    # 3. Thick outside borders
+    thick = Side(style="medium")
+    for row_idx in range(1, grid_end_row + 1):
+        for col_idx in range(1, 7):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            b = cell.border
+            
+            top = b.top if b and b.top else thin
+            bottom = b.bottom if b and b.bottom else thin
+            left = b.left if b and b.left else thin
+            right = b.right if b and b.right else thin
+            
+            if row_idx == 1:
+                top = thick
+            if row_idx == grid_end_row:
+                bottom = thick
+            if col_idx == 1:
+                left = thick
+            if col_idx == 6:
+                right = thick
+                
+            cell.border = Border(top=top, bottom=bottom, left=left, right=right)
 
     # --------------- write and return ---------------
     stream = BytesIO()
