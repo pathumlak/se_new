@@ -6261,3 +6261,63 @@ class UserManagementTests(UserFactoryMixin, TestCase):
         seen = "".join(generate_password() for _ in range(200))
         for char in "Il1O0":
             self.assertNotIn(char, seen)
+
+
+class OrderTests(UserFactoryMixin, TestCase):
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        self.category = Category.objects.create(name="Plastics")
+        self.product = Product.objects.create(
+            name="elbow", size="50mm", category=self.category, default_price=10.00
+        )
+        self.customer = Customer.objects.create(name="Mr Farhan")
+
+    def test_order_delivery_note_excel(self):
+        from core.models import Order, OrderItem
+        order = Order.objects.create(
+            customer=self.customer,
+            order_date=date.today(),
+            created_by=self.admin,
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=self.product,
+            qty=400,
+            unit_price=10.00,
+            line_total=4000.00,
+        )
+        order.recalculate()
+
+        url = reverse("core:order_delivery_note", args=[order.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("issue_note_ORD-", response["Content-Disposition"])
+
+
+class StockLedgerTests(UserFactoryMixin, TestCase):
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        self.category = Category.objects.create(name="Plastics")
+        self.product = Product.objects.create(
+            name="elbow", size="50mm", category=self.category, qty=100
+        )
+
+    def test_stock_ledger_excel_download(self):
+        url = reverse("core:stock_ledger_excel", args=[self.product.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("stock_ledger_elbow_", response["Content-Disposition"])
+
+

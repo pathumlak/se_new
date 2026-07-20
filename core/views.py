@@ -1005,6 +1005,169 @@ def stock_ledger(request, pk):
     )
 
 
+@login_required
+def stock_ledger_excel(request, pk):
+    """Export one product's full movement history as an Excel sheet.
+    Respects the active month filter.
+    """
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+    product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
+    ledger = _stock_ledger_rows(product)
+    rows = ledger["rows"]
+
+    month_filter = get_month_filter(request)
+    if not month_filter.is_all_time:
+        rows = [
+            r for r in rows
+            if month_filter.start <= r["date"] <= month_filter.end
+        ]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stock Ledger"
+
+    # style definitions
+    thin = Side(style="thin")
+    border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
+    bold = Font(bold=True)
+    bold_large = Font(bold=True, size=14)
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    # header fills
+    header_fill = PatternFill("solid", fgColor="1F2937") # Dark gray
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    # transaction type coloring
+    fill_opening = PatternFill("solid", fgColor="F3F4F6") # Light gray
+    fill_production = PatternFill("solid", fgColor="ECFDF5") # Emerald
+    fill_supplier = PatternFill("solid", fgColor="F0F9FF") # Sky blue
+    fill_sale = PatternFill("solid", fgColor="FFF1F2") # Rose
+    fill_adjust = PatternFill("solid", fgColor="FEF3C7") # Amber
+
+    # Set Column Widths
+    ws.column_dimensions["A"].width = 15 # Date
+    ws.column_dimensions["B"].width = 18 # Type
+    ws.column_dimensions["C"].width = 16 # Production (+)
+    ws.column_dimensions["D"].width = 18 # Cumulative Prod.
+    ws.column_dimensions["E"].width = 16 # Sales (-)
+    ws.column_dimensions["F"].width = 18 # Running Balance
+    ws.column_dimensions["G"].width = 30 # Customer / Description
+    ws.column_dimensions["H"].width = 15 # Reference / Bill No
+
+    # --- Title & Product details ---
+    ws["A1"] = "Senovka Plastics — Stock Ledger"
+    ws["A1"].font = bold_large
+    ws.merge_cells("A1:H1")
+
+    ws["A2"] = "Product:"; ws["B2"] = product.name; ws["B2"].font = bold
+    ws["C2"] = "Size:"; ws["D2"] = product.size or "—"; ws["D2"].font = bold
+    ws["E2"] = "Category:"; ws["F2"] = product.category.name; ws["F2"].font = bold
+    ws["G2"] = "Period:"; ws["H2"] = month_filter.label; ws["H2"].font = bold
+
+    for cell_addr in ["A2", "C2", "E2", "G2"]:
+        ws[cell_addr].font = Font(bold=True)
+
+    # Summary Cards
+    ws["A4"] = "Opening Balance"; ws["B4"] = float(ledger["opening"])
+    ws["C4"] = "Total Produced"; ws["D4"] = float(ledger["total_produced"])
+    ws["E4"] = "Total Sold"; ws["F4"] = float(ledger["total_sold"])
+    ws["G4"] = "Closing Balance"; ws["H4"] = float(ledger["closing_balance"])
+    
+    ws["B4"].font = bold; ws["D4"].font = bold; ws["F4"].font = bold; ws["H4"].font = bold
+    for cell_addr in ["A4", "C4", "E4", "G4"]:
+        ws[cell_addr].font = Font(bold=True)
+
+    # --- Table Header ---
+    headers = [
+        "Date", "Type", "Production (+)", "Cumulative Prod.", 
+        "Sales (-)", "Running Balance", "Customer / Detail", "Ref / Bill No"
+    ]
+    header_row = 6
+    for idx, name in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = border_all
+
+    # --- Item Rows ---
+    row_num = header_row + 1
+    for r in rows:
+        kind = r["kind"]
+        kind_label = kind.title().replace("_", " ")
+        row_fill = None
+        if kind == "opening":
+            row_fill = fill_opening
+        elif kind == "production" or kind == "oversale":
+            row_fill = fill_production
+        elif kind == "supplier":
+            row_fill = fill_supplier
+        elif kind == "sale":
+            row_fill = fill_sale
+        elif kind in ("adjust_up", "adjust_down"):
+            row_fill = fill_adjust
+
+        # Write cells
+        c_date = ws.cell(row=row_num, column=1, value=r["date"].strftime("%d %b %Y"))
+        c_type = ws.cell(row=row_num, column=2, value=kind_label)
+        
+        c_prod = ws.cell(row=row_num, column=3, value=float(r["production"]) if r["production"] is not None else "")
+        c_cum = ws.cell(row=row_num, column=4, value=float(r["total"]) if r["total"] is not None else "")
+        c_sales = ws.cell(row=row_num, column=5, value=float(r["sales"]) if r["sales"] is not None else "")
+        c_bal = ws.cell(row=row_num, column=6, value=float(r["balance"]))
+        c_cust = ws.cell(row=row_num, column=7, value=r["customer"])
+        c_ref = ws.cell(row=row_num, column=8, value=r["bill_number"])
+
+        # Format alignment & number formats
+        c_date.alignment = center
+        c_type.alignment = center
+        c_prod.alignment = right
+        c_cum.alignment = right
+        c_sales.alignment = right
+        c_bal.alignment = right
+        c_cust.alignment = left
+        c_ref.alignment = center
+
+        for cell in (c_prod, c_cum, c_sales, c_bal):
+            cell.number_format = "#,##0.000"
+
+        # Apply borders and fills
+        for c_idx in range(1, 9):
+            cell = ws.cell(row=row_num, column=c_idx)
+            cell.border = border_all
+            if row_fill:
+                cell.fill = row_fill
+            if kind == "opening":
+                cell.font = Font(italic=True)
+
+        row_num += 1
+
+    # Add a thin line under the table
+    for c_idx in range(1, 9):
+        ws.cell(row=row_num, column=c_idx).border = Border(top=thin)
+
+    # --- Write stream ---
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    # clean product name for filename
+    clean_name = product.name.replace(" ", "_").lower()
+    filename_param = month_filter.param if not month_filter.is_all_time else "all"
+    response["Content-Disposition"] = (
+        f'attachment; filename="stock_ledger_{clean_name}_{filename_param}.xlsx"'
+    )
+    return response
+
+
 # ----------------------------------------------------------- customer prices
 # The same CustomerPrice grid seen from either side: all customers for one
 # product, or all products for one customer. Both save through the endpoint
@@ -6940,6 +7103,245 @@ def order_excel(request, pk):
     )
     response["Content-Disposition"] = (
         f'attachment; filename="quotation_{order.reference_no}.xlsx"'
+    )
+    return response
+
+
+@login_required
+def order_delivery_note_excel(request, pk):
+    """Generate an Issue Note / Delivery Note Excel sheet for production.
+
+    This is the form that goes to the production floor alongside the goods.
+    Columns like 'Issued quantity' and 'Checked at customers place' are left
+    blank for manual filling after printing.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    order = get_object_or_404(
+        Order.objects.select_related("customer"), pk=pk
+    )
+    items = list(order.items.select_related("product"))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Issue Note"
+
+    # --------------- style constants ---------------
+    thin = Side(style="thin")
+    border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
+    bold = Font(bold=True)
+    bold_big = Font(bold=True, size=14)
+    bold_italic = Font(bold=True, italic=True, size=12)
+    italic_small = Font(italic=True, size=9)
+    center = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+    right_align = Alignment(horizontal="right", vertical="center")
+
+    def styled_cell(row, col, value="", font=None, alignment=None,
+                    fill=None, border=border_all):
+        """Write a cell and apply styles in one call."""
+        cell = ws.cell(row=row, column=col, value=value)
+        if font:
+            cell.font = font
+        if alignment:
+            cell.alignment = alignment
+        if fill:
+            cell.fill = fill
+        if border is not None:
+            cell.border = border
+        return cell
+
+    # --------------- column widths (6 columns: A-F) ---------------
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 18
+    ws.column_dimensions["F"].width = 24
+
+    # ===================== ROW 1: ORDER No / ISSUE NOTE / SENOVKA PLASTICS =====================
+    r = 1
+    styled_cell(r, 1, "ORDER No:", bold)
+    styled_cell(r, 2, order.reference_no, bold)
+    # Style cells before merging
+    styled_cell(r, 3, "ISSUE NOTE", bold_big, center)
+    styled_cell(r, 4, "")
+    styled_cell(r, 5, "SENOVKA PLASTICS", bold_italic, center)
+    styled_cell(r, 6, "")
+    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+
+    # ===================== ROW 2: Issued Date / Invoice No =====================
+    r = 2
+    styled_cell(r, 1, "Issued Date", bold)
+    styled_cell(r, 2, order.order_date.strftime("%d/%m/%Y"))
+    styled_cell(r, 3, "")
+    styled_cell(r, 4, "")
+    styled_cell(r, 5, "")
+    styled_cell(r, 6, f"Invoice No - {order.reference_no}", bold)
+
+    # ===================== ROW 3: Name of customer =====================
+    r = 3
+    styled_cell(r, 1, "Name of customer", bold)
+    styled_cell(r, 2, order.display_customer, bold)
+    for c in range(3, 7):
+        styled_cell(r, c, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+
+    # ===================== ROW 4: Driver =====================
+    r = 4
+    styled_cell(r, 1, "Driver", bold, center)
+    for c in range(2, 7):
+        styled_cell(r, c, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+
+    # ===================== ROW 5: Helper =====================
+    r = 5
+    styled_cell(r, 1, "Helper", bold, center)
+    for c in range(2, 7):
+        styled_cell(r, c, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+
+    # ===================== ROW 6: Loaded By =====================
+    r = 6
+    styled_cell(r, 1, "Loaded By", bold, center)
+    styled_cell(r, 2, "Name :-")
+    styled_cell(r, 3, "")
+    styled_cell(r, 4, "")
+    styled_cell(r, 5, "Sign:-")
+    styled_cell(r, 6, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+
+    # ===================== ROW 7: Unloaded By =====================
+    r = 7
+    styled_cell(r, 1, "Unloaded By", bold, center)
+    styled_cell(r, 2, "Name :-")
+    styled_cell(r, 3, "")
+    styled_cell(r, 4, "")
+    styled_cell(r, 5, "Sign:-")
+    styled_cell(r, 6, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+
+    # ===================== ROW 8: Items table header =====================
+    r = 8
+    header_fill = PatternFill("solid", fgColor="D9E1F2")
+    headers = ["No", "Size", "Item name", "Quantity", "Issued quantity",
+               "Checked at customers place"]
+    for idx, name in enumerate(headers, start=1):
+        styled_cell(r, idx, name, bold, center, header_fill)
+
+    # ===================== ITEM ROWS =====================
+    r = 9
+    for i, item in enumerate(items, start=1):
+        styled_cell(r, 1, i, alignment=center)
+        styled_cell(r, 2, item.product.size or "", alignment=center)
+        styled_cell(r, 3, item.product.name, alignment=center)
+        styled_cell(r, 4, int(item.qty) if item.qty == int(item.qty) else float(item.qty),
+                    alignment=center)
+        styled_cell(r, 5, "", alignment=center)  # Issued quantity — blank
+        styled_cell(r, 6, "", alignment=center)  # Checked at customers place — blank
+        r += 1
+
+    # Add a few empty rows for manual additions (extra items)
+    for _ in range(3):
+        for c in range(1, 7):
+            styled_cell(r, c, "", alignment=center)
+        r += 1
+
+    # ===================== EMPTY SPACER ROW =====================
+    for c in range(1, 7):
+        styled_cell(r, c, "", border=None)
+    r += 1
+
+    # ===================== PAYMENT SECTION =====================
+    # "PAYMENT" header row
+    for c in range(1, 7):
+        styled_cell(r, c, "")
+    styled_cell(r, 1, "PAYMENT", Font(bold=True, italic=True, size=11), center)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+    r += 1
+
+    # Cheque / Cash header
+    for c in range(1, 7):
+        styled_cell(r, c, "")
+    styled_cell(r, 1, "Cheque", bold, center)
+    styled_cell(r, 4, "Cash", bold, center)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=6)
+    r += 1
+
+    # Cheque No / Value sub-header
+    styled_cell(r, 1, "Cheque No", bold, center)
+    styled_cell(r, 2, "Value", bold, center)
+    styled_cell(r, 3, "")
+    styled_cell(r, 4, "")
+    styled_cell(r, 5, "")
+    styled_cell(r, 6, "")
+    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+    r += 1
+
+    # Empty cheque/cash rows (2 rows for manual filling)
+    for _ in range(2):
+        styled_cell(r, 1, "")
+        styled_cell(r, 2, "")
+        styled_cell(r, 3, "")
+        styled_cell(r, 4, "")
+        styled_cell(r, 5, "")
+        styled_cell(r, 6, "")
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+        r += 1
+
+    # Payment Received / OFFICE row
+    for row_fill in range(r, r + 3):
+        for c in range(1, 7):
+            styled_cell(row_fill, c, "")
+    styled_cell(r, 1, "Payment Received", bold, center)
+    styled_cell(r, 4, "OFFICE", bold, center)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r + 2, end_column=3)
+    ws.merge_cells(start_row=r, start_column=4, end_row=r + 2, end_column=6)
+    r += 3
+
+    # ===================== EMPTY SPACER =====================
+    for c in range(1, 7):
+        styled_cell(r, c, "", border=None)
+    r += 1
+
+    # ===================== FOOTER =====================
+    for c in range(1, 7):
+        styled_cell(r, c, "")
+    styled_cell(r, 1, "RECEIVED THE ABOVE GOODS IN ORDER", bold)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+    r += 2
+
+    # Customer signature footer (no border)
+    for c in range(4, 7):
+        styled_cell(r, c, "", border=None)
+    styled_cell(r, 4, "Customer's signature with rubber stamp",
+                italic_small, right_align, border=None)
+    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=6)
+
+    # ===================== PRINT SETTINGS =====================
+    ws.print_area = f"A1:F{r}"
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    # --------------- write and return ---------------
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="issue_note_{order.reference_no}.xlsx"'
     )
     return response
 

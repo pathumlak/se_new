@@ -50,6 +50,11 @@ urlpatterns = [
         views.stock_ledger,
         name="stock_ledger",
     ),
+    path(
+        "products/<int:pk>/stock-ledger/excel/",
+        views.stock_ledger_excel,
+        name="stock_ledger_excel",
+    ),
     # Manual per-product stock corrections. Anyone can add; only a super
     # admin can rewind one.
     path(
@@ -334,6 +339,7 @@ urlpatterns = [
     ),
     path("orders/<int:pk>/pdf/", views.order_pdf, name="order_pdf"),
     path("orders/<int:pk>/excel/", views.order_excel, name="order_excel"),
+    path("orders/<int:pk>/delivery-note/", views.order_delivery_note_excel, name="order_delivery_note"),
 
     # ---- Daily running machine log. Machine master is super-admin;
     # the daily log itself is open to any signed-in user.
