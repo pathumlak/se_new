@@ -361,42 +361,58 @@
   has nowhere to record which account it went to.
 </div>
 
-<!-- ═══════════════ DATE FILTER ═══════════════ -->
-<form method="get" class="mb-5 flex flex-wrap items-end gap-3">
-  <div>
-    <label for="from_date" class="form-label">From</label>
-    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}" class="filter-input">
-  </div>
-  <div>
-    <label for="to_date" class="form-label">To</label>
-    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}" class="filter-input">
-  </div>
-  <div class="flex gap-2">
+<!-- ═══════════════ MONTH FILTER ═══════════════ -->
+<div class="mb-4 flex flex-wrap items-end gap-3">
+  <form method="get" class="flex flex-wrap items-end gap-2">
+    <div>
+      <label for="month" class="form-label">Month</label>
+      <input type="month" id="month" name="month"
+             value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+             class="filter-input">
+    </div>
     <button type="submit" class="btn-filter">
       <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591L15.75 12.5V18a.75.75 0 01-.362.643l-3.75 2.25A.75.75 0 0110.5 20.25V12.5L4.659 7.409A2.25 2.25 0 014 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z"/>
       </svg>
-      Filter
+      Apply
     </button>
-    {% if is_filtered %}
+    <a href="?month=all" class="btn-clear">All time</a>
+    {% if is_filtered and not from_date and not to_date %}
       <a href="{% url 'core:cash_drawer' %}" class="btn-clear">
         <svg class="h-3.5 w-3.5 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
         </svg>
-        Clear
+        Reset to this month
       </a>
     {% endif %}
-    <a href="{% url 'core:cash_drawer_excel' %}?from_date={% if from_date %}{{ from_date|date:'Y-m-d' }}{% endif %}&to_date={% if to_date %}{{ to_date|date:'Y-m-d' }}{% endif %}"
-       class="btn-filter"
-       style="border-color:#a7f3d0;background:#ecfdf5;color:#065f46"
-       title="Download the drawer log as an Excel sheet">
-      <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
-      </svg>
-      Download Excel
-    </a>
+  </form>
+
+  <a href="{% url 'core:cash_drawer_excel' %}?month={{ month_filter.param }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}"
+     class="btn-filter"
+     style="border-color:#a7f3d0;background:#ecfdf5;color:#065f46"
+     title="Download the drawer log as an Excel sheet">
+    <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
+    </svg>
+    Download Excel
+  </a>
+
+  <span class="text-xs text-slate-500">
+    Showing: <strong class="text-slate-800">{{ month_filter.label }}</strong>
+    {% if from_date or to_date %} · custom range{% endif %}
+  </span>
+</div>
+
+
+{% if carried_forward and not month_filter.is_all_time %}
+  <div class="mb-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-1.5 text-xs text-indigo-800">
+    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"/>
+    </svg>
+    Opening balance carried forward from earlier months:
+    <span class="font-semibold">Rs {{ carried_forward|floatformat:2|intcomma }}</span>
   </div>
-</form>
+{% endif %}
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
 

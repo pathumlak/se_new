@@ -477,5 +477,32 @@
 {% endif %}
 
 {% block extra_js %}{% endblock %}
+
+<script>
+  /* ── Global input UX polish ────────────────────────────────────────────────
+     When a number input is focused, select its whole value so the operator
+     can just type over it. Applies to every <input type="number"> on every
+     page — includes ones added later (via event delegation on document).
+     Skips when the input is empty (nothing to select) and when the focus
+     was moved with the keyboard's stepper arrows.
+  */
+  (function () {
+    document.addEventListener('focusin', function (e) {
+      const t = e.target;
+      if (!t || t.tagName !== 'INPUT') return;
+      const type = (t.getAttribute('type') || '').toLowerCase();
+      if (type !== 'number' && type !== 'text' && !t.hasAttribute('data-select-on-focus')) return;
+      // Only meaningful for numeric-ish inputs. Text inputs opt in via
+      // data-select-on-focus so we don't clobber every free-form field.
+      const isNumeric = type === 'number' || t.hasAttribute('data-select-on-focus');
+      if (!isNumeric || !t.value) return;
+      // Delay one tick so Chrome/Safari don't cancel the selection with
+      // their own click-caret placement.
+      setTimeout(function () {
+        try { t.select(); } catch (err) { /* type=date, etc. */ }
+      }, 0);
+    });
+  })();
+</script>
 </body>
 </html>

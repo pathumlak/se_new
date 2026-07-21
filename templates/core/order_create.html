@@ -221,6 +221,63 @@
   </div>
 </template>
 
+<!-- ============================ QTY / PRICE MODAL ============================ -->
+
+<div id="item-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/50 px-4"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <p id="item-modal-name" class="truncate text-base font-semibold text-slate-900"></p>
+        <p id="item-modal-meta" class="mt-0.5 text-xs text-slate-500"></p>
+      </div>
+      <button type="button" id="item-modal-close" aria-label="Close"
+              class="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form id="item-modal-form" class="mt-4 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="item-modal-qty" class="mb-1.5 block text-xs font-medium text-slate-600">Quantity</label>
+          <input type="number" id="item-modal-qty" step="0.001" min="0.001" inputmode="decimal"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label for="item-modal-price" class="mb-1.5 block text-xs font-medium text-slate-600">Unit price</label>
+          <input type="number" id="item-modal-price" step="0.01" min="0" inputmode="decimal"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                        focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+      </div>
+
+      <p id="item-modal-error" class="hidden rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700"></p>
+
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <button type="button" id="item-modal-remove"
+                class="hidden rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50">
+          Remove
+        </button>
+        <div class="ml-auto flex items-center gap-2">
+          <button type="button" id="item-modal-cancel"
+                  class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button type="submit" id="item-modal-submit"
+                  class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Add to quotation
+          </button>
+        </div>
+      </div>
+      <p class="text-center text-[11px] text-slate-400">Press Enter to confirm.</p>
+    </form>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -270,7 +327,26 @@
     let loaded = [];             // full product list from the endpoint
     let currentCategory = '';
     let requestToken = 0;
-    const rows = new Map();       // product_id -> DOM node
+    // product_id -> { node, qty, price }. Storing the values alongside the
+    // node lets the qty/price modal reopen an existing line as an edit.
+    const rows = new Map();
+
+    // ---- qty/price modal handles ----
+    const itemModal    = document.getElementById('item-modal');
+    const itemModalForm = document.getElementById('item-modal-form');
+    const modalName    = document.getElementById('item-modal-name');
+    const modalMeta    = document.getElementById('item-modal-meta');
+    const modalQty     = document.getElementById('item-modal-qty');
+    const modalPrice   = document.getElementById('item-modal-price');
+    const modalError   = document.getElementById('item-modal-error');
+    const modalSubmit  = document.getElementById('item-modal-submit');
+    const modalRemove  = document.getElementById('item-modal-remove');
+    const modalClose   = document.getElementById('item-modal-close');
+    const modalCancel  = document.getElementById('item-modal-cancel');
+    let currentModalProduct = null;
+
+    function openModal(m) { m.classList.remove('hidden'); m.classList.add('flex'); }
+    function closeModal(m) { m.classList.add('hidden'); m.classList.remove('flex'); currentModalProduct = null; }
 
     const MONEY = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     function money(n) { return MONEY.format(n); }
@@ -358,13 +434,30 @@
       const on = rows.has(product.id);
       card.className = 'js-card relative rounded-xl border-2 p-3 text-left transition ' +
         (on ? 'border-emerald-500 bg-emerald-50/40' : 'border-slate-200 bg-white hover:border-slate-400 hover:shadow-sm');
+      // Stock badge — the endpoint returns is_out_of_stock / is_low_stock
+      // already computed against the LOW_STOCK_THRESHOLD setting, so the
+      // three states here don't need to know that number themselves.
+      let stockBadge;
+      if (product.is_out_of_stock) {
+        stockBadge = '<span class="rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-rose-700 ring-1 ring-inset ring-rose-200">Out of stock</span>';
+      } else if (product.is_low_stock) {
+        stockBadge = '<span class="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-inset ring-amber-200">Low: ' + product.qty + '</span>';
+      } else {
+        stockBadge = '<span class="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200">' + product.qty + ' in stock</span>';
+      }
       card.innerHTML =
-        '<p class="truncate text-sm font-semibold text-slate-900">' + product.name + '</p>' +
-        '<p class="truncate text-xs ' + (product.size ? 'text-slate-500' : 'text-slate-300') + '">' + (product.size || 'No size') + '</p>' +
+        '<div class="flex items-start justify-between gap-2">' +
+          '<div class="min-w-0">' +
+            '<p class="truncate text-sm font-semibold text-slate-900">' + product.name + '</p>' +
+            '<p class="truncate text-xs ' + (product.size ? 'text-slate-500' : 'text-slate-300') + '">' + (product.size || 'No size') + '</p>' +
+          '</div>' + stockBadge +
+        '</div>' +
         '<p class="mt-2 text-base font-semibold text-slate-900">' + product.unit_price + '</p>' +
         '<p class="text-[10px] font-semibold uppercase tracking-wide ' + (product.has_custom_price ? 'text-indigo-600' : 'text-slate-400') + '">' +
           (product.has_custom_price ? 'Custom price' : 'Default price') + '</p>';
-      card.addEventListener('click', function () { addProduct(product); });
+      // Click → open the qty/price modal. If the product is already on the
+      // panel, the modal loads with its existing values as an edit.
+      card.addEventListener('click', function () { openItemModal(product); });
       return card;
     }
     searchEl.addEventListener('input', renderGrid);
@@ -382,18 +475,54 @@
     });
 
     // ---- items panel ----
-    function addProduct(product) {
-      if (rows.has(product.id)) {
-        rows.get(product.id).querySelector('.js-qty').focus();
-        return;
+
+    // Open the qty/price modal for one product — used by every card click.
+    // If the product is already on the panel, the modal loads with its
+    // current values so Save updates it in place; otherwise it starts at
+    // qty=1 and the customer-quoted unit price.
+    function openItemModal(product) {
+      const existing = rows.get(product.id);
+      currentModalProduct = product;
+      modalName.textContent = product.name;
+      modalMeta.textContent = (product.size ? product.size + ' · ' : '') +
+        (product.is_out_of_stock ? 'Out of stock' : product.qty + ' in stock');
+      // Colour the stock line to match the card badge.
+      modalMeta.className = 'mt-0.5 text-xs ' +
+        (product.is_out_of_stock ? 'text-rose-700 font-semibold' :
+         product.is_low_stock ? 'text-amber-700 font-semibold' :
+         'text-slate-500');
+      modalQty.value = existing ? existing.qty : '1';
+      modalPrice.value = existing ? existing.price : product.unit_price;
+      modalError.textContent = '';
+      modalError.classList.add('hidden');
+      modalSubmit.textContent = existing ? 'Update' : 'Add to quotation';
+      modalRemove.classList.toggle('hidden', !existing);
+      openModal(itemModal);
+      // Select the qty so the operator can just type over it.
+      setTimeout(function () { modalQty.focus(); modalQty.select(); }, 30);
+    }
+
+    // Called by the modal Save button once qty and price validate.
+    function commitFromModal(product, qty, price) {
+      const existing = rows.get(product.id);
+      if (existing) {
+        // Update the row's inputs (which the panel already renders inline).
+        existing.qty = qty.toFixed(3);
+        existing.price = price.toFixed(2);
+        const node = existing.node;
+        node.querySelector('.js-qty').value = existing.qty;
+        node.querySelector('.js-price').value = existing.price;
+        node.querySelector('.js-line-total').textContent = money(round(qty * price));
+        pushTotals();
+      } else {
+        addRow({
+          product_id: product.id,
+          product_name: product.name,
+          size: product.size,
+          qty: qty.toFixed(3),
+          unit_price: price.toFixed(2),
+        });
       }
-      addRow({
-        product_id: product.id,
-        product_name: product.name,
-        size: product.size,
-        qty: '1',
-        unit_price: product.unit_price,
-      });
       renderGrid();
     }
     function addRow(item) {
@@ -406,10 +535,21 @@
       const totalEl = node.querySelector('.js-line-total');
       qtyEl.value = item.qty;
       priceEl.value = item.unit_price;
+
+      // Track qty/price on the record itself so the modal-driven flow can
+      // read them back for edits — see openItemModal / commitFromModal.
+      const record = {
+        node: node,
+        qty: item.qty,
+        price: item.unit_price,
+      };
+
       function recalc() {
         const q = num(qtyEl.value), p = num(priceEl.value);
         const t = (isNaN(q) || isNaN(p)) ? 0 : round(q * p);
         totalEl.textContent = money(t);
+        record.qty = qtyEl.value;
+        record.price = priceEl.value;
         pushTotals();
       }
       qtyEl.addEventListener('input', recalc);
@@ -421,7 +561,7 @@
         renderGrid();
       });
       itemsList.appendChild(node);
-      rows.set(item.product_id, node);
+      rows.set(item.product_id, record);
       recalc();
     }
 
@@ -429,7 +569,8 @@
     function pushTotals() {
       let subtotal = 0, bad = 0;
       const payload = [];
-      rows.forEach(function (node, id) {
+      rows.forEach(function (record, id) {
+        const node = record.node;
         const q = num(node.querySelector('.js-qty').value);
         const p = num(node.querySelector('.js-price').value);
         if (!(q > 0) || !(p >= 0)) { bad++; return; }
@@ -463,6 +604,70 @@
     discountEl.addEventListener('input', pushTotals);
     reasonEl.addEventListener('input', pushTotals);
     walkinInput.addEventListener('input', pushTotals);
+
+    // ---- qty/price modal wiring ----
+    function modalValidate() {
+      const qty = num(modalQty.value);
+      const price = num(modalPrice.value);
+      let msg = '';
+      if (!(qty > 0)) msg = 'Enter a quantity above 0.';
+      else if (!(price >= 0)) msg = 'Enter a unit price.';
+      if (msg) {
+        modalError.textContent = msg;
+        modalError.classList.remove('hidden');
+        return null;
+      }
+      modalError.classList.add('hidden');
+      return { qty: round(qty), price: round(price) };
+    }
+
+    itemModalForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!currentModalProduct) return;
+      const parsed = modalValidate();
+      if (!parsed) return;
+      commitFromModal(currentModalProduct, parsed.qty, parsed.price);
+      closeModal(itemModal);
+    });
+
+    // Enter on qty jumps to price (so the biller can retype the price if
+    // it's a one-off deal); Enter on price submits.
+    modalQty.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        modalPrice.focus();
+        modalPrice.select();
+      }
+    });
+    modalPrice.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        itemModalForm.requestSubmit();
+      }
+    });
+
+    modalCancel.addEventListener('click', function () { closeModal(itemModal); });
+    modalClose.addEventListener('click', function () { closeModal(itemModal); });
+    itemModal.addEventListener('click', function (e) {
+      if (e.target === itemModal) closeModal(itemModal);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !itemModal.classList.contains('hidden')) {
+        closeModal(itemModal);
+      }
+    });
+
+    modalRemove.addEventListener('click', function () {
+      if (!currentModalProduct) return;
+      const record = rows.get(currentModalProduct.id);
+      if (record) {
+        rows.delete(currentModalProduct.id);
+        record.node.remove();
+        pushTotals();
+        renderGrid();
+      }
+      closeModal(itemModal);
+    });
 
     // ---- init ----
     {% if is_edit and order.customer_id %}

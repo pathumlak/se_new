@@ -32,7 +32,11 @@
         </svg>
       </span>
       <input type="search" name="q" value="{{ query }}"
-             placeholder="Search products…"
+             id="js-live-search"
+             placeholder="Type to filter — press Enter to search all pages"
+             autocomplete="off"
+             data-target="js-product-table"
+             data-empty-hint="js-live-empty"
              class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
                     placeholder:text-slate-400 shadow-sm
                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
@@ -102,9 +106,10 @@
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-slate-100">
+      <tbody class="js-product-table divide-y divide-slate-100">
         {% for product in products %}
-          <tr class="hover:bg-slate-50">
+          <tr class="js-searchable hover:bg-slate-50"
+              data-search="{{ product.name|lower }} {{ product.size|lower }} {{ product.category.name|lower }}">
             <td class="whitespace-nowrap px-5 py-3 font-medium text-slate-900">{{ product.name }}</td>
             <td class="whitespace-nowrap px-5 py-3 text-slate-600">
               {% if product.size %}{{ product.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
@@ -198,6 +203,13 @@
             </td>
           </tr>
         {% endfor %}
+   
+        <tr id="js-live-empty" class="hidden">
+          <td colspan="8" class="px-5 py-8 text-center text-sm text-slate-500">
+            No matches on this page.
+            <span class="text-xs text-slate-400">Press Enter to search all pages.</span>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -248,6 +260,35 @@
 
 {% block extra_js %}
 <script>
+  /* ── Live table filter ──────────────────────────────────────────────────
+     The search input filters visible rows as the operator types. Enter
+     still submits the form for a full server-side search across pages. */
+  (function () {
+    const input = document.getElementById('js-live-search');
+    if (!input) return;
+    const tbody = document.querySelector('.' + input.dataset.target);
+    const emptyHint = document.getElementById(input.dataset.emptyHint);
+    if (!tbody) return;
+
+    const rows = Array.prototype.slice.call(tbody.querySelectorAll('.js-searchable'));
+
+    function apply() {
+      const term = input.value.trim().toLowerCase();
+      let shown = 0;
+      rows.forEach(function (row) {
+        const hay = row.dataset.search || '';
+        const match = !term || hay.indexOf(term) !== -1;
+        row.classList.toggle('hidden', !match);
+        if (match) shown++;
+      });
+      if (emptyHint) {
+        emptyHint.classList.toggle('hidden', !(term.length > 0 && shown === 0 && rows.length > 0));
+      }
+    }
+    input.addEventListener('input', apply);
+    if (input.value.trim()) apply();
+  })();
+
   // ---- is_active quick toggle -------------------------------------------
   (function () {
     const CSRF = '{{ csrf_token }}';

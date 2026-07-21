@@ -523,6 +523,15 @@ def product_list(request):
 
     page_obj = _paginate(request, products)
 
+    # For the native <datalist> autocomplete on the search box. Flat list
+    # of names; the browser filters as the operator types and Enter submits
+    # the form as normal.
+    suggest_names = list(
+        Product.objects.order_by("name")
+        .values_list("name", flat=True)
+        .distinct()
+    )
+
     return render(
         request,
         "core/product_list.html",
@@ -535,6 +544,7 @@ def product_list(request):
             "stock_view": stock_view,
             "is_filtered": bool(query or selected_category or stock_view),
             "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
+            "suggest_names": suggest_names,
         },
     )
 
@@ -1556,6 +1566,17 @@ def customer_list(request):
             "they_owe": totals["total_owed_by"],
         }
 
+    # For the browser's native <datalist> autocomplete on the search box.
+    # A flat list of names — the datalist shows matches as the operator
+    # types and Enter submits the form as it already would. Suppliers /
+    # inactive customers are still in the list because searching for one
+    # you can't see anywhere else is still useful.
+    suggest_names = list(
+        Customer.objects.filter(is_walk_in_account=False)
+        .order_by("name")
+        .values_list("name", flat=True)
+    )
+
     return render(
         request,
         "core/customer_list.html",
@@ -1568,6 +1589,7 @@ def customer_list(request):
             "is_filtered": bool(query or kind or status),
             "customer_stats": customer_stats,
             "supplier_stats": supplier_stats,
+            "suggest_names": suggest_names,
         },
     )
 
@@ -4514,6 +4536,11 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
 
     balance = _cash_drawer_balance()
 
+    # Monthly filter — the same shape used across the rest of the app.
+    # Defaults to the current month so a first page load is scoped, with the
+    # All time toggle to see everything. From/to still accepted as an
+    # optional finer-grain override (used by exports/bookmarks).
+    month_filter = get_month_filter(request)
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
@@ -4522,17 +4549,27 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
         entries = entries.filter(txn_date__gte=from_date)
     if to_date:
         entries = entries.filter(txn_date__lte=to_date)
+    if not from_date and not to_date:
+        entries = month_filter.apply(entries, field="txn_date")
 
     # Oldest first: a running balance read newest-first counts backwards.
     entries = entries.order_by("txn_date", "id")
 
     # Everything before the range still happened, so the running column starts
-    # where the drawer actually stood — not at zero.
-    opening = (
-        _cash_drawer_balance(CashDrawer.objects.filter(txn_date__lt=from_date))
-        if from_date
-        else ZERO
-    )
+    # where the drawer actually stood — not at zero. Whether the range came
+    # from the month filter or from explicit from/to, the same "everything
+    # earlier still counts" rule applies — an undeposited float from last
+    # month rolls forward into this month's opening balance automatically.
+    if from_date:
+        opening = _cash_drawer_balance(
+            CashDrawer.objects.filter(txn_date__lt=from_date)
+        )
+    elif not month_filter.is_all_time:
+        opening = _cash_drawer_balance(
+            CashDrawer.objects.filter(txn_date__lt=month_filter.start)
+        )
+    else:
+        opening = ZERO
 
     rows = []
     running = opening
@@ -4586,7 +4623,17 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
             "total_out": total_out,
             "from_date": from_date,
             "to_date": to_date,
-            "is_filtered": bool(from_date or to_date),
+            "month_filter": month_filter,
+            # The opening is a *carry-forward* whenever the current view is
+            # scoped by month or a from-date — the template surfaces it as
+            # such so the operator can see undeposited cash from earlier
+            # rolling into this scope.
+            "carried_forward": (
+                opening if (not month_filter.is_all_time or from_date) else ZERO
+            ),
+            "is_filtered": bool(
+                from_date or to_date or not month_filter.is_all_time
+            ),
             "kind_choices": CashDrawerOutForm.KIND_CHOICES,
         },
     )

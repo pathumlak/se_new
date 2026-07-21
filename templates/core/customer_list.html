@@ -117,7 +117,11 @@
         </svg>
       </span>
       <input type="search" name="q" value="{{ query }}"
-             placeholder="Search customers…"
+             id="js-live-search"
+             placeholder="Type to filter — press Enter to search all pages"
+             autocomplete="off"
+             data-target="js-customer-table"
+             data-empty-hint="js-live-empty"
              class="block w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
                     placeholder:text-slate-400 shadow-sm
                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
@@ -190,9 +194,10 @@
           <th class="px-5 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-slate-100">
+      <tbody class="js-customer-table divide-y divide-slate-100">
         {% for customer in customers %}
-          <tr class="hover:bg-slate-50">
+          <tr class="js-searchable hover:bg-slate-50"
+              data-search="{{ customer.name|lower }} {{ customer.phone|lower }}">
             <td class="whitespace-nowrap px-5 py-3">
               <a href="{% url 'core:customer_detail' customer.pk %}"
                  class="font-medium text-slate-900 hover:underline">
@@ -298,6 +303,13 @@
             </td>
           </tr>
         {% endfor %}
+      
+        <tr id="js-live-empty" class="hidden">
+          <td colspan="8" class="px-5 py-8 text-center text-sm text-slate-500">
+            No matches on this page.
+            <span class="text-xs text-slate-400">Press Enter to search all pages.</span>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -306,4 +318,52 @@
 {% if is_super_admin %}
   {% include "core/_customer_delete_modal.html" %}
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  /* ── Live table filter ─────────────────────────────────────────────────────
+     Any <input> with data-target="<tbody-class>" filters that tbody's rows
+     as the operator types. Rows carry data-search with pre-lowercased text
+     to match against. Enter still submits the parent form, which runs the
+     same search server-side and pulls in matches from other pages.
+  */
+  (function () {
+    const input = document.getElementById('js-live-search');
+    if (!input) return;
+
+    const tbodyClass  = input.dataset.target;
+    const emptyHintId = input.dataset.emptyHint;
+    const tbody = document.querySelector('.' + tbodyClass);
+    const emptyHint = emptyHintId ? document.getElementById(emptyHintId) : null;
+    if (!tbody) return;
+
+    const rows = Array.prototype.slice.call(tbody.querySelectorAll('.js-searchable'));
+
+    function apply() {
+      const term = input.value.trim().toLowerCase();
+      let shown = 0;
+      rows.forEach(function (row) {
+        const hay = row.dataset.search || '';
+        const match = !term || hay.indexOf(term) !== -1;
+        row.classList.toggle('hidden', !match);
+        if (match) shown++;
+      });
+      if (emptyHint) {
+        // Show the "no matches on this page" nudge only when the operator
+        // is actively filtering and every row hid. The server-side empty
+        // state (the for/empty branch above) still handles zero results.
+        const noMatches = term.length > 0 && shown === 0 && rows.length > 0;
+        emptyHint.classList.toggle('hidden', !noMatches);
+      }
+    }
+
+    input.addEventListener('input', apply);
+    // If the page loaded with a ?q= already applied server-side, kick off
+    // the filter once so the visible rows immediately narrow — a manager
+    // who bookmarked ?q=kamal expects to see the filtered view straight
+    // away, not to have to press a key.
+    if (input.value.trim()) apply();
+  })();
+</script>
 {% endblock %}
