@@ -1394,31 +1394,26 @@ def stock_ledger(request, pk):
     )
 
 
-@login_required
-def stock_ledger_excel(request, pk):
-    """Export one product's full movement history as an Excel sheet.
-    Respects the active month filter.
-    """
-    from io import BytesIO
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+def _write_stock_ledger_sheet(ws, product, month_filter):
+    """Write one product's whole ledger onto worksheet `ws`.
 
-    product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
+    Extracted so the single-product export and the multi-product bulk export
+    can share every column width, colour and border rule — the two would drift
+    the moment either one grew a column, and a stock ledger that prints
+    differently in the bulk file from the direct download is exactly the sort
+    of thing that quietly loses a reader's trust.
+    """
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
     ledger = _stock_ledger_rows(product)
     rows = ledger["rows"]
 
-    month_filter = get_month_filter(request)
     if not month_filter.is_all_time:
         rows = [
             r for r in rows
             if month_filter.start <= r["date"] <= month_filter.end
         ]
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Stock Ledger"
-
-    # style definitions
     thin = Side(style="thin")
     border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
     bold = Font(bold=True)
@@ -1427,28 +1422,24 @@ def stock_ledger_excel(request, pk):
     right = Alignment(horizontal="right", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
-    # header fills
-    header_fill = PatternFill("solid", fgColor="1F2937") # Dark gray
+    header_fill = PatternFill("solid", fgColor="1F2937")
     header_font = Font(bold=True, color="FFFFFF")
-    
-    # transaction type coloring
-    fill_opening = PatternFill("solid", fgColor="F3F4F6") # Light gray
-    fill_production = PatternFill("solid", fgColor="ECFDF5") # Emerald
-    fill_supplier = PatternFill("solid", fgColor="F0F9FF") # Sky blue
-    fill_sale = PatternFill("solid", fgColor="FFF1F2") # Rose
-    fill_adjust = PatternFill("solid", fgColor="FEF3C7") # Amber
 
-    # Set Column Widths
-    ws.column_dimensions["A"].width = 15 # Date
-    ws.column_dimensions["B"].width = 18 # Type
-    ws.column_dimensions["C"].width = 16 # Production (+)
-    ws.column_dimensions["D"].width = 18 # Cumulative Prod.
-    ws.column_dimensions["E"].width = 16 # Sales (-)
-    ws.column_dimensions["F"].width = 18 # Running Balance
-    ws.column_dimensions["G"].width = 30 # Customer / Description
-    ws.column_dimensions["H"].width = 15 # Reference / Bill No
+    fill_opening = PatternFill("solid", fgColor="F3F4F6")
+    fill_production = PatternFill("solid", fgColor="ECFDF5")
+    fill_supplier = PatternFill("solid", fgColor="F0F9FF")
+    fill_sale = PatternFill("solid", fgColor="FFF1F2")
+    fill_adjust = PatternFill("solid", fgColor="FEF3C7")
 
-    # --- Title & Product details ---
+    ws.column_dimensions["A"].width = 15
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 18
+    ws.column_dimensions["E"].width = 16
+    ws.column_dimensions["F"].width = 18
+    ws.column_dimensions["G"].width = 30
+    ws.column_dimensions["H"].width = 15
+
     ws["A1"] = "Senovka Plastics — Stock Ledger"
     ws["A1"].font = bold_large
     ws.merge_cells("A1:H1")
@@ -1461,20 +1452,18 @@ def stock_ledger_excel(request, pk):
     for cell_addr in ["A2", "C2", "E2", "G2"]:
         ws[cell_addr].font = Font(bold=True)
 
-    # Summary Cards
     ws["A4"] = "Opening Balance"; ws["B4"] = float(ledger["opening"])
     ws["C4"] = "Total Produced"; ws["D4"] = float(ledger["total_produced"])
     ws["E4"] = "Total Sold"; ws["F4"] = float(ledger["total_sold"])
     ws["G4"] = "Closing Balance"; ws["H4"] = float(ledger["closing_balance"])
-    
+
     ws["B4"].font = bold; ws["D4"].font = bold; ws["F4"].font = bold; ws["H4"].font = bold
     for cell_addr in ["A4", "C4", "E4", "G4"]:
         ws[cell_addr].font = Font(bold=True)
 
-    # --- Table Header ---
     headers = [
-        "Date", "Type", "Production (+)", "Cumulative Prod.", 
-        "Sales (-)", "Running Balance", "Customer / Detail", "Ref / Bill No"
+        "Date", "Type", "Production (+)", "Cumulative Prod.",
+        "Sales (-)", "Running Balance", "Customer / Detail", "Ref / Bill No",
     ]
     header_row = 6
     for idx, name in enumerate(headers, start=1):
@@ -1484,7 +1473,6 @@ def stock_ledger_excel(request, pk):
         cell.alignment = center
         cell.border = border_all
 
-    # --- Item Rows ---
     row_num = header_row + 1
     for r in rows:
         kind = r["kind"]
@@ -1501,10 +1489,8 @@ def stock_ledger_excel(request, pk):
         elif kind in ("adjust_up", "adjust_down"):
             row_fill = fill_adjust
 
-        # Write cells
         c_date = ws.cell(row=row_num, column=1, value=r["date"].strftime("%d %b %Y"))
         c_type = ws.cell(row=row_num, column=2, value=kind_label)
-        
         c_prod = ws.cell(row=row_num, column=3, value=float(r["production"]) if r["production"] is not None else "")
         c_cum = ws.cell(row=row_num, column=4, value=float(r["total"]) if r["total"] is not None else "")
         c_sales = ws.cell(row=row_num, column=5, value=float(r["sales"]) if r["sales"] is not None else "")
@@ -1512,7 +1498,6 @@ def stock_ledger_excel(request, pk):
         c_cust = ws.cell(row=row_num, column=7, value=r["customer"])
         c_ref = ws.cell(row=row_num, column=8, value=r["bill_number"])
 
-        # Format alignment & number formats
         c_date.alignment = center
         c_type.alignment = center
         c_prod.alignment = right
@@ -1525,7 +1510,6 @@ def stock_ledger_excel(request, pk):
         for cell in (c_prod, c_cum, c_sales, c_bal):
             cell.number_format = "#,##0.000"
 
-        # Apply borders and fills
         for c_idx in range(1, 9):
             cell = ws.cell(row=row_num, column=c_idx)
             cell.border = border_all
@@ -1536,11 +1520,35 @@ def stock_ledger_excel(request, pk):
 
         row_num += 1
 
-    # Add a thin line under the table
     for c_idx in range(1, 9):
         ws.cell(row=row_num, column=c_idx).border = Border(top=thin)
 
-    # --- Write stream ---
+
+def _sheet_title_for(base, used_titles):
+    """A safe, unique worksheet title.
+
+    Excel caps sheet names at 31 characters and rejects `[ ] : * ? / \\`. Two
+    selected products with the same first 31 chars would also collide, so we
+    disambiguate with a numeric suffix. The `used_titles` set is mutated in
+    place — passing it back to the caller means the next sheet reuses the same
+    memory of what's already claimed.
+    """
+    cleaned = "".join(c for c in base if c not in "[]:*?/\\")[:31].strip() or "Sheet"
+    candidate = cleaned
+    suffix = 2
+    while candidate in used_titles:
+        # Reserve room for the suffix so the trimmed version still fits.
+        room = 31 - len(f" ({suffix})")
+        candidate = f"{cleaned[:room]} ({suffix})"
+        suffix += 1
+    used_titles.add(candidate)
+    return candidate
+
+
+def _xlsx_response(wb, filename):
+    """Serialise a workbook to a Content-Disposition HTTP response."""
+    from io import BytesIO
+
     stream = BytesIO()
     wb.save(stream)
     stream.seek(0)
@@ -1548,13 +1556,108 @@ def stock_ledger_excel(request, pk):
         stream.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    # clean product name for filename
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+def stock_ledger_excel(request, pk):
+    """One product's full movement history as an Excel sheet.
+
+    Respects the active month filter. Delegates the sheet body to
+    `_write_stock_ledger_sheet` — the bulk export uses the same helper so the
+    two exports never render differently.
+    """
+    from openpyxl import Workbook
+
+    product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
+    month_filter = get_month_filter(request)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _sheet_title_for("Stock Ledger", set())
+    _write_stock_ledger_sheet(ws, product, month_filter)
+
     clean_name = product.name.replace(" ", "_").lower()
     filename_param = month_filter.param if not month_filter.is_all_time else "all"
-    response["Content-Disposition"] = (
-        f'attachment; filename="stock_ledger_{clean_name}_{filename_param}.xlsx"'
+    return _xlsx_response(
+        wb, f"stock_ledger_{clean_name}_{filename_param}.xlsx"
     )
-    return response
+
+
+def _parse_id_list(request, param="ids"):
+    """Product/customer id list from either GET (`?ids=1,2,3` or `?ids=1&ids=2`)
+    or POST (`ids` as either a single comma-string or a repeated field).
+
+    A single sanitiser both places lets the checkboxes in the list templates
+    submit either way — a form POST for a CSRF-clean cross-user link, or a
+    GET so a bookmarked selection round-trips.
+    """
+    raw = []
+    if request.method == "POST":
+        raw = request.POST.getlist(param) or [request.POST.get(param, "")]
+    else:
+        raw = request.GET.getlist(param) or [request.GET.get(param, "")]
+
+    ids = []
+    for chunk in raw:
+        for part in (chunk or "").split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+    # Preserve first-seen order but drop duplicates — a workbook with two
+    # identical sheets is worthless and the sheet-title logic would rename
+    # the second one anyway.
+    seen = set()
+    unique = []
+    for pid in ids:
+        if pid not in seen:
+            seen.add(pid)
+            unique.append(pid)
+    return unique
+
+
+@login_required
+def stock_ledger_bulk_excel(request):
+    """Multiple products' stock ledgers in one workbook — one sheet each.
+
+    Fired by the "Download stock ledger (Excel)" button on the product list
+    once at least one row is ticked. Products are read in `Product.Meta.ordering`
+    order so the workbook's tabs match the order the operator sees on screen.
+    """
+    from openpyxl import Workbook
+
+    ids = _parse_id_list(request)
+    if not ids:
+        messages.error(request, "Pick at least one product first.")
+        return redirect("core:product_list")
+
+    products = list(
+        Product.objects.filter(pk__in=ids).select_related("category")
+    )
+    if not products:
+        messages.error(request, "None of the picked products exist.")
+        return redirect("core:product_list")
+
+    month_filter = get_month_filter(request)
+
+    wb = Workbook()
+    # Workbook() ships with a blank default sheet; remove it so the first
+    # product owns its own tab rather than starting at the anonymous "Sheet".
+    default_ws = wb.active
+    wb.remove(default_ws)
+
+    used_titles = set()
+    for product in products:
+        title_base = f"{product.name} {product.size}".strip() or f"Product {product.pk}"
+        ws = wb.create_sheet(title=_sheet_title_for(title_base, used_titles))
+        _write_stock_ledger_sheet(ws, product, month_filter)
+
+    stamp = timezone.localdate().isoformat()
+    filename_param = month_filter.param if not month_filter.is_all_time else "all"
+    return _xlsx_response(
+        wb, f"stock_ledgers_{len(products)}products_{filename_param}_{stamp}.xlsx"
+    )
 
 
 # ----------------------------------------------------------- customer prices
@@ -6151,6 +6254,180 @@ def customer_ledger_pdf(request, pk):
     stamp = timezone.localdate().isoformat()
     filename = f"ledger_{slugify(customer.name) or customer.pk}_{stamp}.pdf"
     return _pdf_response(request, "core/ledger_pdf.html", context, filename)
+
+
+def _write_customer_ledger_sheet(ws, customer, from_date=None, to_date=None):
+    """Write one customer's ledger onto worksheet `ws`.
+
+    Same six-column shape as the on-screen ledger: date, description, sale,
+    credit (money in / discount off), running balance, remaining-on-bill. The
+    sheet builder is deliberately its own function so the bulk export drops in
+    without duplicating the styling, and a later single-customer Excel button
+    can reuse it without any refactor.
+    """
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    rows = _ledger_rows(customer, from_date, to_date)
+
+    thin = Side(style="thin")
+    border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
+    bold = Font(bold=True)
+    bold_large = Font(bold=True, size=14)
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(bold=True, color="FFFFFF")
+    fill_note = PatternFill("solid", fgColor="F1F5F9")
+    fill_sale = PatternFill("solid", fgColor="FFF1F2")
+    fill_credit = PatternFill("solid", fgColor="ECFDF5")
+
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 44
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 18
+    ws.column_dimensions["F"].width = 16
+
+    # Title band.
+    ws["A1"] = "Senovka Plastics — Customer Ledger"
+    ws["A1"].font = bold_large
+    ws.merge_cells("A1:F1")
+
+    ws["A2"] = "Customer:"; ws["B2"] = customer.name; ws["B2"].font = bold
+    ws["C2"] = "Phone:"; ws["D2"] = customer.phone or "—"; ws["D2"].font = bold
+
+    period = "All time"
+    if from_date and to_date:
+        period = f"{from_date:%d %b %Y} → {to_date:%d %b %Y}"
+    elif from_date:
+        period = f"From {from_date:%d %b %Y}"
+    elif to_date:
+        period = f"Up to {to_date:%d %b %Y}"
+    ws["E2"] = "Period:"; ws["F2"] = period; ws["F2"].font = bold
+
+    for cell_addr in ["A2", "C2", "E2"]:
+        ws[cell_addr].font = bold
+
+    # Summary row.
+    total_sale = sum((r["sale"] or ZERO for r in rows), ZERO)
+    total_credit = sum((r["credit"] or ZERO for r in rows), ZERO)
+    closing = rows[-1]["balance"] if rows else ZERO
+
+    ws["A4"] = "Total Billed"; ws["B4"] = float(total_sale)
+    ws["C4"] = "Total Received / Credited"; ws["D4"] = float(total_credit)
+    ws["E4"] = "Closing Balance"; ws["F4"] = float(closing)
+    for addr in ("B4", "D4", "F4"):
+        ws[addr].font = bold
+        ws[addr].number_format = "#,##0.00"
+    for addr in ("A4", "C4", "E4"):
+        ws[addr].font = bold
+
+    # Table header.
+    headers = ["Date", "Description", "Sale (+)", "Credit (-)", "Balance", "Bill #"]
+    header_row = 6
+    for idx, name in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = border_all
+
+    row_num = header_row + 1
+    for r in rows:
+        c_date = ws.cell(row=row_num, column=1, value=r["date"].strftime("%d %b %Y"))
+        c_desc = ws.cell(row=row_num, column=2, value=r["description"])
+        c_sale = ws.cell(
+            row=row_num, column=3,
+            value=float(r["sale"]) if r["sale"] is not None else "",
+        )
+        c_credit = ws.cell(
+            row=row_num, column=4,
+            value=float(r["credit"]) if r["credit"] is not None else "",
+        )
+        c_bal = ws.cell(row=row_num, column=5, value=float(r["balance"]))
+        c_ref = ws.cell(
+            row=row_num, column=6,
+            value=(f"Bill #{r['bill_pk']}" if r.get("bill_pk") else ""),
+        )
+
+        c_date.alignment = center
+        c_desc.alignment = left
+        c_sale.alignment = right
+        c_credit.alignment = right
+        c_bal.alignment = right
+        c_ref.alignment = center
+
+        for cell in (c_sale, c_credit, c_bal):
+            cell.number_format = "#,##0.00"
+
+        row_fill = None
+        if r.get("is_note"):
+            row_fill = fill_note
+        elif r.get("sale"):
+            row_fill = fill_sale
+        elif r.get("credit"):
+            row_fill = fill_credit
+
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=row_num, column=c_idx)
+            cell.border = border_all
+            if row_fill:
+                cell.fill = row_fill
+            if r.get("is_note"):
+                cell.font = Font(italic=True, color="475569")
+
+        row_num += 1
+
+    if not rows:
+        # Empty ledger still gets a "nothing to show" row so the file explains
+        # itself when opened rather than looking like a corrupted export.
+        cell = ws.cell(
+            row=row_num, column=1,
+            value="No ledger activity in the selected range.",
+        )
+        cell.font = Font(italic=True, color="94A3B8")
+        ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=6)
+
+
+@login_required
+def customer_ledger_bulk_excel(request):
+    """Multiple customers' ledgers in one workbook — one sheet each.
+
+    Fired by the "Download ledger (Excel)" button on the customer list. Same
+    date-range knobs as the on-screen ledger (`from_date`, `to_date` in the
+    query string) so a filtered view can be exported without giving up the
+    bounds.
+    """
+    from openpyxl import Workbook
+
+    ids = _parse_id_list(request)
+    if not ids:
+        messages.error(request, "Pick at least one customer first.")
+        return redirect("core:customer_list")
+
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    customers = list(_customers().filter(pk__in=ids))
+    if not customers:
+        messages.error(request, "None of the picked customers exist.")
+        return redirect("core:customer_list")
+
+    wb = Workbook()
+    default_ws = wb.active
+    wb.remove(default_ws)
+
+    used_titles = set()
+    for customer in customers:
+        ws = wb.create_sheet(title=_sheet_title_for(customer.name, used_titles))
+        _write_customer_ledger_sheet(ws, customer, from_date, to_date)
+
+    stamp = timezone.localdate().isoformat()
+    return _xlsx_response(
+        wb, f"customer_ledgers_{len(customers)}customers_{stamp}.xlsx"
+    )
 
 
 # -------------------------------------------------------- outstanding report

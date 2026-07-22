@@ -72,6 +72,13 @@ urlpatterns = [
         views.stock_ledger_excel,
         name="stock_ledger_excel",
     ),
+    # Bulk export: multiple products' stock ledgers into one workbook, one
+    # sheet each. Fed by the checkbox column on the product list.
+    path(
+        "products/stock-ledgers/excel/",
+        views.stock_ledger_bulk_excel,
+        name="stock_ledger_bulk_excel",
+    ),
     # Manual per-product stock corrections. Anyone can add; only a super
     # admin can rewind one.
     path(
@@ -93,6 +100,13 @@ urlpatterns = [
     path("customers/<int:pk>/delete/", views.customer_delete, name="customer_delete"),
     path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
     path("customers/<int:pk>/ledger/", views.customer_ledger, name="customer_ledger"),
+    # Bulk export: multiple customers' ledgers into one workbook, one sheet
+    # each. Fed by the checkbox column on the customer list.
+    path(
+        "customers/ledgers/excel/",
+        views.customer_ledger_bulk_excel,
+        name="customer_ledger_bulk_excel",
+    ),
     # One lump payment fanned out across the customer's outstanding bills,
     # oldest first — see _allocate_settlement.
     path(
