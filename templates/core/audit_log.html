@@ -179,7 +179,6 @@
           <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Action</th>
           <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Target</th>
           <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Path</th>
-          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">IP</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
@@ -216,11 +215,10 @@
               <div class="text-[11px] text-slate-400">{{ log.target_type }}{% if log.target_id %} #{{ log.target_id }}{% endif %}</div>
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-[11px] text-slate-500 font-mono">{{ log.path|default:"—" }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-[11px] text-slate-400 font-mono">{{ log.ip_address|default:"—" }}</td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="6" class="px-4 py-16 text-center">
+            <td colspan="5" class="px-4 py-16 text-center">
               <p class="text-[13px] text-slate-500">No log entries match this filter.</p>
               <p class="text-[11px] text-slate-400 mt-1">
                 The log fills up as the system is used — creates, updates and deletes are recorded automatically.
