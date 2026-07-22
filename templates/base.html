@@ -336,17 +336,22 @@
       {% block sidebar_nav %}{% endblock %}
     </nav>
 
-    <!-- Sidebar footer: user identity -->
+    <!-- Sidebar footer: user identity (links to own profile) -->
     <div class="shrink-0 px-3 py-3" style="border-top:1px solid rgba(255,255,255,0.05)">
-      <div class="flex items-center gap-2.5 rounded-lg px-2 py-2">
+      <a href="{% url 'core:profile' %}"
+         class="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition"
+         title="Open your profile — change your password here">
         <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-400 uppercase">
           {{ user.get_username|first }}
         </span>
         <div class="min-w-0 flex-1">
           <p class="truncate text-xs font-semibold text-slate-300">{{ user.get_username }}</p>
-          <p class="truncate text-[10px] text-slate-500">{{ user.email|default:"" }}</p>
+          <p class="truncate text-[10px] text-slate-500">{{ user.email|default:"View profile" }}</p>
         </div>
-      </div>
+        <svg class="h-3.5 w-3.5 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
     </div>
   </aside>
 

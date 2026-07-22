@@ -17,13 +17,17 @@ urlpatterns = [
     path("users/", views.user_list, name="user_list"),
     path("users/create/", views.user_create, name="user_create"),
     path("users/<int:pk>/edit/", views.user_edit, name="user_edit"),
+    # Super admin types a new password directly (replacing the older
+    # generate-and-show flow).
     path(
-        "users/<int:pk>/reset-password/",
-        views.user_reset_password,
-        name="user_reset_password",
+        "users/<int:pk>/set-password/",
+        views.user_set_password,
+        name="user_set_password",
     ),
     path("users/<int:pk>/deactivate/", views.user_deactivate, name="user_deactivate"),
     path("users/<int:pk>/activate/", views.user_activate, name="user_activate"),
+    # Self-service: every signed-in user has a profile page.
+    path("profile/", views.profile, name="profile"),
     path("categories/", views.category_list, name="category_list"),
     path("categories/create/", views.category_create, name="category_create"),
     path("categories/<int:pk>/edit/", views.category_update, name="category_update"),

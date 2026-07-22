@@ -59,7 +59,10 @@ from .forms import (
     ProductForm,
     ProductionEntryForm,
     ProductQuickForm,
+    ProfileDetailsForm,
+    ProfilePasswordForm,
     RiderForm,
+    SetUserPasswordForm,
     StockAdjustmentForm,
     SupplierQuickForm,
     UserCreateForm,
@@ -351,23 +354,82 @@ def user_edit(request, pk):
     )
 
 
-@require_POST
 @super_admin_required
-def user_reset_password(request, pk):
+def user_set_password(request, pk):
+    """A super admin types a new password for any user.
+
+    Replaces the older reset-to-random flow: the operator picks the
+    password themselves and hands it over directly, no on-screen dance
+    with a generated string to write down. Own account still allowed —
+    the session auth hash is re-stamped so the admin isn't kicked out
+    of their own session mid-change.
+    """
     target = get_object_or_404(User, pk=pk)
-    password = generate_password()
-    target.set_password(password)
-    target.save(update_fields=["password"])
+    form = SetUserPasswordForm(request.POST or None)
 
-    # Changing a password rotates the session auth hash, which would sign the
-    # super admin out of their own session mid-reset. Re-stamp it so resetting
-    # your own password doesn't bounce you to the login page.
-    if target.pk == request.user.pk:
-        update_session_auth_hash(request, target)
+    if request.method == "POST" and form.is_valid():
+        password = form.cleaned_data["new_password1"]
+        target.set_password(password)
+        target.save(update_fields=["password"])
 
-    _stash_credentials(request, target.username, password)
-    messages.success(request, f"{target.username}'s password was reset.")
-    return redirect("core:user_list")
+        if target.pk == request.user.pk:
+            update_session_auth_hash(request, target)
+
+        messages.success(
+            request,
+            f"{target.username}'s password was updated.",
+        )
+        return redirect("core:user_list")
+
+    return render(
+        request,
+        "core/user_set_password.html",
+        {"form": form, "target": target},
+    )
+
+
+@login_required
+def profile(request):
+    """A user's own profile page — view details and change their password.
+
+    Reachable by any signed-in user from the sidebar footer chip. Two forms
+    on one page: basic details (name + email, username stays put) and
+    password (current + new + confirm). Each has its own submit so the
+    operator can change one without touching the other.
+    """
+    user = request.user
+    details_form = ProfileDetailsForm(instance=user)
+    password_form = ProfilePasswordForm(user=user)
+
+    if request.method == "POST":
+        action = request.POST.get("action") or ""
+        if action == "details":
+            details_form = ProfileDetailsForm(request.POST, instance=user)
+            if details_form.is_valid():
+                details_form.save()
+                messages.success(request, "Profile updated.")
+                return redirect("core:profile")
+            messages.error(request, f"Profile not saved: {details_form.first_error()}")
+        elif action == "password":
+            password_form = ProfilePasswordForm(request.POST, user=user)
+            if password_form.is_valid():
+                user.set_password(password_form.cleaned_data["new_password1"])
+                user.save(update_fields=["password"])
+                # Re-stamp the session auth hash so this request doesn't
+                # sign the user straight out.
+                update_session_auth_hash(request, user)
+                messages.success(request, "Password changed.")
+                return redirect("core:profile")
+            messages.error(request, f"Password not saved: {password_form.first_error()}")
+
+    return render(
+        request,
+        "core/profile.html",
+        {
+            "details_form": details_form,
+            "password_form": password_form,
+        },
+    )
 
 
 @require_POST

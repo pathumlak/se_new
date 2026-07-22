@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Profile · {{ user.get_username }} · Senovka Plastics{% endblock %}
+{% block header %}My Profile{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+
+  <!-- Identity strip -->
+  <div class="mb-6 flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-lg font-bold uppercase text-blue-600">
+      {{ user.get_username|first }}
+    </span>
+    <div class="min-w-0">
+      <p class="text-lg font-semibold text-slate-900">
+        {{ user.get_full_name|default:user.get_username }}
+      </p>
+      <p class="text-xs text-slate-500">
+        Signed in as <span class="font-medium text-slate-700">{{ user.get_username }}</span>
+        · {{ user.get_role_display }}
+      </p>
+    </div>
+  </div>
+
+  <div class="grid gap-6 md:grid-cols-2">
+    <!-- ─────────────── Details ─────────────── -->
+    <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 class="text-sm font-semibold text-slate-900">Your details</h3>
+      <p class="mt-1 text-xs text-slate-500">
+        Username stays put — it identifies your account and every record you've
+        created points at it.
+      </p>
+
+      {% if details_form.non_field_errors %}
+        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {{ details_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate class="mt-4 space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="details">
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label for="{{ details_form.first_name.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">First name</label>
+            {{ details_form.first_name }}
+            {% for e in details_form.first_name.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ details_form.last_name.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Last name</label>
+            {{ details_form.last_name }}
+            {% for e in details_form.last_name.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <label for="{{ details_form.email.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">Email</label>
+          {{ details_form.email }}
+          {% for e in details_form.email.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+
+        <div class="flex justify-end border-t border-slate-100 pt-3">
+          <button type="submit"
+                  class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Save details
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ─────────────── Password ─────────────── -->
+    <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 class="text-sm font-semibold text-slate-900">Change your password</h3>
+      <p class="mt-1 text-xs text-slate-500">
+        Type your current password, then the new one twice. You'll stay signed
+        in on this device.
+      </p>
+
+      {% if password_form.non_field_errors %}
+        <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {{ password_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate class="mt-4 space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="password">
+
+        <div>
+          <label for="{{ password_form.current_password.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">
+            {{ password_form.current_password.label }}
+          </label>
+          {{ password_form.current_password }}
+          {% for e in password_form.current_password.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ password_form.new_password1.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">
+            {{ password_form.new_password1.label }}
+          </label>
+          {{ password_form.new_password1 }}
+          <p class="mt-1 text-xs text-slate-400">At least 8 characters.</p>
+          {% for e in password_form.new_password1.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+
+        <div>
+          <label for="{{ password_form.new_password2.id_for_label }}" class="mb-1 block text-xs font-medium text-slate-600">
+            {{ password_form.new_password2.label }}
+          </label>
+          {{ password_form.new_password2 }}
+          {% for e in password_form.new_password2.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+
+        <div class="flex justify-end border-t border-slate-100 pt-3">
+          <button type="submit"
+                  class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Change password
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

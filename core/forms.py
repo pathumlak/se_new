@@ -1906,3 +1906,128 @@ class DailyOtherWorkForm(forms.ModelForm):
         for messages in self.errors.values():
             return messages[0] if messages else "Could not save."
         return "Could not save."
+
+
+class SetUserPasswordForm(forms.Form):
+    """A super admin sets any user's password by typing it in.
+
+    Replaces the older generate-and-show flow: an operator who has to write
+    the generated password down and hand it over would rather pick one
+    themselves. Two fields, matched, minimum eight characters — same shape
+    Django's own AdminPasswordChangeForm uses.
+    """
+
+    new_password1 = forms.CharField(
+        label="New password",
+        min_length=8,
+        widget=forms.PasswordInput(
+            attrs={"class": INPUT_CLASSES, "autocomplete": "new-password"}
+        ),
+        error_messages={
+            "required": "Enter a new password.",
+            "min_length": "Password must be at least 8 characters.",
+        },
+    )
+    new_password2 = forms.CharField(
+        label="Confirm new password",
+        widget=forms.PasswordInput(
+            attrs={"class": INPUT_CLASSES, "autocomplete": "new-password"}
+        ),
+        error_messages={"required": "Confirm the new password."},
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        p1 = cleaned.get("new_password1")
+        p2 = cleaned.get("new_password2")
+        if p1 and p2 and p1 != p2:
+            self.add_error("new_password2", "The two passwords don't match.")
+        return cleaned
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class ProfilePasswordForm(forms.Form):
+    """A user changes their own password.
+
+    Requires the current password — the audit fence against someone typing
+    on an unattended session. Uses `user.check_password` to verify, same as
+    Django's admin.
+    """
+
+    current_password = forms.CharField(
+        label="Current password",
+        widget=forms.PasswordInput(
+            attrs={"class": INPUT_CLASSES, "autocomplete": "current-password"}
+        ),
+        error_messages={"required": "Enter your current password."},
+    )
+    new_password1 = forms.CharField(
+        label="New password",
+        min_length=8,
+        widget=forms.PasswordInput(
+            attrs={"class": INPUT_CLASSES, "autocomplete": "new-password"}
+        ),
+        error_messages={
+            "required": "Enter a new password.",
+            "min_length": "Password must be at least 8 characters.",
+        },
+    )
+    new_password2 = forms.CharField(
+        label="Confirm new password",
+        widget=forms.PasswordInput(
+            attrs={"class": INPUT_CLASSES, "autocomplete": "new-password"}
+        ),
+        error_messages={"required": "Confirm the new password."},
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+
+    def clean_current_password(self):
+        pw = self.cleaned_data.get("current_password")
+        if self.user is not None and not self.user.check_password(pw):
+            raise forms.ValidationError("Current password is wrong.")
+        return pw
+
+    def clean(self):
+        cleaned = super().clean()
+        p1 = cleaned.get("new_password1")
+        p2 = cleaned.get("new_password2")
+        if p1 and p2 and p1 != p2:
+            self.add_error("new_password2", "The two passwords don't match.")
+        # Reject a "new" password that matches the old one — nothing changed,
+        # but the audit says the account rotated.
+        current = cleaned.get("current_password")
+        if p1 and current and p1 == current:
+            self.add_error("new_password1", "New password must be different from the current one.")
+        return cleaned
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
+
+
+class ProfileDetailsForm(forms.ModelForm):
+    """A user edits their own basic details (name + email). Username stays
+    unchanged — it identifies the account and every record already written
+    points at it, so renaming it would rewrite history."""
+
+    class Meta:
+        model = User
+        fields = ["first_name", "last_name", "email"]
+        widgets = {
+            "first_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "last_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "email": forms.EmailInput(attrs={"class": INPUT_CLASSES}),
+        }
+
+    def first_error(self):
+        for messages in self.errors.values():
+            return messages[0] if messages else "Could not save."
+        return "Could not save."
