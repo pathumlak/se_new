@@ -1,0 +1,416 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="h-full scroll-smooth">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Senovka Plastics · Manufacturing ERP</title>
+  <meta name="description" content="Senovka Plastics runs its billing, stock, cheques, production and reporting through one shared workshop system.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Inter', system-ui, sans-serif; }
+
+    .bg-mesh {
+      background-color: #0b1120;
+      background-image:
+        radial-gradient(ellipse 80% 60% at 15% 0%, rgba(59,130,246,0.18), transparent 60%),
+        radial-gradient(ellipse 70% 60% at 85% 0%, rgba(139,92,246,0.15), transparent 60%),
+        radial-gradient(ellipse 90% 60% at 50% 100%, rgba(16,185,129,0.10), transparent 55%);
+    }
+
+    .grid-lines {
+      background-image:
+        linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px),
+        linear-gradient(to right, rgba(148,163,184,0.06) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+
+    .glow-ring {
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.06),
+        0 20px 40px -12px rgba(59,130,246,0.35),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    }
+
+    .card-glass {
+      background: rgba(15, 23, 42, 0.55);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+    }
+
+    .feature-icon {
+      background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.15));
+      border: 1px solid rgba(148,163,184,0.20);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+      box-shadow: 0 10px 20px -8px rgba(59,130,246,0.6);
+    }
+    .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 14px 26px -8px rgba(59,130,246,0.7); }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(148,163,184,0.25);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); border-color: rgba(148,163,184,0.4); }
+
+    .stat-tile { border-left: 3px solid transparent; }
+    .stat-tile.blue { border-left-color: #3b82f6; }
+    .stat-tile.emerald { border-left-color: #10b981; }
+    .stat-tile.amber { border-left-color: #f59e0b; }
+    .stat-tile.violet { border-left-color: #8b5cf6; }
+
+    @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+    .floaty { animation: floaty 6s ease-in-out infinite; }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .reveal { animation: fadeIn 0.7s ease both; }
+    .reveal-1 { animation-delay: 0.05s; }
+    .reveal-2 { animation-delay: 0.15s; }
+    .reveal-3 { animation-delay: 0.25s; }
+    .reveal-4 { animation-delay: 0.35s; }
+  </style>
+</head>
+<body class="h-full bg-mesh text-slate-100">
+
+  <div class="min-h-full grid-lines">
+
+    <!-- ═══════════════════════ NAVBAR ═══════════════════════ -->
+    <nav class="sticky top-0 z-30 backdrop-blur-md" style="background: rgba(11,17,32,0.7); border-bottom: 1px solid rgba(148,163,184,0.10);">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+        <a href="#" class="flex items-center gap-2.5">
+          <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-white/20">
+            <img src="{% static 'images/logo.jpeg' %}" alt="Senovka" class="h-full w-full object-cover">
+          </span>
+          <div>
+            <p class="text-[15px] font-extrabold tracking-tight leading-none">Senovka</p>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-blue-400 mt-0.5">Plastics ERP</p>
+          </div>
+        </a>
+
+        <div class="hidden md:flex items-center gap-8 text-[13px] font-medium text-slate-300">
+          <a href="#features" class="hover:text-white transition">Features</a>
+          <a href="#modules" class="hover:text-white transition">Modules</a>
+          <a href="#stats" class="hover:text-white transition">Numbers</a>
+          <a href="#voices" class="hover:text-white transition">Voices</a>
+        </div>
+
+        <a href="{% url 'login' %}" class="btn-primary rounded-lg px-4 py-2 text-[13px] font-semibold text-white">
+          Sign in →
+        </a>
+      </div>
+    </nav>
+
+    <!-- ═══════════════════════ HERO ═══════════════════════ -->
+    <section class="relative overflow-hidden">
+      <div class="mx-auto max-w-7xl px-4 pt-16 pb-24 sm:px-6 lg:px-8 lg:pt-24 lg:pb-32">
+        <div class="grid gap-12 lg:grid-cols-12 lg:gap-16">
+
+          <!-- Left column: pitch -->
+          <div class="lg:col-span-7 reveal reveal-1">
+            <span class="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[11px] font-semibold text-blue-300">
+              <span class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+              Version 1 · Live at Senovkaplastics.cloud
+            </span>
+
+            <h1 class="mt-6 text-[42px] sm:text-[56px] lg:text-[68px] font-black leading-[1.05] tracking-tight">
+              One workshop.<br>
+              <span class="bg-gradient-to-r from-blue-400 via-indigo-400 to-violet-400 bg-clip-text text-transparent">
+                One system of record.
+              </span>
+            </h1>
+
+            <p class="mt-6 max-w-xl text-[16px] leading-relaxed text-slate-300">
+              Senovka ERP is the private in-house platform we run the whole plastic
+              factory on — billing the customer at the counter, tracking every
+              cheque, watching every shelf, running the machines on the floor, and
+              closing the books at the end of every month. Nothing is guessed and
+              nothing is written twice.
+            </p>
+
+            <div class="mt-8 flex flex-wrap items-center gap-3">
+              <a href="{% url 'login' %}" class="btn-primary inline-flex items-center gap-2 rounded-xl px-6 py-3 text-[14px] font-semibold text-white">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/>
+                </svg>
+                Sign in to the app
+              </a>
+              <a href="#features" class="btn-secondary inline-flex items-center gap-2 rounded-xl px-6 py-3 text-[14px] font-medium text-slate-200">
+                See what's inside
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
+                </svg>
+              </a>
+            </div>
+
+            <!-- Trust ribbon -->
+            <div class="mt-10 grid grid-cols-3 gap-4 max-w-lg">
+              <div class="stat-tile blue pl-4">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modules</p>
+                <p class="mt-1 text-2xl font-extrabold">17+</p>
+              </div>
+              <div class="stat-tile emerald pl-4">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Uptime</p>
+                <p class="mt-1 text-2xl font-extrabold">24/7</p>
+              </div>
+              <div class="stat-tile violet pl-4">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Roles</p>
+                <p class="mt-1 text-2xl font-extrabold">2</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right column: floating dashboard mockup -->
+          <div class="lg:col-span-5 reveal reveal-2">
+            <div class="floaty">
+              <div class="card-glass glow-ring rounded-2xl p-4">
+                <!-- Fake window chrome -->
+                <div class="flex items-center gap-1.5 pb-3 border-b border-white/10">
+                  <span class="h-2.5 w-2.5 rounded-full bg-rose-400/70"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-amber-400/70"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-emerald-400/70"></span>
+                  <span class="ml-3 text-[11px] text-slate-400 font-medium">Dashboard · Today</span>
+                </div>
+
+                <!-- Fake stat row -->
+                <div class="mt-4 grid grid-cols-2 gap-3">
+                  <div class="rounded-xl bg-slate-800/60 p-3 border border-white/5">
+                    <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Outstanding</p>
+                    <p class="mt-1 text-lg font-bold text-rose-300">Rs 428,150</p>
+                  </div>
+                  <div class="rounded-xl bg-slate-800/60 p-3 border border-white/5">
+                    <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Today Sales</p>
+                    <p class="mt-1 text-lg font-bold text-emerald-300">Rs 92,400</p>
+                  </div>
+                  <div class="rounded-xl bg-slate-800/60 p-3 border border-white/5">
+                    <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Drawer</p>
+                    <p class="mt-1 text-lg font-bold text-blue-300">Rs 61,700</p>
+                  </div>
+                  <div class="rounded-xl bg-slate-800/60 p-3 border border-white/5">
+                    <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Cheques</p>
+                    <p class="mt-1 text-lg font-bold text-amber-300">3 due</p>
+                  </div>
+                </div>
+
+                <!-- Fake sparkline -->
+                <div class="mt-4 rounded-xl bg-slate-800/60 p-4 border border-white/5">
+                  <p class="text-[11px] font-semibold text-slate-400 mb-2">Sales · last 7 days</p>
+                  <svg viewBox="0 0 200 60" class="w-full h-14">
+                    <defs>
+                      <linearGradient id="spark" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.5"/>
+                        <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                      </linearGradient>
+                    </defs>
+                    <path d="M0,40 Q30,20 50,32 T100,20 T150,28 T200,15 L200,60 L0,60 Z" fill="url(#spark)"/>
+                    <path d="M0,40 Q30,20 50,32 T100,20 T150,28 T200,15" fill="none" stroke="#60a5fa" stroke-width="2"/>
+                  </svg>
+                </div>
+
+                <!-- Fake alert -->
+                <div class="mt-3 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 flex items-center gap-2">
+                  <span class="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+                  <p class="text-[11px] font-medium text-amber-200">Low stock · 4 items need reorder</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ FEATURES ═══════════════════════ -->
+    <section id="features" class="relative py-20 sm:py-28 border-t border-white/5">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-[12px] font-bold uppercase tracking-[0.2em] text-blue-400">The system</p>
+          <h2 class="mt-3 text-4xl sm:text-5xl font-extrabold tracking-tight">What lives inside</h2>
+          <p class="mt-4 text-slate-300 text-[15px] leading-relaxed">
+            Four pillars that keep the shop honest. Every counter posts to the
+            same ledger, so the number the biller sees is the number the
+            accountant closes with — no evening reconciliation.
+          </p>
+        </div>
+
+        <div class="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <!-- Feature 1 -->
+          <div class="card-glass rounded-2xl p-6 reveal reveal-1">
+            <span class="feature-icon flex h-11 w-11 items-center justify-center rounded-xl text-blue-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+            </span>
+            <h3 class="mt-4 text-[16px] font-bold">Billing that balances</h3>
+            <p class="mt-2 text-[13px] leading-relaxed text-slate-400">
+              Walk-in or on account, cash or cheque or split. Every bill writes
+              stock, ledger and drawer in one transaction — edits reverse the
+              whole thing before rewriting.
+            </p>
+          </div>
+
+          <!-- Feature 2 -->
+          <div class="card-glass rounded-2xl p-6 reveal reveal-2">
+            <span class="feature-icon flex h-11 w-11 items-center justify-center rounded-xl text-emerald-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+              </svg>
+            </span>
+            <h3 class="mt-4 text-[16px] font-bold">Stock you can trust</h3>
+            <p class="mt-2 text-[13px] leading-relaxed text-slate-400">
+              Every movement is a row: production, adjustment or sale. The
+              per-product ledger shows the running balance and the low-stock
+              bell rings the moment a shelf slips.
+            </p>
+          </div>
+
+          <!-- Feature 3 -->
+          <div class="card-glass rounded-2xl p-6 reveal reveal-3">
+            <span class="feature-icon flex h-11 w-11 items-center justify-center rounded-xl text-amber-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/>
+              </svg>
+            </span>
+            <h3 class="mt-4 text-[16px] font-bold">Cheques on a leash</h3>
+            <p class="mt-2 text-[13px] leading-relaxed text-slate-400">
+              Received, deposited, held or bounced — every status change moves
+              the customer's balance the right way. A dashboard alert three
+              days out means nothing matures forgotten.
+            </p>
+          </div>
+
+          <!-- Feature 4 -->
+          <div class="card-glass rounded-2xl p-6 reveal reveal-4">
+            <span class="feature-icon flex h-11 w-11 items-center justify-center rounded-xl text-violet-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+              </svg>
+            </span>
+            <h3 class="mt-4 text-[16px] font-bold">Reports the boss reads</h3>
+            <p class="mt-2 text-[13px] leading-relaxed text-slate-400">
+              Sales by range, customer ledger, outstanding snapshot, petty
+              cash by month. PDF for the file, Excel for the spreadsheet,
+              same numbers as the screen.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ MODULES ═══════════════════════ -->
+    <section id="modules" class="py-20 sm:py-24 border-t border-white/5">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-[12px] font-bold uppercase tracking-[0.2em] text-blue-400">Coverage</p>
+          <h2 class="mt-3 text-4xl sm:text-5xl font-extrabold tracking-tight">Everything the shop touches</h2>
+        </div>
+
+        <div class="mt-12 grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+          {% for m in module_list %}
+            <div class="card-glass rounded-xl px-4 py-3 flex items-center gap-2.5">
+              <span class="h-1.5 w-1.5 rounded-full bg-blue-400"></span>
+              <p class="text-[13px] font-medium text-slate-200">{{ m }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ STATS ═══════════════════════ -->
+    <section id="stats" class="py-20 sm:py-24 border-t border-white/5">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="card-glass rounded-2xl p-6 text-center reveal reveal-1">
+            <p class="text-5xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">17+</p>
+            <p class="mt-2 text-[12px] font-semibold uppercase tracking-widest text-slate-400">Live modules</p>
+          </div>
+          <div class="card-glass rounded-2xl p-6 text-center reveal reveal-2">
+            <p class="text-5xl font-black bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">1</p>
+            <p class="mt-2 text-[12px] font-semibold uppercase tracking-widest text-slate-400">Ledger of truth</p>
+          </div>
+          <div class="card-glass rounded-2xl p-6 text-center reveal reveal-3">
+            <p class="text-5xl font-black bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">3d</p>
+            <p class="mt-2 text-[12px] font-semibold uppercase tracking-widest text-slate-400">Cheque warning</p>
+          </div>
+          <div class="card-glass rounded-2xl p-6 text-center reveal reveal-4">
+            <p class="text-5xl font-black bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">0</p>
+            <p class="mt-2 text-[12px] font-semibold uppercase tracking-widest text-slate-400">Paper receipts</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ VOICES ═══════════════════════ -->
+    <section id="voices" class="py-20 sm:py-24 border-t border-white/5">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-[12px] font-bold uppercase tracking-[0.2em] text-blue-400">Voices from the floor</p>
+          <h2 class="mt-3 text-4xl sm:text-5xl font-extrabold tracking-tight">Built with the people who use it</h2>
+        </div>
+
+        <div class="mt-12 grid gap-5 md:grid-cols-3">
+          <blockquote class="card-glass rounded-2xl p-6 reveal reveal-1">
+            <svg class="h-7 w-7 text-blue-400/50" fill="currentColor" viewBox="0 0 24 24"><path d="M7 7h4v10H3V11c0-2.21 1.79-4 4-4zm10 0h4v10h-8V11c0-2.21 1.79-4 4-4z"/></svg>
+            <p class="mt-3 text-[14px] leading-relaxed text-slate-200">
+              The old book took an hour to close every night. The new one closes when the last bill is saved.
+            </p>
+            <p class="mt-4 text-[12px] font-semibold text-slate-400">— Counter operator</p>
+          </blockquote>
+
+          <blockquote class="card-glass rounded-2xl p-6 reveal reveal-2">
+            <svg class="h-7 w-7 text-emerald-400/50" fill="currentColor" viewBox="0 0 24 24"><path d="M7 7h4v10H3V11c0-2.21 1.79-4 4-4zm10 0h4v10h-8V11c0-2.21 1.79-4 4-4z"/></svg>
+            <p class="mt-3 text-[14px] leading-relaxed text-slate-200">
+              A bounced cheque used to be a phone call three weeks later. Now the system flags it the morning it matures.
+            </p>
+            <p class="mt-4 text-[12px] font-semibold text-slate-400">— Finance manager</p>
+          </blockquote>
+
+          <blockquote class="card-glass rounded-2xl p-6 reveal reveal-3">
+            <svg class="h-7 w-7 text-violet-400/50" fill="currentColor" viewBox="0 0 24 24"><path d="M7 7h4v10H3V11c0-2.21 1.79-4 4-4zm10 0h4v10h-8V11c0-2.21 1.79-4 4-4z"/></svg>
+            <p class="mt-3 text-[14px] leading-relaxed text-slate-200">
+              I can tell what the machines did last Tuesday without walking to the floor. That never used to be true.
+            </p>
+            <p class="mt-4 text-[12px] font-semibold text-slate-400">— Owner</p>
+          </blockquote>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ CTA ═══════════════════════ -->
+    <section class="relative py-24 border-t border-white/5">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 text-center">
+        <h2 class="text-4xl sm:text-5xl font-extrabold tracking-tight">Sign in and get to work.</h2>
+        <p class="mt-4 text-slate-300 text-[15px]">Staff accounts only. There is no self-registration — talk to a super admin if you don't have one yet.</p>
+        <div class="mt-8 flex justify-center">
+          <a href="{% url 'login' %}" class="btn-primary inline-flex items-center gap-2 rounded-xl px-8 py-3.5 text-[14px] font-semibold text-white">
+            Sign in
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ FOOTER ═══════════════════════ -->
+    <footer class="border-t border-white/5 py-10">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-2.5">
+          <span class="flex h-7 w-7 items-center justify-center overflow-hidden rounded-md bg-white shadow ring-1 ring-white/10">
+            <img src="{% static 'images/logo.jpeg' %}" alt="Senovka" class="h-full w-full object-cover">
+          </span>
+          <p class="text-[13px] font-semibold text-slate-300">Senovka Plastics</p>
+        </div>
+        <p class="text-[11px] text-slate-500">Internal system · Staff use only</p>
+      </div>
+    </footer>
+  </div>
+
+</body>
+</html>

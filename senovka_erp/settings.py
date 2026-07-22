@@ -60,6 +60,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.current_role",
+                "core.context_processors.notifications",
             ],
         },
     },
@@ -108,7 +109,10 @@ AUTH_USER_MODEL = "core.User"
 
 LOGIN_URL = "login"  # -> /login/
 LOGIN_REDIRECT_URL = "core:dashboard"  # -> /dashboard/
-LOGOUT_REDIRECT_URL = "login"  # -> /login/
+# Land signed-out users on the public marketing page rather than kicking them
+# straight back to the sign-in form — the landing page introduces the product
+# and carries its own "Sign in" button.
+LOGOUT_REDIRECT_URL = "core:landing"  # -> /
 
 
 # --- Crispy forms ---------------------------------------------------------

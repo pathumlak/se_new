@@ -250,6 +250,86 @@
   </div>
 </div>
 
+<!-- ═══════════════════ SECOND STAT ROW: STOCK HEALTH + MONTH COMPARE ═══════════════════ -->
+<div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+  <!-- Low stock count -->
+  <div class="stat-card {% if low_stock_count %}card-amber{% else %}card-blue{% endif %}">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Low Stock</p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">{{ low_stock_count }}</p>
+        <p class="mt-1.5 text-[11px] text-slate-400">≤ {{ low_stock_threshold }} on the shelf</p>
+      </div>
+      <span class="stat-icon bg-amber-50">
+        <svg class="h-[18px] w-[18px] text-amber-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <!-- Out of stock count -->
+  <div class="stat-card {% if out_of_stock_count %}card-danger{% else %}card-success{% endif %}">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Out of Stock</p>
+        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if out_of_stock_count %}text-rose-600{% else %}text-slate-900{% endif %}">
+          {{ out_of_stock_count }}
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">Empty or oversold</p>
+      </div>
+      <span class="stat-icon {% if out_of_stock_count %}bg-rose-50{% else %}bg-emerald-50{% endif %}">
+        <svg class="h-[18px] w-[18px] {% if out_of_stock_count %}text-rose-500{% else %}text-emerald-500{% endif %}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25l.75-1.5m2.5 1.5l-.75-1.5M9 15h6M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <!-- This month total -->
+  <div class="stat-card card-blue">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">{{ month_label }} Sales</p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
+          Rs {{ this_month_total|floatformat:2|intcomma }}
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">{{ this_month_count }} bill{{ this_month_count|pluralize }}</p>
+      </div>
+      <span class="stat-icon bg-blue-50">
+        <svg class="h-[18px] w-[18px] text-blue-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <!-- Month vs previous month -->
+  <div class="stat-card {% if month_delta_pct >= 0 %}card-success{% else %}card-danger{% endif %}">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">vs Last Month</p>
+        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if month_delta_pct >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+          {% if month_delta_pct >= 0 %}+{% endif %}{{ month_delta_pct|floatformat:1 }}%
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">Prev · Rs {{ prev_month_total|floatformat:2|intcomma }}</p>
+      </div>
+      <span class="stat-icon {% if month_delta_pct >= 0 %}bg-emerald-50{% else %}bg-rose-50{% endif %}">
+        {% if month_delta_pct >= 0 %}
+          <svg class="h-[18px] w-[18px] text-emerald-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.306A11.95 11.95 0 0119.8 10.6M21.75 6v6h-6"/>
+          </svg>
+        {% else %}
+          <svg class="h-[18px] w-[18px] text-rose-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6L9 12.75l4.286-4.286a11.948 11.948 0 014.306-3.213m3.408-2.501L21 12v6"/>
+          </svg>
+        {% endif %}
+      </span>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════════ CHARTS ROW ═══════════════════ -->
 <div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
 
@@ -423,6 +503,93 @@
           </li>
         {% empty %}
           <li class="px-5 py-12 text-center text-[13px] text-slate-400">No outstanding balances.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+</div>
+
+<!-- ═══════════════════ STOCK HEALTH + TOP PRODUCTS ═══════════════════ -->
+<div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+
+  <!-- Low stock quick list -->
+  <section>
+    <div class="section-card h-full">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Low Stock</h2>
+          <p class="text-[11px] text-slate-400 mt-0.5">Products at or below {{ low_stock_threshold }}</p>
+        </div>
+        <a href="{% url 'core:product_list' %}?view=stock" class="section-link">All stock →</a>
+      </div>
+
+      <ul>
+        {% for product in low_stock_items %}
+          <li class="flex items-center gap-3 px-5 py-3" style="border-bottom:1px solid #f8fafc">
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50">
+              <svg class="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+              </svg>
+            </span>
+            <div class="min-w-0 flex-1">
+              <a href="{% url 'core:product_prices' product.pk %}" class="text-[13px] font-semibold text-slate-800 hover:text-blue-600 truncate block">
+                {{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}
+              </a>
+              <p class="text-[11px] text-slate-400 mt-0.5">
+                {{ product.qty|floatformat:"-3" }} left · reorder recommended
+              </p>
+            </div>
+            <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Low</span>
+          </li>
+        {% empty %}
+          <li class="px-5 py-12 text-center">
+            <span class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50">
+              <svg class="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </span>
+            <p class="mt-3 text-[13px] font-semibold text-slate-700">Every shelf is comfortable</p>
+            <p class="mt-1 text-[11px] text-slate-400">Nothing at or below {{ low_stock_threshold }} right now.</p>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <!-- Top products this month -->
+  <section>
+    <div class="section-card h-full">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Top Sellers</h2>
+          <p class="text-[11px] text-slate-400 mt-0.5">{{ month_label }} · by revenue</p>
+        </div>
+        <a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>
+      </div>
+
+      <ul>
+        {% for row in top_products %}
+          <li class="flex items-center gap-3 px-5 py-3" style="border-bottom:1px solid #f8fafc">
+            <span class="rank-bubble
+              {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">
+              {{ forloop.counter }}
+            </span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-[13px] font-semibold text-slate-800">
+                {{ row.product__name }}{% if row.product__size %} · {{ row.product__size }}{% endif %}
+              </p>
+              <p class="truncate text-[11px] text-slate-400 mt-0.5">
+                {{ row.qty_sold|floatformat:"-3" }} units sold
+              </p>
+            </div>
+            <p class="shrink-0 text-[13px] font-bold text-slate-900">
+              Rs {{ row.revenue|floatformat:2|intcomma }}
+            </p>
+          </li>
+        {% empty %}
+          <li class="px-5 py-12 text-center text-[13px] text-slate-400">
+            No sales yet this month.
+          </li>
         {% endfor %}
       </ul>
     </div>

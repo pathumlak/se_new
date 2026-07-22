@@ -117,6 +117,26 @@
                     </button>
                   </form>
                 {% endif %}
+
+                {% comment %}
+                Hard delete. Refuses on the operator's own row for the same
+                reason Deactivate does, and a user with any audit records will
+                be bounced by ProtectedError — the view flashes "Deactivate
+                instead" in that case.
+                {% endcomment %}
+                {% if row.pk == request.user.pk %}
+                  <span class="cursor-default rounded-md px-2 py-1 text-xs font-medium text-slate-300"
+                        title="You can't delete your own account.">
+                    Delete
+                  </span>
+                {% else %}
+                  <button type="button"
+                          data-url="{% url 'core:user_delete' row.pk %}"
+                          data-username="{{ row.username }}"
+                          class="js-delete rounded-md px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50">
+                    Delete
+                  </button>
+                {% endif %}
               </div>
             </td>
           </tr>
@@ -225,6 +245,48 @@ session to render this, so a refresh will not bring it back.
   </div>
 </div>
 
+<!-- ====================== Delete modal ====================== -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round"
+                d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">
+          Delete <span id="delete-modal-username"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          The account will be removed from the system.
+        </p>
+        <p class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          If they have any records against them (bills, payments, audits) the
+          delete will be refused — deactivate the account instead.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form">
+        {% csrf_token %}
+        <button type="submit"
+                class="rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -266,6 +328,7 @@ session to render this, so a refresh will not bring it back.
   }
 
   wireConfirm('deactivate');
+  wireConfirm('delete');
 
   // ---- show a freshly generated password, once ----
   (function () {

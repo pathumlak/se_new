@@ -1,18 +1,22 @@
 from django.urls import path
-from django.views.generic import RedirectView
 
 from . import views
 
 app_name = "core"
 
 urlpatterns = [
-    # Bare root sends signed-in users to the dashboard, anonymous ones to login.
-    path(
-        "",
-        RedirectView.as_view(pattern_name="core:dashboard", permanent=False),
-        name="home",
-    ),
+    # Public landing page. Signed-in users bypass it via a redirect inside the
+    # view — bookmarking "/" and staying signed in should land you where you
+    # actually work, not on marketing copy you already know.
+    path("", views.landing, name="landing"),
     path("dashboard/", views.dashboard, name="dashboard"),
+    # Fire-and-forget dismiss for a single notification card. POST-only so a
+    # browser back button never re-fires the dismissal.
+    path(
+        "notifications/dismiss/",
+        views.notification_dismiss,
+        name="notification_dismiss",
+    ),
     # Super-admin only, enforced per view. There is no self-registration.
     path("users/", views.user_list, name="user_list"),
     path("users/create/", views.user_create, name="user_create"),
@@ -26,6 +30,7 @@ urlpatterns = [
     ),
     path("users/<int:pk>/deactivate/", views.user_deactivate, name="user_deactivate"),
     path("users/<int:pk>/activate/", views.user_activate, name="user_activate"),
+    path("users/<int:pk>/delete/", views.user_delete, name="user_delete"),
     # Self-service: every signed-in user has a profile page.
     path("profile/", views.profile, name="profile"),
     path("categories/", views.category_list, name="category_list"),

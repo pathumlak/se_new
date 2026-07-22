@@ -34,6 +34,7 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_POST
 
 from .decorators import super_admin_required
+from .notifications import dismiss as dismiss_notification
 from .utils import get_month_filter
 from .forms import (
     BillEditReasonForm,
@@ -157,6 +158,44 @@ def _warning_signature(today, cheques):
     return f"{today.isoformat()}:{ids}"
 
 
+def landing(request):
+    """Public marketing page at /.
+
+    Signed-in users bypass it — they've already seen the pitch and would rather
+    land on the dashboard. Anonymous visitors get the marketing page with a
+    Sign in call-to-action; the logout redirect also comes here so the
+    just-signed-out user sees the front door rather than the login form.
+    """
+    if request.user.is_authenticated:
+        return redirect("core:dashboard")
+    modules = [
+        "Products", "Categories", "Stock Ledger", "Customers",
+        "Suppliers", "Bills", "Held Bills", "Cheques",
+        "Cash Drawer", "Supplier Bills", "Customer Ledger", "Sales Report",
+        "Production", "Daily Machine Run", "Petty Cash", "Material Purchasing",
+        "Order Book", "Vehicle Tracker", "User Management", "Outstanding Report",
+    ]
+    return render(request, "landing.html", {"module_list": modules})
+
+
+@require_POST
+@login_required
+def notification_dismiss(request):
+    """Mark a single bell notification dismissed for the configured window.
+
+    Expects a `key` in POST — the same stable key the notification carried
+    when rendered. Fire-and-forget: the bell removes the card client-side
+    before the request even completes, and this write only exists so the
+    same alert doesn't come back on the next page load.
+    """
+    key = (request.POST.get("key") or "").strip()
+    if key:
+        dismiss_notification(request.session, key)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True})
+    return redirect(request.META.get("HTTP_REFERER") or "core:dashboard")
+
+
 def _cash_drawer_balance(queryset=None):
     """Net cash on hand: 'in' adds, 'out' and 'transfer' both remove.
 
@@ -245,11 +284,72 @@ def dashboard(request):
     payment_labels = []
     payment_values = []
     payment_type_map = dict(Bill.PaymentType.choices)
-    
+
     for pm in payment_mix:
         if pm["total"] > 0:
             payment_labels.append(payment_type_map.get(pm["payment_type"], pm["payment_type"]))
             payment_values.append(float(pm["total"]))
+
+    # ── Stock health ──────────────────────────────────────────────────────
+    # Split rather than a single "needs attention" count so the operator can
+    # see at a glance whether the shelf is genuinely bare or just running low.
+    low_stock_qs = Product.objects.filter(
+        is_active=True, qty__gt=0, qty__lte=settings.LOW_STOCK_THRESHOLD
+    ).order_by("qty", "name")
+    out_of_stock_qs = Product.objects.filter(is_active=True, qty__lte=0).order_by(
+        "qty", "name"
+    )
+    low_stock_items = list(low_stock_qs[:6])
+    low_stock_count = low_stock_qs.count()
+    out_of_stock_count = out_of_stock_qs.count()
+
+    # ── This month vs previous month ──────────────────────────────────────
+    # Two figures the operator asks for weekly. Percent lives in the template
+    # to keep the view thin, but the delta stays here because "did we grow"
+    # is a business question not a display one.
+    month_start = today.replace(day=1)
+    if month_start.month == 1:
+        prev_month_start = month_start.replace(year=month_start.year - 1, month=12)
+    else:
+        prev_month_start = month_start.replace(month=month_start.month - 1)
+
+    def _sum_bills(start, end_exclusive):
+        return (
+            Bill.objects.filter(bill_date__gte=start, bill_date__lt=end_exclusive)
+            .exclude(status=Bill.Status.CANCELLED)
+            .aggregate(
+                total=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY),
+                count=Count("id"),
+            )
+        )
+
+    this_month = _sum_bills(month_start, month_start + timedelta(days=32))
+    prev_month = _sum_bills(prev_month_start, month_start)
+    this_month_total = this_month["total"]
+    prev_month_total = prev_month["total"]
+
+    if prev_month_total > 0:
+        month_delta_pct = float(
+            (this_month_total - prev_month_total) / prev_month_total * 100
+        )
+    elif this_month_total > 0:
+        month_delta_pct = 100.0
+    else:
+        month_delta_pct = 0.0
+
+    # ── Top-selling products this month ──────────────────────────────────
+    top_products = (
+        BillItem.objects.filter(
+            bill__bill_date__gte=month_start,
+        )
+        .exclude(bill__status=Bill.Status.CANCELLED)
+        .values("product__name", "product__size")
+        .annotate(
+            qty_sold=Coalesce(Sum("qty"), ZERO, output_field=MONEY),
+            revenue=Coalesce(Sum("line_total"), ZERO, output_field=MONEY),
+        )
+        .order_by("-revenue")[:5]
+    )
 
     return render(
         request,
@@ -272,6 +372,16 @@ def dashboard(request):
             "bill_counts_json": json.dumps(bill_counts),
             "payment_labels_json": json.dumps(payment_labels),
             "payment_values_json": json.dumps(payment_values),
+            "low_stock_items": low_stock_items,
+            "low_stock_count": low_stock_count,
+            "out_of_stock_count": out_of_stock_count,
+            "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
+            "this_month_total": this_month_total,
+            "this_month_count": this_month["count"],
+            "prev_month_total": prev_month_total,
+            "month_delta_pct": month_delta_pct,
+            "month_label": month_start.strftime("%B %Y"),
+            "top_products": top_products,
         },
     )
 
@@ -461,6 +571,44 @@ def user_activate(request, pk):
     target.is_active = True
     target.save(update_fields=["is_active"])
     messages.success(request, f"{target.username} can sign in again.")
+    return redirect("core:user_list")
+
+
+@require_POST
+@super_admin_required
+def user_delete(request, pk):
+    """Hard-delete a user account.
+
+    Refuses self-delete for the same reason `user_deactivate` does — the only
+    people who can run this are super admins, and losing the last one would
+    lock the app.
+
+    User is `on_delete=PROTECT`-referenced from most audit trails (bill edits,
+    settlements, adjustments, material purchases, weigh entries, etc.), so any
+    account that has ever done anything cannot be hard-deleted. That's the
+    point: the audit trail must stay whole. Catch the ProtectedError and steer
+    the operator to Deactivate instead, matching the delete pattern used for
+    Product/Category/Customer.
+    """
+    target = get_object_or_404(User, pk=pk)
+
+    if target.pk == request.user.pk:
+        messages.error(request, "You can't delete your own account.")
+        return redirect("core:user_list")
+
+    username = target.username
+    try:
+        target.delete()
+    except ProtectedError:
+        messages.error(
+            request,
+            f"{username} has records attached (bills, payments, audits) and "
+            f"can't be deleted. Deactivate the account instead — it stops "
+            f"them signing in without losing the history.",
+        )
+        return redirect("core:user_list")
+
+    messages.success(request, f"{username} was deleted.")
     return redirect("core:user_list")
 
 

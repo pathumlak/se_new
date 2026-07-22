@@ -79,6 +79,124 @@
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+
+    /* ── Notification bell + dropdown ── */
+    .bell-btn {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px;
+      border-radius: 10px;
+      background: rgba(15,23,42,0.04);
+      color: #475569;
+      transition: background 0.15s, color 0.15s;
+    }
+    .bell-btn:hover { background: rgba(15,23,42,0.08); color: #0f172a; }
+    .bell-btn.has-new svg { animation: bellShake 1.4s ease-in-out infinite; transform-origin: 50% 6%; }
+    @keyframes bellShake {
+      0%, 60%, 100% { transform: rotate(0); }
+      70% { transform: rotate(12deg); }
+      80% { transform: rotate(-10deg); }
+      90% { transform: rotate(6deg); }
+    }
+    .bell-badge {
+      position: absolute; top: -3px; right: -3px;
+      min-width: 17px; height: 17px;
+      padding: 0 4px;
+      border-radius: 99px;
+      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      color: #fff;
+      font-size: 10px; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 0 0 0 2px #fff;
+    }
+    .notif-panel {
+      position: absolute; top: calc(100% + 8px); right: 0;
+      width: 360px; max-width: calc(100vw - 32px);
+      background: #ffffff;
+      border: 1px solid rgba(226,232,240,0.9);
+      border-radius: 16px;
+      box-shadow: 0 24px 48px -12px rgba(15,23,42,0.24), 0 12px 24px -8px rgba(15,23,42,0.12);
+      overflow: hidden;
+      transform-origin: top right;
+      animation: panelIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+      z-index: 50;
+    }
+    @keyframes panelIn {
+      from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .notif-item {
+      display: flex; gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      transition: background 0.12s;
+    }
+    .notif-item:last-child { border-bottom: none; }
+    .notif-item:hover { background: #f8fafc; }
+    .notif-icon {
+      flex-shrink: 0;
+      width: 34px; height: 34px;
+      border-radius: 10px;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .notif-icon.danger  { background: #fef2f2; color: #dc2626; }
+    .notif-icon.warning { background: #fffbeb; color: #d97706; }
+    .notif-icon.info    { background: #eff6ff; color: #2563eb; }
+    .notif-dismiss {
+      opacity: 0; transition: opacity 0.15s;
+      flex-shrink: 0;
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      color: #94a3b8;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .notif-item:hover .notif-dismiss { opacity: 1; }
+    .notif-dismiss:hover { background: #f1f5f9; color: #475569; }
+
+    /* ── Apple-style toast stack (top-right) ── */
+    #apple-toast-stack {
+      position: fixed;
+      top: 18px; right: 18px;
+      z-index: 60;
+      display: flex; flex-direction: column; gap: 10px;
+      pointer-events: none;
+      max-width: 360px;
+    }
+    .apple-toast {
+      pointer-events: auto;
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 12px 14px;
+      background: rgba(28, 28, 30, 0.72);
+      color: #ffffff;
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.35), 0 8px 16px -6px rgba(0,0,0,0.25);
+      transform: translateX(120%);
+      opacity: 0;
+      transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
+      cursor: pointer;
+    }
+    .apple-toast.show { transform: translateX(0); opacity: 1; }
+    .apple-toast.dismiss { transform: translateX(120%); opacity: 0; }
+    .apple-toast-icon {
+      flex-shrink: 0;
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.14);
+    }
+    .apple-toast-title { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.25; }
+    .apple-toast-body  { font-size: 12px; color: rgba(255,255,255,0.72); margin-top: 2px; line-height: 1.35; }
+    .apple-toast-close {
+      flex-shrink: 0;
+      width: 20px; height: 20px; border-radius: 6px;
+      color: rgba(255,255,255,0.55);
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-left: 4px;
+    }
+    .apple-toast-close:hover { color: #fff; background: rgba(255,255,255,0.12); }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
@@ -383,6 +501,87 @@
           </span>
         {% endif %}
 
+        <!-- ═══ Notification bell ═══ -->
+        <div class="relative" id="notif-root"
+             data-dismiss-url="{% url 'core:notification_dismiss' %}"
+             data-sound-url="{% static 'sounds/notifications.mp3' %}">
+          <button type="button" id="notif-bell"
+                  class="bell-btn {% if notification_count %}has-new{% endif %}"
+                  aria-haspopup="true" aria-expanded="false" aria-label="Notifications">
+            <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/>
+            </svg>
+            {% if notification_count %}
+              <span class="bell-badge">{% if notification_count > 9 %}9+{% else %}{{ notification_count }}{% endif %}</span>
+            {% endif %}
+          </button>
+
+          <div id="notif-panel" class="notif-panel hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+              <div>
+                <p class="text-[13px] font-bold text-slate-900">Notifications</p>
+                <p class="text-[11px] text-slate-500 mt-0.5">
+                  {% if notification_count %}{{ notification_count }} needs attention{% else %}You're all caught up{% endif %}
+                </p>
+              </div>
+              <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Live</span>
+            </div>
+
+            <div class="max-h-[420px] overflow-y-auto" id="notif-list">
+              {% for notif in notifications %}
+                <div class="notif-item" data-key="{{ notif.key }}">
+                  <a href="{{ notif.url }}" class="flex flex-1 min-w-0 gap-3">
+                    <span class="notif-icon {{ notif.level }}">
+                      {% if notif.icon == 'package' %}
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+                        </svg>
+                      {% elif notif.icon == 'cheque' %}
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/>
+                        </svg>
+                      {% else %}
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+                        </svg>
+                      {% endif %}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-[13px] font-semibold text-slate-900 truncate">{{ notif.title }}</p>
+                      <p class="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{{ notif.body }}</p>
+                    </div>
+                  </a>
+                  <button type="button" class="notif-dismiss js-notif-dismiss" data-key="{{ notif.key }}" title="Dismiss for 3 days">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+              {% empty %}
+                <div class="px-6 py-10 text-center">
+                  <span class="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50">
+                    <svg class="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                  </span>
+                  <p class="mt-3 text-[13px] font-semibold text-slate-800">Nothing needs you right now</p>
+                  <p class="mt-1 text-[11px] text-slate-500">Stock's fine, no cheques on the clock.</p>
+                </div>
+              {% endfor %}
+            </div>
+
+            {% if notification_count %}
+              <div class="border-t border-slate-100 px-4 py-2 flex items-center justify-between bg-slate-50">
+                <p class="text-[10px] text-slate-500">Dismisses last 3 days</p>
+                <a href="{% url 'core:dashboard' %}" class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Open dashboard →</a>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+        {{ notifications|json_script:"notifications-data" }}
+
         <form method="post" action="{% url 'logout' %}">
           {% csrf_token %}
           <button type="submit"
@@ -476,6 +675,165 @@
     });
   })();
 </script>
+
+
+  <!-- ═══ Apple-style toast stack (top-right, glassy) ═══ -->
+  <div id="apple-toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+  <script>
+  /* ─── Notification bell: open/close panel, dismiss, toast, sound ─── */
+  (function () {
+    const root = document.getElementById('notif-root');
+    if (!root) return;
+
+    const bell    = document.getElementById('notif-bell');
+    const panel   = document.getElementById('notif-panel');
+    const stack   = document.getElementById('apple-toast-stack');
+    const dataEl  = document.getElementById('notifications-data');
+    const dismissUrl = root.dataset.dismissUrl;
+    const soundUrl   = root.dataset.soundUrl;
+
+    // ── Panel open/close ────────────────────────────────────────────────
+    function togglePanel(force) {
+      const open = typeof force === 'boolean' ? force : panel.classList.contains('hidden');
+      panel.classList.toggle('hidden', !open);
+      bell.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    bell.addEventListener('click', function (e) {
+      e.stopPropagation();
+      togglePanel();
+    });
+    document.addEventListener('click', function (e) {
+      if (!root.contains(e.target)) togglePanel(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') togglePanel(false);
+    });
+
+    // ── CSRF for POST dismiss ───────────────────────────────────────────
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    // ── Per-item dismiss (× button) ─────────────────────────────────────
+    document.querySelectorAll('.js-notif-dismiss').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const key = btn.dataset.key;
+        const item = btn.closest('.notif-item');
+        if (item) item.style.display = 'none';
+
+        // Adjust the badge count so the UI feels instant.
+        const badge = bell.querySelector('.bell-badge');
+        if (badge) {
+          const n = parseInt((badge.textContent || '0').replace('9+', '10'), 10) - 1;
+          if (n <= 0) { badge.remove(); bell.classList.remove('has-new'); }
+          else badge.textContent = n > 9 ? '9+' : String(n);
+        }
+
+        // Fire-and-forget POST. If it fails, the notification comes back on
+        // the next page load anyway — no user-facing error needed.
+        const form = new FormData();
+        form.append('key', key);
+        fetch(dismissUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+          body: form,
+          credentials: 'same-origin',
+        }).catch(function () {});
+      });
+    });
+
+    // ── Apple-style toast for NEW notifications ────────────────────────
+    // "New" = the notification key hasn't been shown to this browser yet.
+    // sessionStorage is deliberate: a soft alert should re-toast tomorrow
+    // if the underlying problem is still there, but not on every page nav.
+    const notifications = JSON.parse(dataEl ? dataEl.textContent : '[]');
+    const SEEN_KEY = 'senovka:seen-notifs';
+    let seen;
+    try { seen = new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]')); }
+    catch (e) { seen = new Set(); }
+
+    const fresh = notifications.filter(function (n) { return !seen.has(n.key); });
+
+    function iconSVG(kind) {
+      if (kind === 'cheque') {
+        return '<svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/></svg>';
+      }
+      return '<svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>';
+    }
+
+    function showToast(notif, offsetMs) {
+      const toast = document.createElement('a');
+      toast.href = notif.url || '#';
+      toast.className = 'apple-toast';
+      toast.setAttribute('role', 'alert');
+      toast.innerHTML =
+        '<span class="apple-toast-icon">' + iconSVG(notif.kind) + '</span>' +
+        '<div class="min-w-0 flex-1">' +
+        '  <p class="apple-toast-title">' + escapeHtml(notif.title) + '</p>' +
+        '  <p class="apple-toast-body">' + escapeHtml(notif.body || '') + '</p>' +
+        '</div>' +
+        '<span class="apple-toast-close" aria-label="Dismiss">' +
+        '  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>' +
+        '</span>';
+      stack.appendChild(toast);
+
+      // Close button stops navigation.
+      toast.querySelector('.apple-toast-close').addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dismissToast(toast);
+      });
+
+      // Slide in on the next tick so the transition kicks.
+      setTimeout(function () { toast.classList.add('show'); }, 50 + offsetMs);
+      // Auto-dismiss after ~7s, matching the Apple "banner" style.
+      setTimeout(function () { dismissToast(toast); }, 7500 + offsetMs);
+    }
+
+    function dismissToast(toast) {
+      toast.classList.remove('show');
+      toast.classList.add('dismiss');
+      setTimeout(function () { toast.remove(); }, 500);
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    if (fresh.length > 0) {
+      // Play the sound once, muted-if-blocked. Modern browsers block audio
+      // without user interaction — silent-fail is the whole story.
+      try {
+        const audio = new Audio(soundUrl);
+        audio.volume = 0.5;
+        audio.play().catch(function () { /* autoplay blocked; that's fine */ });
+      } catch (e) { /* no Audio in this browser; fine */ }
+
+      // Stagger the toasts so the stack animates rather than piling.
+      fresh.slice(0, 5).forEach(function (n, i) { showToast(n, i * 220); });
+
+      // Remember every fresh key + everything currently shown so we don't
+      // re-toast on the next page navigation.
+      notifications.forEach(function (n) { seen.add(n.key); });
+      try { sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen])); }
+      catch (e) { /* private mode; that's fine */ }
+    } else {
+      // Still record what we know so the seen-set matches reality.
+      notifications.forEach(function (n) { seen.add(n.key); });
+      try { sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen])); }
+      catch (e) {}
+    }
+  })();
+  </script>
 
 {% else %}
   {% block anon_content %}{% endblock %}
