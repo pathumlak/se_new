@@ -39,6 +39,8 @@ urlpatterns = [
         views.audit_log_delete_month,
         name="audit_log_delete_month",
     ),
+    # Company header/footer for printed bills. Super-admin only. Singleton row.
+    path("settings/billing/", views.billing_settings, name="billing_settings"),
     # Self-service: every signed-in user has a profile page.
     path("profile/", views.profile, name="profile"),
     path("categories/", views.category_list, name="category_list"),
@@ -157,6 +159,9 @@ urlpatterns = [
     path("bills/", views.bill_list, name="bill_list"),
     path("bills/excel/", views.bill_list_excel, name="bill_list_excel"),
     path("bills/<int:pk>/", views.bill_detail, name="bill_detail"),
+    # A4 print-ready view. Auto-fires the browser print dialog unless the URL
+    # carries ?noprint=1 (used by the settings preview button).
+    path("bills/<int:pk>/print/", views.bill_print, name="bill_print"),
     # GET renders the form; POST rewrites the bill.
     path("bills/<int:pk>/edit/", views.bill_edit, name="bill_edit"),
     path("bills/<int:pk>/delete/", views.bill_delete, name="bill_delete"),

@@ -1432,6 +1432,96 @@ class DailyOtherWork(models.Model):
         return f"Other work · {self.run_date}"
 
 
+class BillingSettings(models.Model):
+    """The company details printed at the top of every bill.
+
+    Deliberately a singleton — every field on it is a company-wide fact, not
+    something that varies per bill or per user, so a table of "settings rows"
+    would be a shelf of one. `load()` fetches the single row (creating it with
+    defaults on first call) and every read goes through it, which means new
+    installs work without any manual seeding.
+
+    Editable by the super admin from `/settings/billing/`. The bill print view
+    pulls a fresh copy each render, so a changed footer note or a corrected
+    phone number is picked up by the next invoice without a restart.
+    """
+
+    SINGLETON_ID = 1
+
+    company_name = models.CharField(max_length=200, default="Senovka Plastics")
+    tagline = models.CharField(max_length=200, blank=True, default="Plastic Manufacturing")
+
+    # Address is a free-form multi-line field. Splitting it into street/city/
+    # postcode buys nothing for an in-house tool — the operator types it once
+    # and it prints back the same way.
+    address = models.TextField(blank=True, default="")
+
+    phone = models.CharField(max_length=60, blank=True, default="")
+    phone_alt = models.CharField(max_length=60, blank=True, default="")
+    email = models.EmailField(max_length=254, blank=True, default="")
+    website = models.CharField(max_length=200, blank=True, default="")
+
+    # For tax/registration/VAT — a single free-text field because the format
+    # varies by country and dressing it up as three fields is the sort of
+    # over-engineering that comes back to bite the operator.
+    business_reg_no = models.CharField(max_length=100, blank=True, default="")
+    tax_id = models.CharField(max_length=100, blank=True, default="")
+
+    # Bank details block for "please pay to this account" on the bill footer.
+    bank_name = models.CharField(max_length=150, blank=True, default="")
+    bank_branch = models.CharField(max_length=150, blank=True, default="")
+    bank_account_name = models.CharField(max_length=150, blank=True, default="")
+    bank_account_no = models.CharField(max_length=60, blank=True, default="")
+
+    # The line that closes every invoice ("Thank you for your business" etc).
+    footer_note = models.CharField(
+        max_length=300, blank=True, default="Thank you for your business."
+    )
+    # A short terms line prints under the footer. Kept short deliberately — a
+    # full T&C block belongs on a separate page, not stapled to every bill.
+    terms_line = models.CharField(max_length=300, blank=True, default="")
+
+    # Watermark: a faint mark diagonally across the page.
+    show_watermark = models.BooleanField(default=True)
+    watermark_text = models.CharField(
+        max_length=60,
+        blank=True,
+        default="SENOVKA",
+        help_text="Text drawn diagonally in a very faint colour behind the bill. Leave blank to use the logo image instead.",
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Billing settings"
+        verbose_name_plural = "Billing settings"
+
+    def __str__(self):
+        return f"Billing settings ({self.company_name})"
+
+    def save(self, *args, **kwargs):
+        """Pin the primary key to the singleton id.
+
+        Prevents a second row from being created by accident — anyone calling
+        `BillingSettings.objects.create()` gets the singleton back with any
+        provided defaults applied.
+        """
+        self.pk = self.SINGLETON_ID
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # A singleton with a live UI cannot be deleted from the front end;
+        # a management command could still call it, and the next `load()`
+        # would rebuild it with defaults.
+        return super().delete(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        """The one settings row, freshly created if the table is empty."""
+        obj, _ = cls.objects.get_or_create(pk=cls.SINGLETON_ID)
+        return obj
+
+
 class AuditLog(models.Model):
     """One entry per business-write across the whole system.
 

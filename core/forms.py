@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from .models import (
+    BillingSettings,
     CashDrawer,
     Category,
     Cheque,
@@ -2031,3 +2032,36 @@ class ProfileDetailsForm(forms.ModelForm):
         for messages in self.errors.values():
             return messages[0] if messages else "Could not save."
         return "Could not save."
+
+
+class BillingSettingsForm(forms.ModelForm):
+    """Company-wide bill header/footer settings.
+
+    Every field is optional except `company_name` — the print template silently
+    drops any block whose fields are all blank, so a barebones setup shows just
+    the name and the items, while a fully-filled setup gets the address, phone,
+    bank block and terms line printed too.
+    """
+
+    class Meta:
+        model = BillingSettings
+        exclude = ["updated_at"]
+        widgets = {
+            "company_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "tagline": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "address": forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 3}),
+            "phone": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "phone_alt": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "email": forms.EmailInput(attrs={"class": INPUT_CLASSES}),
+            "website": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "business_reg_no": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "tax_id": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "bank_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "bank_branch": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "bank_account_name": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "bank_account_no": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "footer_note": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "terms_line": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "watermark_text": forms.TextInput(attrs={"class": INPUT_CLASSES}),
+            "show_watermark": forms.CheckboxInput(attrs={"class": CHECKBOX_CLASSES}),
+        }

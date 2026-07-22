@@ -38,6 +38,7 @@ from .notifications import dismiss as dismiss_notification
 from .utils import get_month_filter
 from .forms import (
     BillEditReasonForm,
+    BillingSettingsForm,
     BillPaymentForm,
     CashDrawerEditForm,
     CashDrawerInForm,
@@ -75,6 +76,7 @@ from .models import (
     AuditLog,
     Bill,
     BillEditAudit,
+    BillingSettings,
     BillItem,
     CashDrawer,
     CashTransfer,
@@ -742,6 +744,42 @@ def audit_log_delete_month(request):
         f"{month_start.strftime('%B %Y')}.",
     )
     return redirect("core:audit_log_list")
+
+
+# ----------------------------------------------------------- billing settings
+# Super-admin only. Singleton row edited in place — no create/list/delete.
+
+
+@super_admin_required
+def billing_settings(request):
+    """Edit the company header/footer printed on every bill.
+
+    Singleton — no pk in the URL. The model's `load()` returns the same row
+    every time, so a fresh POST just re-saves it; nothing here has to worry
+    about "which record" the operator is editing.
+    """
+    instance = BillingSettings.load()
+
+    if request.method == "POST":
+        form = BillingSettingsForm(request.POST, instance=instance)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Billing settings updated.")
+            return redirect("core:billing_settings")
+        messages.error(request, "Please fix the highlighted fields.")
+    else:
+        form = BillingSettingsForm(instance=instance)
+
+    # A sample bill id lets the "Preview" button open a real bill styled with
+    # the current settings — no seed data, no pk in the URL is fine but the
+    # template needs one.
+    sample_bill_id = Bill.objects.order_by("-id").values_list("id", flat=True).first()
+
+    return render(
+        request,
+        "core/billing_settings.html",
+        {"form": form, "settings": instance, "sample_bill_id": sample_bill_id},
+    )
 
 
 # ---------------------------------------------------------------- categories
@@ -3687,6 +3725,47 @@ def bill_detail(request, pk):
             # Templates can't take an absolute value, and a debt reads better
             # as a positive figure.
             "owed_now": owed_now,
+        },
+    )
+
+
+@login_required
+def bill_print(request, pk):
+    """Formal A4 print-ready view of one bill.
+
+    Renders a standalone HTML page with the current `BillingSettings` painted
+    across the header and footer, the company logo top-left, and the items /
+    totals / payments block below. The template auto-fires `window.print()` on
+    load unless the URL carries `?noprint=1`, which is what the "Preview"
+    button on the settings page uses to render without launching the print
+    dialog.
+
+    Not a PDF endpoint — the browser's print pipeline handles A4 sizing and
+    lets the operator send it to whatever printer they have set up, which is
+    the same story the bill_pdf endpoints tell for reports.
+    """
+    bill = get_object_or_404(
+        Bill.objects.select_related("customer"), pk=pk
+    )
+    items = list(bill.items.select_related("product"))
+    payments = list(bill.payments.prefetch_related("cheques", "transfers"))
+    settings_row = BillingSettings.load()
+
+    if bill.customer_id:
+        balance_before = bill.customer.balance - bill.balance_change
+    else:
+        balance_before = ZERO
+
+    return render(
+        request,
+        "core/bill_print.html",
+        {
+            "bill": bill,
+            "items": items,
+            "payments": payments,
+            "billing": settings_row,
+            "balance_before": balance_before,
+            "auto_print": request.GET.get("noprint") != "1",
         },
     )
 

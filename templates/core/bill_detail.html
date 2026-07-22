@@ -162,10 +162,10 @@
         Delete
       </button>
     {% endif %}
-    <button type="button" id="print-bill"
-            class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+    <a href="{% url 'core:bill_print' bill.pk %}" target="_blank" rel="noopener"
+       class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       Print
-    </button>
+    </a>
   </div>
 </div>
 

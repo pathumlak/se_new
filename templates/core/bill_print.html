@@ -1,0 +1,546 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Invoice #{{ bill.pk }} · {{ billing.company_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    /* ── A4 page setup ─────────────────────────────────────────────────────
+       Two things happen with @page:
+         1. The browser prints on A4 with a tight margin (we handle margin
+            inside .sheet ourselves so the page has room for the watermark
+            and page-break control).
+         2. Screen preview shows the same width so the operator sees exactly
+            what will come out of the printer.
+    */
+    @page {
+      size: A4;
+      margin: 0;
+    }
+    * { box-sizing: border-box; font-family: 'Inter', system-ui, sans-serif; }
+    html, body { margin: 0; padding: 0; background: #eef2f7; color: #0f172a; }
+
+    .sheet {
+      /* A4 in mm; the browser handles DPI scaling. The .content padding is the
+         actual printable margin — @page has margin:0 so the watermark can
+         reach the edges. */
+      width: 210mm;
+      min-height: 297mm;
+      margin: 24px auto;
+      padding: 0;
+      background: #ffffff;
+      box-shadow: 0 6px 24px rgba(15, 23, 42, 0.12);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .content {
+      padding: 18mm 16mm 16mm 16mm;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* ── Watermark ─────────────────────────────────────────────────────────
+       Rotated text sitting behind every layer at very low opacity, plus a
+       print-safe colour ramp so the print driver keeps the tone rather than
+       rendering it black. */
+    .watermark {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .watermark-text {
+      font-size: 180px;
+      font-weight: 900;
+      color: rgba(15, 23, 42, 0.05);
+      transform: rotate(-30deg);
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .watermark-logo {
+      opacity: 0.045;
+      max-width: 60%;
+      max-height: 60%;
+      transform: rotate(-18deg);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    /* ── Header row ────────────────────────────────────────────────────────
+       Two columns: logo + company block on the left, invoice number band on
+       the right. */
+    .head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #0f172a;
+    }
+    .brand { display: flex; gap: 14px; align-items: center; min-width: 0; }
+    .brand-logo {
+      width: 68px; height: 68px;
+      border-radius: 10px;
+      object-fit: cover;
+      box-shadow: 0 2px 4px rgba(15,23,42,0.08);
+      background: #ffffff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .brand-name { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; }
+    .brand-tag  { font-size: 11px; font-weight: 600; color: #64748b; letter-spacing: 0.03em; text-transform: uppercase; margin-top: 3px; }
+    .brand-meta { font-size: 10.5px; color: #475569; line-height: 1.55; margin-top: 8px; white-space: pre-line; }
+    .brand-meta strong { color: #0f172a; }
+
+    .doc-tag {
+      text-align: right;
+      min-width: 200px;
+    }
+    .doc-label { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #64748b; }
+    .doc-number { font-size: 30px; font-weight: 900; color: #0f172a; letter-spacing: -0.02em; line-height: 1; margin-top: 4px; }
+    .doc-date { font-size: 11px; color: #475569; margin-top: 6px; }
+    .doc-status {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .status-paid      { background: #dcfce7; color: #166534; }
+    .status-partial   { background: #fef9c3; color: #854d0e; }
+    .status-unpaid    { background: #fee2e2; color: #991b1b; }
+    .status-draft     { background: #f1f5f9; color: #475569; }
+    .status-cancelled { background: #f1f5f9; color: #64748b; text-decoration: line-through; }
+
+    /* ── Parties: Bill-to / Ship-to ───────────────────────────────────── */
+    .parties {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 18px;
+    }
+    .party-card {
+      background: #f8fafc;
+      border-left: 3px solid #0f172a;
+      padding: 12px 14px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .party-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #64748b; }
+    .party-name { font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 4px; }
+    .party-meta { font-size: 10.5px; color: #475569; line-height: 1.55; margin-top: 4px; white-space: pre-line; }
+
+    /* ── Items table ──────────────────────────────────────────────────── */
+    .items {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 11px;
+    }
+    .items thead th {
+      background: #0f172a;
+      color: #ffffff;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 9.5px;
+      padding: 8px 10px;
+      text-align: left;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .items thead th.right { text-align: right; }
+    .items thead th.center { text-align: center; }
+    .items tbody td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #e2e8f0;
+      vertical-align: top;
+    }
+    .items tbody tr:nth-child(even) td { background: #fafbfc; }
+    .items td.right { text-align: right; }
+    .items td.center { text-align: center; }
+    .items .cell-num { font-variant-numeric: tabular-nums; }
+    .items .cell-name { font-weight: 600; color: #0f172a; }
+    .items .cell-sub  { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+    /* ── Totals block ────────────────────────────────────────────────── */
+    .totals-wrap {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 14px;
+    }
+    .totals {
+      width: 44%;
+      min-width: 260px;
+      font-size: 11px;
+    }
+    .totals-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 0;
+      border-bottom: 1px dashed #cbd5e1;
+    }
+    .totals-row.grand {
+      border: none;
+      border-top: 2px solid #0f172a;
+      margin-top: 4px;
+      padding-top: 8px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .totals-row.paid  { color: #166534; }
+    .totals-row.owing { color: #991b1b; font-weight: 700; }
+    .totals-label { color: #475569; }
+    .totals-row.grand .totals-label { color: #0f172a; }
+
+    /* ── Payments block ──────────────────────────────────────────────── */
+    .payments {
+      margin-top: 20px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px 14px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .payments-title { font-size: 10px; font-weight: 700; letter-spacing: 0.10em; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+    .payment-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 11px;
+      padding: 4px 0;
+      border-bottom: 1px dashed #cbd5e1;
+    }
+    .payment-row:last-child { border: none; }
+    .payment-desc { color: #0f172a; }
+    .payment-cheque { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    .footer {
+      margin-top: 26px;
+      padding-top: 12px;
+      border-top: 1px solid #cbd5e1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .footer-block { font-size: 10.5px; color: #475569; line-height: 1.55; }
+    .footer-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #64748b; margin-bottom: 4px; }
+    .signature-line {
+      margin-top: 30px;
+      border-top: 1px solid #0f172a;
+      padding-top: 4px;
+      font-size: 10px;
+      color: #475569;
+      text-align: center;
+    }
+
+    .closing {
+      margin-top: 18px;
+      text-align: center;
+      font-size: 11px;
+      font-style: italic;
+      color: #475569;
+    }
+    .terms {
+      margin-top: 6px;
+      text-align: center;
+      font-size: 9.5px;
+      color: #94a3b8;
+    }
+    .generated {
+      margin-top: 14px;
+      text-align: center;
+      font-size: 9px;
+      color: #cbd5e1;
+    }
+
+    /* ── Print-only tweaks ───────────────────────────────────────────── */
+    @media print {
+      body { background: #ffffff; }
+      .sheet {
+        margin: 0;
+        box-shadow: none;
+        width: 100%;
+        min-height: auto;
+      }
+      .no-print { display: none !important; }
+    }
+
+    /* ── On-screen action bar ────────────────────────────────────────── */
+    .actions {
+      position: fixed;
+      top: 16px; right: 16px;
+      display: flex;
+      gap: 8px;
+      z-index: 100;
+    }
+    .actions button, .actions a {
+      background: #0f172a;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      box-shadow: 0 4px 8px rgba(15,23,42,0.20);
+    }
+    .actions .btn-outline {
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+    }
+    .actions button:hover { background: #1e293b; }
+  </style>
+</head>
+<body>
+
+  <!-- On-screen actions. Hidden when printing. -->
+  <div class="actions no-print">
+    <button type="button" onclick="window.print()">Print</button>
+    <a href="{% url 'core:bill_detail' bill.pk %}" class="btn-outline">Back</a>
+  </div>
+
+  <div class="sheet">
+
+    {% if billing.show_watermark %}
+      <div class="watermark">
+        {% if billing.watermark_text %}
+          <div class="watermark-text">{{ billing.watermark_text }}</div>
+        {% else %}
+          <img src="{% static 'images/logo.jpeg' %}" alt="" class="watermark-logo">
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="content">
+
+      <!-- ── Header ────────────────────────────────────────────── -->
+      <div class="head">
+        <div class="brand">
+          <img class="brand-logo" src="{% static 'images/logo.jpeg' %}" alt="{{ billing.company_name }}">
+          <div>
+            <div class="brand-name">{{ billing.company_name }}</div>
+            {% if billing.tagline %}
+              <div class="brand-tag">{{ billing.tagline }}</div>
+            {% endif %}
+            <div class="brand-meta">{% spaceless %}
+              {% if billing.address %}<div>{{ billing.address|linebreaksbr }}</div>{% endif %}
+              {% if billing.phone or billing.phone_alt %}
+                <div>
+                  <strong>Tel:</strong>
+                  {{ billing.phone }}{% if billing.phone_alt %} · {{ billing.phone_alt }}{% endif %}
+                </div>
+              {% endif %}
+              {% if billing.email %}<div><strong>Email:</strong> {{ billing.email }}</div>{% endif %}
+              {% if billing.website %}<div><strong>Web:</strong> {{ billing.website }}</div>{% endif %}
+              {% if billing.business_reg_no or billing.tax_id %}
+                <div>
+                  {% if billing.business_reg_no %}<strong>Reg:</strong> {{ billing.business_reg_no }}{% endif %}
+                  {% if billing.business_reg_no and billing.tax_id %} · {% endif %}
+                  {% if billing.tax_id %}<strong>Tax ID:</strong> {{ billing.tax_id }}{% endif %}
+                </div>
+              {% endif %}
+            {% endspaceless %}</div>
+          </div>
+        </div>
+
+        <div class="doc-tag">
+          <div class="doc-label">Invoice</div>
+          <div class="doc-number">#{{ bill.pk }}</div>
+          <div class="doc-date">{{ bill.bill_date|date:"d F Y" }}</div>
+        </div>
+      </div>
+
+      <!-- ── Parties ──────────────────────────────────────────── -->
+      <div class="parties">
+        <div class="party-card">
+          <div class="party-label">Billed to</div>
+          <div class="party-name">
+            {% if bill.customer_id %}{{ bill.customer.name }}
+            {% elif bill.walk_in_name %}{{ bill.walk_in_name }}
+            {% else %}Walk-in customer{% endif %}
+          </div>
+          <div class="party-meta">{% spaceless %}
+            {% if bill.customer_id %}
+              {% if bill.customer.phone %}<div>Tel: {{ bill.customer.phone }}</div>{% endif %}
+              {% if bill.customer.email %}<div>Email: {{ bill.customer.email }}</div>{% endif %}
+              {% if bill.customer.address %}<div>{{ bill.customer.address|linebreaksbr }}</div>{% endif %}
+            {% else %}
+              <div>Cash sale · no account</div>
+            {% endif %}
+          {% endspaceless %}</div>
+        </div>
+
+        <div class="party-card">
+          <div class="party-label">Payment terms</div>
+          <div class="party-name">{{ bill.get_payment_type_display }}</div>
+          <div class="party-meta">
+            <div>Bill date: {{ bill.bill_date|date:"d M Y" }}</div>
+            {% if bill.edit_date %}<div>Last edit: {{ bill.edit_date|date:"d M Y" }}</div>{% endif %}
+            {% if bill.notes %}<div>Notes: {{ bill.notes }}</div>{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Items ────────────────────────────────────────────── -->
+      <table class="items">
+        <thead>
+          <tr>
+            <th class="center" style="width: 6%;">#</th>
+            <th>Description</th>
+            <th class="right" style="width: 12%;">Qty</th>
+            <th class="right" style="width: 16%;">Unit Price</th>
+            <th class="right" style="width: 18%;">Line Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr>
+              <td class="center cell-num">{{ forloop.counter }}</td>
+              <td>
+                <div class="cell-name">{{ item.product.name }}</div>
+                {% if item.product.size %}<div class="cell-sub">Size: {{ item.product.size }}</div>{% endif %}
+              </td>
+              <td class="right cell-num">{{ item.qty|floatformat:"-3" }}</td>
+              <td class="right cell-num">{{ item.unit_price|floatformat:2|intcomma }}</td>
+              <td class="right cell-num">{{ item.line_total|floatformat:2|intcomma }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="5" style="text-align:center; padding: 20px; color:#94a3b8; font-style:italic;">
+                No items on this invoice.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <!-- ── Totals ──────────────────────────────────────────── -->
+      <div class="totals-wrap">
+        <div class="totals">
+          <div class="totals-row">
+            <span class="totals-label">Subtotal</span>
+            <span class="cell-num">Rs {{ bill.subtotal|floatformat:2|intcomma }}</span>
+          </div>
+          {% if bill.delivery_charge %}
+            <div class="totals-row">
+              <span class="totals-label">Delivery</span>
+              <span class="cell-num">Rs {{ bill.delivery_charge|floatformat:2|intcomma }}</span>
+            </div>
+          {% endif %}
+          {% if bill.discount_amount %}
+            <div class="totals-row">
+              <span class="totals-label">
+                Discount{% if bill.discount_reason %} · {{ bill.discount_reason }}{% endif %}
+              </span>
+              <span class="cell-num">− Rs {{ bill.discount_amount|floatformat:2|intcomma }}</span>
+            </div>
+          {% endif %}
+          <div class="totals-row grand">
+            <span class="totals-label">Total</span>
+            <span class="cell-num">Rs {{ bill.total_amount|floatformat:2|intcomma }}</span>
+          </div>
+          {% if bill.paid_amount %}
+            <div class="totals-row paid">
+              <span class="totals-label">Paid</span>
+              <span class="cell-num">Rs {{ bill.paid_amount|floatformat:2|intcomma }}</span>
+            </div>
+          {% endif %}
+          {% if bill.settled_amount %}
+            <div class="totals-row">
+              <span class="totals-label">Settled</span>
+              <span class="cell-num">Rs {{ bill.settled_amount|floatformat:2|intcomma }}</span>
+            </div>
+          {% endif %}
+          {% if bill.remaining_balance > 0 %}
+            <div class="totals-row owing">
+              <span class="totals-label">Balance due</span>
+              <span class="cell-num">Rs {{ bill.remaining_balance|floatformat:2|intcomma }}</span>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- ── Payments (if any) ───────────────────────────────── -->
+      {% if payments %}
+        <div class="payments">
+          <div class="payments-title">Payments received</div>
+          {% for p in payments %}
+            <div class="payment-row">
+              <div>
+                <div class="payment-desc">
+                  {{ p.get_method_display }}{% if p.account %} · {{ p.get_account_display }}{% endif %}
+                  <span style="color:#94a3b8; margin-left:6px;">{{ p.paid_at|date:"d M Y" }}</span>
+                </div>
+                {% for cheque in p.cheques.all %}
+                  <div class="payment-cheque">
+                    Cheque #{{ cheque.cheque_no }} · {{ cheque.bank_name }}{% if cheque.maturity_date %} · matures {{ cheque.maturity_date|date:"d M Y" }}{% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+              <div class="cell-num" style="font-weight:600;">Rs {{ p.amount|floatformat:2|intcomma }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <!-- ── Footer ──────────────────────────────────────────── -->
+      <div class="footer">
+        {% if billing.bank_name or billing.bank_account_no %}
+          <div class="footer-block">
+            <div class="footer-label">Please pay to</div>
+            {% if billing.bank_name %}<div><strong>{{ billing.bank_name }}</strong>{% if billing.bank_branch %} · {{ billing.bank_branch }}{% endif %}</div>{% endif %}
+            {% if billing.bank_account_name %}<div>Account: {{ billing.bank_account_name }}</div>{% endif %}
+            {% if billing.bank_account_no %}<div>A/C no: <strong>{{ billing.bank_account_no }}</strong></div>{% endif %}
+          </div>
+        {% else %}
+          <div></div>
+        {% endif %}
+
+        <div class="footer-block">
+          <div class="signature-line">Authorised signature</div>
+        </div>
+      </div>
+
+      {% if billing.footer_note %}
+        <div class="closing">{{ billing.footer_note }}</div>
+      {% endif %}
+      {% if billing.terms_line %}
+        <div class="terms">{{ billing.terms_line }}</div>
+      {% endif %}
+      <div class="generated">
+        Invoice #{{ bill.pk }} · Generated {{ bill.bill_date|date:"d M Y" }}{% if bill.edit_date %} · Rev {{ bill.edit_date|date:"d M Y" }}{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if auto_print %}
+    <script>
+      // Fire the print dialog once the page has laid out. onload rather than
+      // DOMContentLoaded so custom fonts have a chance to arrive first —
+      // otherwise Chrome sometimes prints the fallback font.
+      window.addEventListener('load', function () {
+        setTimeout(function () { window.print(); }, 220);
+      });
+    </script>
+  {% endif %}
+</body>
+</html>
