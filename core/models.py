@@ -1430,3 +1430,83 @@ class DailyOtherWork(models.Model):
 
     def __str__(self):
         return f"Other work · {self.run_date}"
+
+
+class AuditLog(models.Model):
+    """One entry per business-write across the whole system.
+
+    Records who did what to which row, plus the request path and the IP the
+    action came from. Filled by signal handlers wired in `core.audit`, so any
+    new model added to that whitelist is captured with no per-view work.
+
+    `user` is nullable and PROTECT-referenced, and `username_snapshot` is a
+    frozen copy of the operator's name at the time of the action. Together
+    they mean the log survives a user hard-delete: the row's user_id may
+    disappear, but `username_snapshot` still names who did it. Without the
+    snapshot the log would silently forget who acted the moment the account
+    was removed — and the whole point of an audit log is to outlive the
+    actor.
+
+    `month` is the first-of-month DateField the "delete a whole month" flow
+    keys off. Redundant with `timestamp` in principle, but storing it as a
+    dedicated indexed date turns the "list this month" and "delete this
+    month" queries into single-column comparisons — cheap even when the
+    table grows into six figures.
+    """
+
+    class Action(models.TextChoices):
+        CREATE = "create", "Created"
+        UPDATE = "update", "Updated"
+        DELETE = "delete", "Deleted"
+
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    month = models.DateField(db_index=True)
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_events",
+    )
+    username_snapshot = models.CharField(max_length=150, blank=True)
+
+    action = models.CharField(max_length=20, choices=Action.choices)
+    target_type = models.CharField(max_length=80)
+    target_id = models.PositiveIntegerField(null=True, blank=True)
+    target_label = models.CharField(max_length=255, blank=True)
+    summary = models.CharField(max_length=500, blank=True)
+
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    path = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-timestamp", "-id"]
+        indexes = [
+            models.Index(fields=["month", "-timestamp"]),
+            models.Index(fields=["target_type", "target_id"]),
+        ]
+
+    def __str__(self):
+        who = self.username_snapshot or "system"
+        return f"[{self.timestamp:%Y-%m-%d %H:%M}] {who} {self.get_action_display().lower()} {self.target_label or self.target_type}"
+
+    def save(self, *args, **kwargs):
+        """Snapshot the actor's username and derive month before writing.
+
+        Doing it here rather than at the call site means signal handlers can
+        stay simple ("hand me a User") and adding a new logger later never
+        forgets to fill the snapshot — future-you writing a management
+        command that fills AuditLog rows will get the right shape for free.
+        """
+        if self.user_id and not self.username_snapshot:
+            self.username_snapshot = self.user.get_username()
+        if not self.month:
+            # timestamp is auto_now_add — populated only after the row hits
+            # the DB. On a first save it's still None here, so read from
+            # `timezone.now()` for a fresh row; edits inherit whatever
+            # timestamp was already there.
+            from django.utils import timezone as _tz
+            base = self.timestamp or _tz.now()
+            self.month = base.date().replace(day=1)
+        super().save(*args, **kwargs)

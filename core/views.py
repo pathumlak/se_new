@@ -72,6 +72,7 @@ from .forms import (
     VehicleTripForm,
 )
 from .models import (
+    AuditLog,
     Bill,
     BillEditAudit,
     BillItem,
@@ -610,6 +611,137 @@ def user_delete(request, pk):
 
     messages.success(request, f"{username} was deleted.")
     return redirect("core:user_list")
+
+
+# --------------------------------------------------------------- audit log
+# Super-admin only. Reads every business write across the system, filterable
+# by month/user/action/target-type, with a "delete this whole month" button.
+
+
+#: Rows per page on the log — the log is scanned in bulk (unlike the ledger),
+#: so a shorter page pays off in scroll speed.
+AUDIT_PAGE_SIZE = 40
+
+
+def _audit_month_choices():
+    """Distinct months present in the log, newest first.
+
+    Powers both the month dropdown and the "delete this month" button list.
+    Read as a list here rather than a queryset because the template iterates
+    twice — once for the filter, once for the delete panel — and repeating
+    the query would waste a round-trip for no gain.
+    """
+    months = (
+        AuditLog.objects.values_list("month", flat=True)
+        .distinct()
+        .order_by("-month")
+    )
+    return list(months)
+
+
+@super_admin_required
+def audit_log_list(request):
+    """The activity feed for the whole system.
+
+    Filters read off the query string so a bookmark round-trips:
+      ?month=YYYY-MM  (or ?month=all)
+      ?user=<id>
+      ?action=create|update|delete
+      ?target=<ModelName>
+      ?q=<free text against target_label/summary>
+    """
+    logs = AuditLog.objects.select_related("user").all()
+
+    month_filter = get_month_filter(request)
+    logs = month_filter.apply(logs, field="month")
+
+    user_id = (request.GET.get("user") or "").strip()
+    if user_id.isdigit():
+        logs = logs.filter(user_id=int(user_id))
+
+    action = (request.GET.get("action") or "").strip()
+    if action in {choice for choice, _ in AuditLog.Action.choices}:
+        logs = logs.filter(action=action)
+
+    target = (request.GET.get("target") or "").strip()
+    if target:
+        logs = logs.filter(target_type=target)
+
+    query = (request.GET.get("q") or "").strip()
+    if query:
+        logs = logs.filter(
+            Q(target_label__icontains=query)
+            | Q(summary__icontains=query)
+            | Q(username_snapshot__icontains=query)
+        )
+
+    page_obj = _paginate(request, logs, per_page=AUDIT_PAGE_SIZE)
+
+    # Cardinality summaries. Cheap enough — a month's log is tens of thousands
+    # of rows at most in this project's scale.
+    scoped = month_filter.apply(AuditLog.objects.all(), field="month")
+    action_counts = (
+        scoped.values("action")
+        .annotate(n=Count("id"))
+        .order_by("-n")
+    )
+    action_totals = {row["action"]: row["n"] for row in action_counts}
+
+    return render(
+        request,
+        "core/audit_log.html",
+        {
+            "page_obj": page_obj,
+            "logs": page_obj.object_list,
+            "month_filter": month_filter,
+            "month_choices": _audit_month_choices(),
+            "user_choices": User.objects.order_by("username"),
+            "target_choices": list(
+                AuditLog.objects.values_list("target_type", flat=True)
+                .distinct()
+                .order_by("target_type")
+            ),
+            "action_choices": AuditLog.Action.choices,
+            "action_totals": action_totals,
+            "total_all_time": AuditLog.objects.count(),
+            "total_in_scope": scoped.count(),
+            "filters": {
+                "user": user_id,
+                "action": action,
+                "target": target,
+                "q": query,
+            },
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def audit_log_delete_month(request):
+    """Delete every log row for the given month.
+
+    Confirmed via a modal in the template. Reads `month=YYYY-MM` from POST;
+    anything else — including the "all months" sentinel from the filter — is
+    refused. Deleting the whole log unconditionally is a separate button
+    below, deliberately kept apart from the routine month-purge to force a
+    second confirmation.
+    """
+    from datetime import date as _date
+    raw = (request.POST.get("month") or "").strip()
+    try:
+        year, month = raw.split("-")
+        month_start = _date(int(year), int(month), 1)
+    except (ValueError, TypeError):
+        messages.error(request, "Pick a specific month to delete.")
+        return redirect("core:audit_log_list")
+
+    deleted, _ = AuditLog.objects.filter(month=month_start).delete()
+    messages.success(
+        request,
+        f"Deleted {deleted} log entr{'y' if deleted == 1 else 'ies'} for "
+        f"{month_start.strftime('%B %Y')}.",
+    )
+    return redirect("core:audit_log_list")
 
 
 # ---------------------------------------------------------------- categories

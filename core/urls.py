@@ -31,6 +31,14 @@ urlpatterns = [
     path("users/<int:pk>/deactivate/", views.user_deactivate, name="user_deactivate"),
     path("users/<int:pk>/activate/", views.user_activate, name="user_activate"),
     path("users/<int:pk>/delete/", views.user_delete, name="user_delete"),
+    # System-wide audit trail. Super-admin only. Read the feed, or purge a
+    # whole month with a confirm modal.
+    path("audit-log/", views.audit_log_list, name="audit_log_list"),
+    path(
+        "audit-log/delete-month/",
+        views.audit_log_delete_month,
+        name="audit_log_delete_month",
+    ),
     # Self-service: every signed-in user has a profile page.
     path("profile/", views.profile, name="profile"),
     path("categories/", views.category_list, name="category_list"),

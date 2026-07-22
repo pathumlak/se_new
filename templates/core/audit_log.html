@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Activity Log · Senovka Plastics{% endblock %}
+{% block header %}Activity Log{% endblock %}
+
+{% block extra_head %}
+<style>
+  .kpi-card {
+    background: #ffffff;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .kpi-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; }
+  .kpi-value { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a; margin-top: 4px; }
+  .kpi-sub   { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+
+  .filter-bar {
+    background: #ffffff;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .action-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 9px; border-radius: 99px;
+    font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .action-create { background: #ecfdf5; color: #047857; }
+  .action-update { background: #eff6ff; color: #1d4ed8; }
+  .action-delete { background: #fff1f2; color: #be123c; }
+
+  .log-table tr { transition: background 0.1s; }
+  .log-table tbody tr:hover { background: #f8fafc; }
+
+  .month-tile {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .month-tile:hover { border-color: #cbd5e1; box-shadow: 0 4px 8px -4px rgba(15,23,42,0.10); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ═══ TOP KPI ROW ═══ -->
+<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+  <div class="kpi-card">
+    <p class="kpi-label">Total events</p>
+    <p class="kpi-value">{{ total_all_time|intcomma }}</p>
+    <p class="kpi-sub">All time</p>
+  </div>
+  <div class="kpi-card">
+    <p class="kpi-label">In view</p>
+    <p class="kpi-value">{{ total_in_scope|intcomma }}</p>
+    <p class="kpi-sub">{{ month_filter.label }}</p>
+  </div>
+  <div class="kpi-card">
+    <p class="kpi-label">Updates</p>
+    <p class="kpi-value">{{ action_totals.update|default:0|intcomma }}</p>
+    <p class="kpi-sub">Row edits</p>
+  </div>
+  <div class="kpi-card">
+    <p class="kpi-label">Deletes</p>
+    <p class="kpi-value">{{ action_totals.delete|default:0|intcomma }}</p>
+    <p class="kpi-sub">Rows removed</p>
+  </div>
+</div>
+
+<!-- ═══ FILTER BAR ═══ -->
+<form method="get" class="filter-bar mt-5 grid grid-cols-1 gap-3 sm:grid-cols-6 items-end">
+  <div class="sm:col-span-2">
+    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Month</label>
+    <select name="month"
+            class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:ring-1 focus:ring-blue-400">
+      <option value="all" {% if month_filter.is_all_time %}selected{% endif %}>All time</option>
+      {% for m in month_choices %}
+        <option value="{{ m|date:'Y-m' }}" {% if month_filter.param == m|date:'Y-m' %}selected{% endif %}>
+          {{ m|date:"F Y" }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">User</label>
+    <select name="user" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+      <option value="">Anyone</option>
+      {% for u in user_choices %}
+        <option value="{{ u.pk }}" {% if filters.user == u.pk|stringformat:'s' %}selected{% endif %}>{{ u.username }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Action</label>
+    <select name="action" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+      <option value="">Any</option>
+      {% for code, label in action_choices %}
+        <option value="{{ code }}" {% if filters.action == code %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Target</label>
+    <select name="target" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+      <option value="">Any</option>
+      {% for t in target_choices %}
+        <option value="{{ t }}" {% if filters.target == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="sm:col-span-1">
+    <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Search</label>
+    <div class="flex items-center gap-2">
+      <input type="text" name="q" value="{{ filters.q }}" placeholder="e.g. Bill #123"
+             class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+      <button type="submit"
+              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        Apply
+      </button>
+    </div>
+  </div>
+</form>
+
+<!-- ═══ MONTHLY PURGE PANEL ═══ -->
+{% if month_choices %}
+<div class="mt-5 rounded-2xl border border-rose-100 bg-gradient-to-br from-rose-50/40 to-white p-5 shadow-sm">
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <p class="text-[10px] font-bold uppercase tracking-wider text-rose-600">Danger zone</p>
+      <h2 class="mt-1 text-[15px] font-bold text-slate-900">Delete logs by month</h2>
+      <p class="mt-1 text-[12px] text-slate-500">
+        Wipes every audit entry for the chosen month. There is no undo — export
+        first if you need to keep them.
+      </p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    {% for m in month_choices %}
+      <div class="month-tile">
+        <div>
+          <p class="text-[13px] font-semibold text-slate-800">{{ m|date:"F Y" }}</p>
+          <p class="text-[11px] text-slate-500 mt-0.5">First of month · {{ m|date:"Y-m-d" }}</p>
+        </div>
+        <button type="button"
+                class="js-delete-month rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-50"
+                data-month="{{ m|date:'Y-m' }}"
+                data-label="{{ m|date:'F Y' }}">
+          Delete
+        </button>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══ LOG TABLE ═══ -->
+<div class="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+  {% include 'partials/pagination.html' with page_obj=page_obj %}
+  <div class="overflow-x-auto">
+    <table class="log-table min-w-full text-sm">
+      <thead>
+        <tr class="bg-slate-50 border-b border-slate-200">
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">When</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">User</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Action</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Target</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">Path</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">IP</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for log in logs %}
+          <tr>
+            <td class="whitespace-nowrap px-4 py-3 text-[12px] text-slate-600">
+              <div class="font-semibold text-slate-800">{{ log.timestamp|date:"d M Y" }}</div>
+              <div class="text-slate-400">{{ log.timestamp|time:"H:i:s" }}</div>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3">
+              <div class="flex items-center gap-2">
+                {% if log.user %}
+                  <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20 text-[10px] font-bold text-blue-700 uppercase">
+                    {{ log.user.username|first }}
+                  </span>
+                  <span class="text-[13px] font-semibold text-slate-800">{{ log.user.username }}</span>
+                {% elif log.username_snapshot %}
+                  <span class="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-[10px] font-bold text-white uppercase">
+                    {{ log.username_snapshot|first }}
+                  </span>
+                  <span class="text-[13px] font-medium text-slate-500 italic">{{ log.username_snapshot }}</span>
+                {% else %}
+                  <span class="text-[12px] italic text-slate-400">system</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3">
+              <span class="action-pill action-{{ log.action }}">
+                {{ log.get_action_display }}
+              </span>
+            </td>
+            <td class="px-4 py-3">
+              <div class="text-[13px] font-semibold text-slate-800">{{ log.target_label|default:log.target_type }}</div>
+              <div class="text-[11px] text-slate-400">{{ log.target_type }}{% if log.target_id %} #{{ log.target_id }}{% endif %}</div>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-[11px] text-slate-500 font-mono">{{ log.path|default:"—" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-[11px] text-slate-400 font-mono">{{ log.ip_address|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="px-4 py-16 text-center">
+              <p class="text-[13px] text-slate-500">No log entries match this filter.</p>
+              <p class="text-[11px] text-slate-400 mt-1">
+                The log fills up as the system is used — creates, updates and deletes are recorded automatically.
+              </p>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══ DELETE-MONTH CONFIRM MODAL ═══ -->
+<div id="delmonth-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delmonth-title">
+  <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round"
+                d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delmonth-title" class="text-base font-semibold text-slate-900">
+          Delete <span id="delmonth-label"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          Every audit-log entry from that month will be permanently removed.
+        </p>
+        <p class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          This does not undo the actions that were logged — it only clears the log.
+        </p>
+      </div>
+    </div>
+
+    <form method="post" action="{% url 'core:audit_log_delete_month' %}" id="delmonth-form" class="mt-6 flex justify-end gap-2">
+      {% csrf_token %}
+      <input type="hidden" name="month" id="delmonth-input">
+      <button type="button" id="delmonth-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <button type="submit"
+              class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+        Delete forever
+      </button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const modal   = document.getElementById('delmonth-modal');
+  const label   = document.getElementById('delmonth-label');
+  const input   = document.getElementById('delmonth-input');
+  const cancel  = document.getElementById('delmonth-cancel');
+
+  function open(btn) {
+    label.textContent = btn.dataset.label;
+    input.value = btn.dataset.month;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    cancel.focus();
+  }
+  function close() {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+
+  document.querySelectorAll('.js-delete-month').forEach(function (btn) {
+    btn.addEventListener('click', function () { open(btn); });
+  });
+  cancel.addEventListener('click', close);
+  modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+  });
+})();
+</script>
+{% endblock %}
