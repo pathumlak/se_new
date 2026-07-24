@@ -8244,324 +8244,490 @@ def order_excel(request, pk):
 
 @login_required
 def order_delivery_note_excel(request, pk):
-    """Generate an Issue Note / Delivery Note Excel sheet for production.
+    """Delivery Note for an order, laid out to the company's A4 template.
 
-    This is the form that goes to the production floor alongside the goods.
-    Columns like 'Issued quantity' and 'Checked at customers place' are left
-    blank for manual filling after printing.
+    The layout is not incidental — it mirrors `Delivery_Note_Template_A4.xlsx`
+    cell for cell so a printed note from this system is indistinguishable from
+    the one the office already uses. Column widths, row heights, merge ranges,
+    fills and the 67% fit-to-page scale are all taken from that file; changing
+    any of them changes what comes out of the printer, so they are written as
+    explicit constants rather than "whatever looks right".
+
+    Three columns are deliberately left empty for the delivery run to fill in
+    by hand — vehicle/driver/helper, the "Checked at Customer's Place" column,
+    and the payment block. Those are facts nobody knows until the lorry is
+    loaded and the customer has signed, and pre-filling them with a guess is
+    worse than leaving a ruled box.
     """
+    import os
     import re
     from io import BytesIO
 
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.properties import PageSetupProperties
 
-    order = get_object_or_404(
-        Order.objects.select_related("customer"), pk=pk
-    )
+    order = get_object_or_404(Order.objects.select_related("customer"), pk=pk)
     items = list(order.items.select_related("product"))
+    billing = BillingSettings.load()
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Issue Note"
+    ws.title = "Delivery Note"
 
-    # --------------- style constants ---------------
+    # ── Palette, straight off the template ───────────────────────────────
+    NAVY = "FF1F4E79"        # headings, section bars, table header
+    BAND = "FFD9E1F2"        # pale blue label fill
+    GREY = "FFF2F2F2"        # grey label fill
+    INK = "FF262626"         # label text
+    MUTED = "FF404040"       # company address / small print
+    FAINT = "FF595959"       # signature captions, disclaimer
+
     thin = Side(style="thin")
-    border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
-    bold = Font(bold=True)
-    bold_big = Font(bold=True, size=14)
-    bold_italic = Font(bold=True, italic=True, size=12)
-    italic_small = Font(italic=True, size=9)
-    center = Alignment(horizontal="center", vertical="center")
-    left_align = Alignment(horizontal="left", vertical="center")
-    right_align = Alignment(horizontal="right", vertical="center")
+    medium = Side(style="medium")
+    dashed = Side(style="dashed")
+    box = Border(top=thin, bottom=thin, left=thin, right=thin)
 
-    def styled_cell(row, col, value="", font=None, alignment=None,
-                    fill=None, border=border_all):
-        """Write a cell and apply styles in one call."""
-        cell = ws.cell(row=row, column=col, value=value)
+    def F(size, bold=False, italic=False, color=None):
+        """Arial at `size`. The template uses Arial throughout; Calibri only
+        survives on cells that were never touched."""
+        return Font(name="Arial", size=size, bold=bold, italic=italic, color=color)
+
+    def fill(rgb):
+        return PatternFill("solid", fgColor=rgb)
+
+    def put(coord, value=None, font=None, align=None, bg=None, border=box,
+            numfmt=None):
+        cell = ws[coord]
+        if value is not None:
+            cell.value = value
         if font:
             cell.font = font
-        if alignment:
-            cell.alignment = alignment
-        if fill:
-            cell.fill = fill
+        if align:
+            cell.alignment = align
+        if bg:
+            cell.fill = fill(bg)
         if border is not None:
             cell.border = border
+        if numfmt:
+            cell.number_format = numfmt
         return cell
 
-    # --------------- column widths (6 columns: A-F) ---------------
-    # We will compute auto column widths later, but set some reasonable minimums
-    ws.column_dimensions["A"].width = 12
-    ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 25
-    ws.column_dimensions["D"].width = 14
-    ws.column_dimensions["E"].width = 18
-    ws.column_dimensions["F"].width = 24
+    L = Alignment(horizontal="left", vertical="center")
+    C = Alignment(horizontal="center", vertical="center")
+    R = Alignment(horizontal="right", vertical="center")
+    CW = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LW = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    LT = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-    # ===================== ROW 1: ORDER No / ISSUE NOTE / SENOVKA PLASTICS =====================
-    r = 1
-    styled_cell(r, 1, "ORDER No:", bold)
-    styled_cell(r, 2, order.reference_no, bold)
-    # Style cells before merging
-    styled_cell(r, 3, "ISSUE NOTE", bold_big, center)
-    styled_cell(r, 4, "")
-    styled_cell(r, 5, "SENOVKA PLASTICS", bold_italic, center)
-    styled_cell(r, 6, "")
-    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
-    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+    QTY_FMT = "#,##0;\\(#,##0\\);\\-"
 
-    # ===================== ROW 2: Issued Date / Invoice No =====================
-    r = 2
-    styled_cell(r, 1, "Issued Date", bold)
-    styled_cell(r, 2, order.order_date.strftime("%d/%m/%Y"))
-    styled_cell(r, 3, "")
-    styled_cell(r, 4, "")
-    styled_cell(r, 5, "")
-    styled_cell(r, 6, f"Invoice No - {order.reference_no}", bold)
+    # ── Geometry ─────────────────────────────────────────────────────────
+    for col, width in (
+        ("A", 6.0), ("B", 14.0), ("C", 30.0),
+        ("D", 28.5546875), ("E", 23.0), ("F", 39.44140625),
+    ):
+        ws.column_dimensions[col].width = width
 
-    # ===================== ROW 3: Name of customer =====================
-    r = 3
-    styled_cell(r, 1, "Name of customer", bold)
-    styled_cell(r, 2, order.display_customer, bold)
-    for c in range(3, 7):
-        styled_cell(r, c, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+    # The template reserves 17 item rows (15–31). Honour that so a short note
+    # prints with the same ruled box the office expects; grow only when an
+    # order genuinely has more lines, because truncating an order is worse
+    # than a note that runs a little longer.
+    ITEM_ROWS = max(17, len(items))
+    FIRST_ITEM = 15
+    LAST_ITEM = FIRST_ITEM + ITEM_ROWS - 1
+    R_TOTAL = LAST_ITEM + 1
+    R_REMARK = R_TOTAL + 1
+    R_GAP2 = R_REMARK + 1
+    R_PAYHEAD = R_GAP2 + 1
+    R_PAYROW1 = R_PAYHEAD + 1     # "Payment Method" / CHEQUE NUMBER / CASH / CHEQUE
+    R_CASH = R_PAYROW1 + 1        # CASH row
+    R_CHQ1 = R_CASH + 1           # first of five CHEQUE NO rows
+    R_CHQ_LAST = R_CHQ1 + 4
+    R_GAP3 = R_CHQ_LAST + 1
+    R_SIGHEAD = R_GAP3 + 1
+    R_SIGBOX = R_SIGHEAD + 1
+    R_SIGCAP = R_SIGBOX + 1
+    R_FOOTER = R_SIGCAP + 1
 
-    # ===================== ROW 4: Driver =====================
-    r = 4
-    styled_cell(r, 1, "Driver", bold, center)
-    for c in range(2, 7):
-        styled_cell(r, c, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+    heights = {1: 21.75, 2: 21.75, 3: 21.75, 4: 21.75, 5: 6.0, 6: 18.0}
+    for r in range(7, 13):
+        heights[r] = 18.75
+    heights[13] = 6.0
+    heights[14] = 30.0
+    for r in range(FIRST_ITEM, LAST_ITEM + 1):
+        heights[r] = 18.75
+    heights[R_TOTAL] = 19.5
+    heights[R_REMARK] = 24.0
+    heights[R_GAP2] = 6.0
+    heights[R_PAYHEAD] = 18.0
+    heights[R_PAYROW1] = 18.0
+    heights[R_CASH] = 18.0
+    for r in range(R_CHQ1, R_CHQ_LAST + 1):
+        heights[r] = 18.75
+    heights[R_GAP3] = 6.0
+    heights[R_SIGHEAD] = 15.75
+    heights[R_SIGBOX] = 64.2
+    heights[R_SIGCAP] = 13.5
+    heights[R_FOOTER] = 24.0
+    for row, h in heights.items():
+        ws.row_dimensions[row].height = h
 
-    # ===================== ROW 5: Helper =====================
-    r = 5
-    styled_cell(r, 1, "Helper", bold, center)
-    for c in range(2, 7):
-        styled_cell(r, c, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+    # ── Rows 1–4 · masthead ──────────────────────────────────────────────
+    # A1:B4 is the logo well. The dashed inner edges are the template's own
+    # "drop the logo here" cue; we drop the real logo in and keep the frame.
+    ws.merge_cells("A1:B4")
+    put("A1", None, F(9, italic=True, color="FFA6A6A6"), CW, "FFFFFFFF",
+        Border(top=thin, bottom=dashed, left=thin, right=dashed))
+    put("B1", None, border=Border(top=thin, right=dashed))
+    put("A2", None, border=Border(left=thin))
+    put("B2", None, border=Border(right=dashed))
+    put("A3", None, border=Border(left=thin))
+    put("B3", None, border=Border(right=dashed))
+    put("A4", None, border=Border(bottom=dashed, left=thin))
+    put("B4", None, border=Border(bottom=dashed, right=dashed))
 
-    # ===================== ROW 6: Loaded By =====================
-    r = 6
-    styled_cell(r, 1, "Loaded By", bold, center)
-    styled_cell(r, 2, "Name :-")
-    styled_cell(r, 3, "")
-    styled_cell(r, 4, "")
-    styled_cell(r, 5, "Sign:-")
-    styled_cell(r, 6, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
-    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+    ws.merge_cells("C1:D2")
+    put("C1", billing.company_name.upper(), F(17, bold=True, color=NAVY), L,
+        border=Border(top=thin))
+    put("D1", None, border=Border(top=thin))
 
-    # ===================== ROW 7: Unloaded By =====================
-    r = 7
-    styled_cell(r, 1, "Unloaded By", bold, center)
-    styled_cell(r, 2, "Name :-")
-    styled_cell(r, 3, "")
-    styled_cell(r, 4, "")
-    styled_cell(r, 5, "Sign:-")
-    styled_cell(r, 6, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
-    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+    ws.merge_cells("E1:F1")
+    put("E1", "DELIVERY NOTE", F(18, bold=True, color="FFFFFFFF"), C, NAVY,
+        Border(top=thin, right=medium))
+    put("F1", None, border=Border(top=thin, right=medium))
 
-    # ===================== ROW 8: Items table header =====================
-    r = 8
-    header_fill = PatternFill("solid", fgColor="D9E1F2")
-    headers = ["No", "Size", "Item name", "Quantity", "Issued quantity",
-               "Checked at customers place"]
-    for idx, name in enumerate(headers, start=1):
-        styled_cell(r, idx, name, bold, center, header_fill)
+    # Address / contact strip. Both lines fall back to a blank rather than a
+    # placeholder — an unset field should print as nothing, not as "None".
+    ws.merge_cells("C3:D3")
+    address_line = " ".join((billing.address or "").split())
+    put("C3", address_line, F(9, color=MUTED), L, border=None)
+    ws.merge_cells("C4:D4")
+    contact_bits = []
+    if billing.phone:
+        contact_bits.append(f"Tel: {billing.phone}")
+    if billing.email:
+        contact_bits.append(f"Email: {billing.email}")
+    put("C4", "  |  ".join(contact_bits), F(9, color=MUTED), L, border=None)
 
-    # ===================== ITEM ROWS =====================
-    r = 9
-    for i, item in enumerate(items, start=1):
-        size_str = item.product.size or ""
-        clean_name = item.product.name
-        
-        # Remove size prefix if present
-        if size_str and clean_name.upper().startswith(size_str.upper()):
-            clean_name = clean_name[len(size_str):].strip()
-            
-        # Remove brand suffixes like - SENOVKA, -SURESH, -KRISHAN
-        clean_name = re.sub(r'\s*-\s*(SENOVKA|KRISHAN|SURESH)$', '', clean_name, flags=re.IGNORECASE).strip()
+    # Document reference block, right-hand side.
+    # The delivery-note number rides on the order's own reference so the two
+    # documents can always be matched up by eye: ORD-0008 -> DN-0008.
+    dn_no = re.sub(r"^ORD-", "DN-", order.reference_no or "") or f"DN-{order.pk:04d}"
+    today = timezone.localdate()
+    for row, label, value in (
+        (2, "D/N No", dn_no),
+        (3, "Date", today.strftime("%d/%m/%Y")),
+        (4, "Order No", order.reference_no or ""),
+    ):
+        put(f"E{row}", label, F(9, bold=True, color=INK), L, BAND)
+        put(f"F{row}", value, F(10, bold=True, color=NAVY), L)
 
-        styled_cell(r, 1, i, alignment=center)
-        styled_cell(r, 2, size_str, alignment=center)
-        styled_cell(r, 3, clean_name, alignment=center)
-        styled_cell(r, 4, int(item.qty) if item.qty == int(item.qty) else float(item.qty),
-                    alignment=center)
-        styled_cell(r, 5, "", alignment=center)  # Issued quantity — blank
-        styled_cell(r, 6, "", alignment=center)  # Checked at customers place — blank
-        r += 1
+    put("A5", None, border=Border(left=thin))
+    put("F5", None, border=Border(right=thin))
 
-    # Add a few empty rows for manual additions (extra items)
-    for _ in range(3):
-        for c in range(1, 7):
-            styled_cell(r, c, "", alignment=center)
-        r += 1
+    # ── Row 6 · section bars ─────────────────────────────────────────────
+    ws.merge_cells("A6:C6")
+    put("A6", "CUSTOMER DETAILS", F(9, bold=True, color=NAVY), L, BAND)
+    put("B6", None, border=Border(top=thin, bottom=thin))
+    put("C6", None, border=Border(top=thin, bottom=thin, right=thin))
+    ws.merge_cells("D6:F6")
+    put("D6", "DELIVERY & TRANSPORT DETAILS", F(9, bold=True, color=NAVY), L,
+        BAND, Border(top=thin, bottom=thin, left=thin, right=medium))
+    put("E6", None, border=Border(top=thin, bottom=thin))
+    put("F6", None, border=Border(top=thin, bottom=thin, right=medium))
 
-    # ===================== EMPTY SPACER ROW =====================
-    for c in range(1, 7):
-        styled_cell(r, c, "", border=None)
-    r += 1
+    # ── Rows 7–12 · customer (left) and transport (right) ────────────────
+    # Address is split across two rows the way the template does it, so a long
+    # address wraps into the second line instead of overflowing the column.
+    raw_address = (order.customer.address or "") if order.customer_id else ""
+    addr_lines = [ln.strip() for ln in raw_address.splitlines() if ln.strip()]
+    addr_1 = addr_lines[0] if addr_lines else ""
+    addr_2 = ", ".join(addr_lines[1:]) if len(addr_lines) > 1 else ""
+    phone = (order.customer.phone or "") if order.customer_id else ""
 
-    # ===================== PAYMENT SECTION =====================
-    # "PAYMENT" header row
-    for c in range(1, 7):
-        styled_cell(r, c, "")
-    styled_cell(r, 1, "PAYMENT", Font(bold=True, italic=True, size=11), center)
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
-    r += 1
+    ws.merge_cells("A7:B7")
+    put("A7", "Customer Name", F(9, bold=True, color=INK), L, GREY)
+    put("B7", None, border=Border(top=thin, bottom=thin, right=thin))
+    put("C7", order.display_customer, F(10, color="FF000000"), L)
 
-    # Cheque / Cash header
-    for c in range(1, 7):
-        styled_cell(r, c, "")
-    styled_cell(r, 1, "Cheque", bold, center)
-    styled_cell(r, 4, "Cash", bold, center)
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
-    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=6)
-    r += 1
+    ws.merge_cells("A8:B9")
+    put("A8", "Customer Address", F(9, bold=True, color=INK), L, GREY)
+    put("B8", None, border=Border(top=thin, right=thin))
+    put("A9", None, border=Border(bottom=thin, left=thin))
+    put("B9", None, border=Border(bottom=thin, right=thin))
+    put("C8", addr_1, F(10, color="FF000000"), L)
+    put("C9", addr_2, F(10, color="FF000000"), L)
 
-    # Cheque No / Value sub-header
-    styled_cell(r, 1, "Cheque No", bold, center)
-    styled_cell(r, 2, "Value", bold, center)
-    styled_cell(r, 3, "")
-    styled_cell(r, 4, "")
-    styled_cell(r, 5, "")
-    styled_cell(r, 6, "")
-    ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
-    r += 1
+    ws.merge_cells("A10:B10")
+    put("A10", "Contact No", F(9, bold=True, color=INK), L, GREY)
+    put("B10", None, border=Border(top=thin, bottom=thin, right=thin))
+    put("C10", phone, F(10, color="FF000000"), L)
 
-    # Empty cheque/cash rows (2 rows for manual filling)
-    for _ in range(2):
-        styled_cell(r, 1, "")
-        styled_cell(r, 2, "")
-        styled_cell(r, 3, "")
-        styled_cell(r, 4, "")
-        styled_cell(r, 5, "")
-        styled_cell(r, 6, "")
-        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
-        r += 1
+    # A11/A12 sit under the customer block with no label — the template keeps
+    # them ruled and filled so the left and right columns end level.
+    for row in (11, 12):
+        put(f"A{row}", None, F(9, bold=True, color=INK),
+            Alignment(vertical="center"), GREY,
+            Border(top=thin, bottom=thin, left=thin))
+        put(f"B{row}", None, F(9, bold=True, color=INK),
+            Alignment(vertical="center"), GREY,
+            Border(top=thin, bottom=thin, right=thin))
+        put(f"C{row}", None, F(10, color="FF000000"), L)
 
-    # Payment Received / OFFICE row
-    for row_fill in range(r, r + 3):
-        for c in range(1, 7):
-            styled_cell(row_fill, c, "")
-    styled_cell(r, 1, "Payment Received", bold, center)
-    styled_cell(r, 4, "OFFICE", bold, center)
-    ws.merge_cells(start_row=r, start_column=1, end_row=r + 2, end_column=3)
-    ws.merge_cells(start_row=r, start_column=4, end_row=r + 2, end_column=6)
-    r += 3
+    # Right column. Invoice/vehicle/driver/helper are blank by design — see
+    # the docstring.
+    transport = (
+        ("Invoice No", "", medium),
+        ("Order Date", order.order_date.strftime("%d/%m/%Y"), medium),
+        ("Delivery Date", today.strftime("%d/%m/%Y"), medium),
+        ("Vehicle No", "", medium),
+        ("Driver Name", "", thin),
+        ("Helper Name", "", thin),
+    )
+    for offset, (label, value, right_edge) in enumerate(transport):
+        row = 7 + offset
+        put(f"D{row}", label, F(9, bold=True, color=INK), L, GREY)
+        ws.merge_cells(f"E{row}:F{row}")
+        put(f"E{row}", value, F(10, color="FF000000"), L,
+            border=Border(top=thin, bottom=thin, left=thin, right=right_edge))
+        put(f"F{row}", None,
+            border=Border(top=thin, bottom=thin, right=right_edge))
 
-    # ===================== EMPTY SPACER =====================
-    for c in range(1, 7):
-        styled_cell(r, c, "", border=None)
-    r += 1
+    put("A13", None, border=Border(left=thin))
+    put("F13", None, border=Border(right=thin))
 
-    # ===================== FOOTER =====================
-    for c in range(1, 7):
-        styled_cell(r, c, "")
-    styled_cell(r, 1, "RECEIVED THE ABOVE GOODS IN ORDER", bold)
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
-    r += 2
+    # ── Row 14 · item table header ───────────────────────────────────────
+    headers = [
+        "No", "Size", "Item Name / Description",
+        "Ordered Qty", "Issued Qty", "Checked at Customer's Place",
+    ]
+    for idx, title in enumerate(headers, start=1):
+        cell = ws.cell(row=14, column=idx, value=title)
+        cell.font = F(9, bold=True, color="FFFFFFFF")
+        cell.fill = fill(NAVY)
+        cell.alignment = CW
+        cell.border = box
 
-    # Customer signature footer (no border)
-    for c in range(4, 7):
-        styled_cell(r, c, "", border=None)
-    styled_cell(r, 4, "Customer's signature with rubber stamp",
-                italic_small, right_align, border=None)
-    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=6)
+    # ── Item rows ────────────────────────────────────────────────────────
+    # Product names in this system often lead with their own size ("63mm
+    # elbow"), which would print the size twice once it has its own column.
+    # Strip the prefix, and the trailing owner tag the catalogue carries.
+    def split_name(product):
+        size = (product.size or "").strip()
+        name = product.name
+        if size and name.upper().startswith(size.upper()):
+            name = name[len(size):].strip(" -–")
+        name = re.sub(
+            r"\s*-\s*(SENOVKA|KRISHAN|SURESH)$", "", name, flags=re.IGNORECASE
+        ).strip()
+        return size, (name or product.name)
 
-    # ===================== PRINT SETTINGS =====================
-    ws.print_area = f"A1:F{r}"
-    ws.page_setup.orientation = "portrait"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    for offset in range(ITEM_ROWS):
+        row = FIRST_ITEM + offset
+        item = items[offset] if offset < len(items) else None
 
-    # ===================== GLOBAL FORMATTING =====================
-    from openpyxl.utils import get_column_letter
+        if item is not None:
+            size, name = split_name(item.product)
+            qty = item.qty
+            # Quantities are whole units on a delivery note; a fractional
+            # count would be a data-entry slip, so render what is stored but
+            # drop a meaningless ".000".
+            qty_out = int(qty) if qty == qty.to_integral_value() else float(qty)
+            ws.cell(row=row, column=1, value=offset + 1)
+            ws.cell(row=row, column=2, value=size)
+            ws.cell(row=row, column=3, value=name)
+            ws.cell(row=row, column=4, value=qty_out)
+            # Issued defaults to ordered: the note goes out with the intent to
+            # ship the full line, and the store amends by hand when short.
+            ws.cell(row=row, column=5, value=qty_out)
 
-    grid_end_row = r - 2  # The "RECEIVED" row
+        for col in range(1, 7):
+            cell = ws.cell(row=row, column=col)
+            cell.font = F(10)
+            cell.alignment = L if col == 3 else C
+            cell.border = box
+            if col in (4, 5):
+                cell.number_format = QTY_FMT
 
-    # 1. Row height 25
-    for row_idx in range(1, r + 1):
-        ws.row_dimensions[row_idx].height = 25
+    # ── Total row ────────────────────────────────────────────────────────
+    ws.merge_cells(f"A{R_TOTAL}:C{R_TOTAL}")
+    put(f"A{R_TOTAL}", "TOTAL QUANTITY", F(10, bold=True, color=NAVY), R, BAND)
+    put(f"B{R_TOTAL}", None, border=Border(top=thin, bottom=thin))
+    put(f"C{R_TOTAL}", None, border=Border(top=thin, bottom=thin, right=thin))
+    # Live formulas, not baked numbers: the store often crosses out an issued
+    # quantity on the printed sheet and re-keys it, and the total should move
+    # with it when the file is reopened.
+    put(f"D{R_TOTAL}", f"=SUM(D{FIRST_ITEM}:D{LAST_ITEM})",
+        F(10, bold=True, color=NAVY), C, BAND, numfmt=QTY_FMT)
+    put(f"E{R_TOTAL}", f"=SUM(E{FIRST_ITEM}:E{LAST_ITEM})",
+        F(10, bold=True, color=NAVY), C, BAND, numfmt=QTY_FMT)
+    put(f"F{R_TOTAL}", None, bg=BAND)
 
-    # 2. Auto column adjust (based on table headers and content)
-    for col_idx in range(1, 7):
-        max_length = 0
-        letter = get_column_letter(col_idx)
-        for row_idx in range(8, r):
-            val = ws.cell(row=row_idx, column=col_idx).value
-            if val:
-                max_length = max(max_length, len(str(val)))
-        
-        # Make sure the minimum isn't too small, give it some padding
-        ws.column_dimensions[letter].width = max(max_length + 3, 14)
+    # ── Remarks ──────────────────────────────────────────────────────────
+    ws.merge_cells(f"A{R_REMARK}:B{R_REMARK}")
+    put(f"A{R_REMARK}", "Remarks / Special Instructions",
+        F(9, bold=True, color=INK), LW, GREY)
+    put(f"B{R_REMARK}", None, border=Border(top=thin, bottom=thin, right=thin))
+    ws.merge_cells(f"C{R_REMARK}:F{R_REMARK}")
+    put(f"C{R_REMARK}", (order.notes or "").strip(), F(10, color="FF000000"),
+        LT, border=Border(top=thin, bottom=thin, left=thin, right=medium))
+    for col in ("D", "E"):
+        put(f"{col}{R_REMARK}", None, border=Border(top=thin, bottom=thin))
+    put(f"F{R_REMARK}", None, border=Border(top=thin, bottom=thin, right=medium))
 
-    # 3. Thick outside borders
-    thick = Side(style="medium")
-    for row_idx in range(1, grid_end_row + 1):
-        for col_idx in range(1, 7):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            b = cell.border
-            
-            top = b.top if b and b.top else thin
-            bottom = b.bottom if b and b.bottom else thin
-            left = b.left if b and b.left else thin
-            right = b.right if b and b.right else thin
-            
-            if row_idx == 1:
-                top = thick
-            if row_idx == grid_end_row:
-                bottom = thick
-            if col_idx == 1:
-                left = thick
-            if col_idx == 6:
-                right = thick
-                
-            cell.border = Border(top=top, bottom=bottom, left=left, right=right)
+    put(f"A{R_GAP2}", None, border=Border(left=thin))
+    put(f"F{R_GAP2}", None, border=Border(right=thin))
 
-    # ===================== WATERMARK LOGO =====================
-    import os
-    from openpyxl.drawing.image import Image as XLImage
+    # ── Payment / goods-received bars ────────────────────────────────────
+    ws.merge_cells(f"A{R_PAYHEAD}:C{R_PAYHEAD}")
+    put(f"A{R_PAYHEAD}", "PAYMENT DETAILS", F(9, bold=True, color=NAVY), L, BAND)
+    put(f"B{R_PAYHEAD}", None, border=Border(top=thin, bottom=thin))
+    put(f"C{R_PAYHEAD}", None, border=Border(top=thin, bottom=thin, right=thin))
+    ws.merge_cells(f"D{R_PAYHEAD}:F{R_PAYHEAD}")
+    put(f"D{R_PAYHEAD}", "GOODS RECEIVED CONFIRMATION",
+        F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin, right=medium))
+    put(f"E{R_PAYHEAD}", None, border=Border(top=thin, bottom=thin))
+    put(f"F{R_PAYHEAD}", None, border=Border(top=thin, bottom=thin, right=medium))
 
+    ws.merge_cells(f"A{R_PAYROW1}:B{R_PAYROW1}")
+    put(f"A{R_PAYROW1}", "Payment Method", F(9, bold=True, color=INK), L, GREY)
+    put(f"B{R_PAYROW1}", None, border=Border(top=thin, bottom=thin, right=thin))
+    put(f"C{R_PAYROW1}", "CHEQUE NUMBER", F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin, right=medium))
+    put(f"D{R_PAYROW1}", "CASH", F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin, right=medium))
+    put(f"E{R_PAYROW1}", "CHEQUE", F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin))
+    put(f"F{R_PAYROW1}", None, border=Border(top=thin, left=thin, right=thin))
+
+    ws.merge_cells(f"A{R_CASH}:B{R_CASH}")
+    put(f"A{R_CASH}", "CASH", F(9, bold=True, color=INK), C, GREY)
+    put(f"B{R_CASH}", None, border=Border(top=thin, bottom=thin, right=thin))
+    put(f"C{R_CASH}", None, F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin))
+    put(f"D{R_CASH}", None, F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin, right=medium))
+    put(f"E{R_CASH}", None, F(9, bold=True, color=NAVY), L, BAND,
+        Border(top=thin, bottom=thin, left=thin))
+    put(f"F{R_CASH}", None, border=Border(bottom=thin, left=thin, right=thin))
+
+    for row in range(R_CHQ1, R_CHQ_LAST + 1):
+        is_first = row == R_CHQ1
+        is_last = row == R_CHQ_LAST
+        ws.merge_cells(f"A{row}:B{row}")
+        # Calibri here, not Arial: the template left these label cells on the
+        # workbook default, and matching it keeps the column visually lighter
+        # than the Arial labels above it.
+        put(f"A{row}", "CHEQUE NO", Font(name="Calibri", size=11),
+            Alignment(horizontal="center"))
+        put(f"B{row}", None, border=Border(top=thin, bottom=thin, right=thin))
+        # The last row's cheque-number cell steps up to 10pt in the template.
+        put(f"C{row}", None, F(10 if is_last else 9), L)
+        # F on the first row has no top edge — it butts against the CASH row
+        # above, which already closed itself with a bottom border.
+        f_top = None if is_first else thin
+        put(f"D{row}", None, F(8, color=MUTED), LW,
+            border=Border(top=thin, bottom=thin, left=thin, right=medium))
+        put(f"E{row}", None, F(8, color=MUTED), LW,
+            border=Border(top=thin, bottom=thin, left=thin, right=medium))
+        put(f"F{row}", None, F(8, color=MUTED), LW,
+            border=Border(top=f_top, bottom=thin, left=thin, right=thin))
+
+    put(f"A{R_GAP3}", None, border=Border(left=thin))
+    put(f"F{R_GAP3}", None, border=Border(right=thin))
+
+    # ── Signature strip ──────────────────────────────────────────────────
+    for start_col, label, right_edge in (
+        ("A", "ISSUED BY (Stores)", thin),
+        ("C", "DELIVERED BY (Driver)", thin),
+        ("E", "RECEIVED BY (Customer)", medium),
+    ):
+        end_col = chr(ord(start_col) + 1)
+        ws.merge_cells(f"{start_col}{R_SIGHEAD}:{end_col}{R_SIGHEAD}")
+        put(f"{start_col}{R_SIGHEAD}", label, F(8, bold=True, color=NAVY), C,
+            BAND, Border(top=thin, bottom=thin, left=thin, right=right_edge))
+        put(f"{end_col}{R_SIGHEAD}", None,
+            border=Border(top=thin, bottom=thin, right=right_edge))
+
+        ws.merge_cells(f"{start_col}{R_SIGBOX}:{end_col}{R_SIGBOX}")
+        put(f"{start_col}{R_SIGBOX}", None,
+            border=Border(top=thin, bottom=thin, left=thin, right=right_edge))
+        put(f"{end_col}{R_SIGBOX}", None,
+            border=Border(top=thin, bottom=thin, right=right_edge))
+
+    for start_col, caption, edge in (
+        ("A", "Name  /  Date", Border(left=thin)),
+        ("C", "Name  /  Date", None),
+        ("E", "Signature with Rubber Stamp", Border(right=medium)),
+    ):
+        end_col = chr(ord(start_col) + 1)
+        ws.merge_cells(f"{start_col}{R_SIGCAP}:{end_col}{R_SIGCAP}")
+        put(f"{start_col}{R_SIGCAP}", caption, F(8, italic=True, color=FAINT), C,
+            border=edge)
+        put(f"{end_col}{R_SIGCAP}", None,
+            border=Border(right=medium) if start_col == "E" else None)
+
+    # ── Disclaimer ───────────────────────────────────────────────────────
+    ws.merge_cells(f"A{R_FOOTER}:F{R_FOOTER}")
+    put(
+        f"A{R_FOOTER}",
+        "Goods must be checked at the time of delivery. Claims for shortages "
+        "or damages will not be entertained after the customer has signed "
+        "this note. This is a delivery note only and is not a receipt for "
+        "payment.",
+        F(8, color=FAINT), CW,
+        border=Border(bottom=thin, left=thin, right=medium),
+    )
+    for col in ("B", "C", "D", "E"):
+        put(f"{col}{R_FOOTER}", None, border=Border(bottom=thin))
+    put(f"F{R_FOOTER}", None, border=Border(bottom=thin, right=medium))
+
+    # ── Logo into the well at A1:B4 ──────────────────────────────────────
+    # Sized to the merged box (A+B ≈ 145px wide, four 21.75pt rows ≈ 116px)
+    # so it sits inside the dashed frame instead of spilling over the company
+    # name. A missing or unreadable file must never break the download — the
+    # note is still valid without the mark.
     logo_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "static", "images", "logo.jpeg"
+        "static", "images", "logo.jpeg",
     )
     if os.path.exists(logo_path):
         try:
+            from openpyxl.drawing.image import Image as XLImage
             from PIL import Image as PILImage
-            # Open and convert to RGBA so we can set opacity
-            pil_img = PILImage.open(logo_path).convert("RGBA")
 
-            # Scale to a nice watermark size (200x200 max, keeping aspect ratio)
-            pil_img.thumbnail((200, 200), PILImage.LANCZOS)
-            w, h = pil_img.size
+            pil = PILImage.open(logo_path).convert("RGB")
+            pil.thumbnail((138, 108), PILImage.LANCZOS)
+            buf = BytesIO()
+            pil.save(buf, format="PNG")
+            buf.seek(0)
 
-            # Apply 20% opacity for a subtle watermark effect
-            r_ch, g_ch, b_ch, a_ch = pil_img.split()
-            a_ch = a_ch.point(lambda p: int(p * 0.20))
-            pil_img = PILImage.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
-
-            # Save the faded image to a BytesIO buffer as PNG
-            wm_buf = BytesIO()
-            pil_img.save(wm_buf, format="PNG")
-            wm_buf.seek(0)
-
-            xl_img = XLImage(wm_buf)
-            xl_img.width = w
-            xl_img.height = h
-
-            # Position roughly in the centre of the sheet (around row 10, col C)
-            xl_img.anchor = "C10"
-            ws.add_image(xl_img)
+            img = XLImage(buf)
+            img.width, img.height = pil.size
+            img.anchor = "A1"
+            ws.add_image(img)
         except Exception:
-            pass  # Never let watermark failure break the download
+            pass
 
-    # --------------- write and return ---------------
+    # ── Page setup ───────────────────────────────────────────────────────
+    # 67% on A4 portrait is what makes the six columns land inside the
+    # printable width; fitToPage without a scale lets Excel pick its own and
+    # the note comes out at a different size on every machine.
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.paperSize = 9  # A4
+    ws.page_setup.scale = 67
+    ws.page_margins.left = 0.4
+    ws.page_margins.right = 0.4
+    ws.page_margins.top = 0.4
+    ws.page_margins.bottom = 0.4
+    ws.page_margins.header = 0.511811023622047
+    ws.page_margins.footer = 0.511811023622047
+    ws.print_area = f"A1:F{R_FOOTER}"
+    ws.sheet_view.showGridLines = False
+
     stream = BytesIO()
     wb.save(stream)
     stream.seek(0)
@@ -8570,7 +8736,7 @@ def order_delivery_note_excel(request, pk):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = (
-        f'attachment; filename="issue_note_{order.reference_no}.xlsx"'
+        f'attachment; filename="delivery_note_{order.reference_no or order.pk}.xlsx"'
     )
     return response
 
