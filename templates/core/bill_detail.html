@@ -226,7 +226,7 @@
             {% if bill.discount_amount %}
               <tr>
                 <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Discount{% if bill.discount_reason %} — {{ bill.discount_reason }}{% endif %}
+                  Discount{% if bill.discount_percent %} ({{ bill.discount_percent|floatformat:"-2" }}%){% endif %}{% if bill.discount_reason %} — {{ bill.discount_reason }}{% endif %}
                 </td>
                 <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-rose-600">
                   -{{ bill.discount_amount|floatformat:2|intcomma }}
@@ -332,7 +332,7 @@
         {% if bill.discount_amount %}
           <div class="flex items-center justify-between gap-3">
             <dt class="text-slate-500">
-              Discount{% if bill.discount_reason %} <span class="text-xs text-slate-400">({{ bill.discount_reason }})</span>{% endif %}
+              Discount{% if bill.discount_percent %} <span class="font-semibold text-slate-600">{{ bill.discount_percent|floatformat:"-2" }}%</span>{% endif %}{% if bill.discount_reason %} <span class="text-xs text-slate-400">({{ bill.discount_reason }})</span>{% endif %}
             </dt>
             <dd class="shrink-0 font-medium text-rose-600">-{{ bill.discount_amount|floatformat:2|intcomma }}</dd>
           </div>
@@ -478,7 +478,7 @@
           {% endif %}
           {% if bill.discount_amount %}
             <tr>
-              <td style="padding: 3px 0; color: #000000; font-weight: 500;">Discount</td>
+              <td style="padding: 3px 0; color: #000000; font-weight: 500;">Discount{% if bill.discount_percent %} ({{ bill.discount_percent|floatformat:"-2" }}%){% endif %}</td>
               <td style="padding: 3px 0; text-align: right; color: #000000; font-weight: 700;">-{{ bill.discount_amount|floatformat:2|intcomma }}</td>
             </tr>
           {% endif %}

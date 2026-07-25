@@ -139,4 +139,4 @@ PAGINATE_BY_REPORTS = 50
 # every UI that shows stock — the bill card grid, the product list, the
 # dashboard alert. Zero and negative are handled separately (out of stock /
 # oversold). Adjust here rather than per template.
-LOW_STOCK_THRESHOLD = 10
+LOW_STOCK_THRESHOLD = 1000

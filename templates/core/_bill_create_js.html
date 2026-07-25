@@ -81,6 +81,49 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const reasonRow   = $('discount-reason-row');
     const reasonEl    = $('discount-reason');
     const discountErr = $('discount-error');
+    const discModeAmt = $('discount-mode-amount');
+    const discModePct = $('discount-mode-percent');
+    const discCompRow = $('discount-computed-row');
+    const discCompPct = $('discount-computed-pct');
+    const discCompAmt = $('discount-computed-amt');
+
+    // 'amount' = the box holds flat money; 'percent' = the box holds a rate
+    // applied to the subtotal. Starts on 'amount' so nothing changes for a
+    // biller who never touches the toggle.
+    let discountMode = 'amount';
+
+    function paintDiscountMode() {
+      const onAmt = discountMode === 'amount';
+      // Active pill gets the dark fill; the other stays plain.
+      discModeAmt.className = 'px-2 py-1.5 transition ' +
+        (onAmt ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
+      discModePct.className = 'px-2 py-1.5 border-l border-slate-300 transition ' +
+        (!onAmt ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
+      // Percent is capped at 100 and shows no cents by convention; money has no
+      // upper bound. Swap the input hints so the field behaves for its mode.
+      if (onAmt) {
+        discountEl.setAttribute('step', '0.01');
+        discountEl.removeAttribute('max');
+        discountEl.setAttribute('placeholder', '0.00');
+      } else {
+        discountEl.setAttribute('step', '0.01');
+        discountEl.setAttribute('max', '100');
+        discountEl.setAttribute('placeholder', '0');
+      }
+    }
+
+    function setDiscountMode(mode) {
+      discountMode = (mode === 'percent') ? 'percent' : 'amount';
+      paintDiscountMode();
+      recalc();
+    }
+
+    discModeAmt.addEventListener('click', function () { setDiscountMode('amount'); });
+    discModePct.addEventListener('click', function () { setDiscountMode('percent'); });
+    // Paint the pills once on load so 'Rs' reads as active from the start.
+    // recalc isn't safe this early, so this is the styling half of
+    // setDiscountMode only.
+    paintDiscountMode();
     const invalidNote = $('invalid-note');
     const railBuild   = $('rail-build');
     const railPay     = $('rail-pay');
@@ -631,9 +674,34 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
       // ---- adjustments ----
       const delivery = optionalMoney(deliveryEl);
-      const discount = optionalMoney(discountEl);
+      const entered = optionalMoney(discountEl);
       const badDelivery = Number.isNaN(delivery);
+      const badEntered = Number.isNaN(entered);
+      const isPct = discountMode === 'percent';
+
+      // In percent mode the box holds a rate; the money off is that share of
+      // the subtotal (goods only, matching the server). In amount mode the box
+      // is the money itself. Everything below prices against `discount`, so
+      // the two modes converge here and the rest of the maths is unchanged.
+      const overPct = isPct && !badEntered && entered > 100;
+      let discount;
+      if (badEntered) {
+        discount = NaN;
+      } else if (isPct) {
+        discount = round2(subtotal * (entered > 100 ? 100 : entered) / 100);
+      } else {
+        discount = entered;
+      }
       const badDiscount = Number.isNaN(discount);
+
+      // The computed-money hint only makes sense in percent mode with a rate.
+      if (isPct && !badEntered && entered > 0) {
+        discCompRow.classList.remove('hidden');
+        discCompPct.textContent = (entered > 100 ? 100 : entered) + '%';
+        discCompAmt.textContent = money(discount);
+      } else {
+        discCompRow.classList.add('hidden');
+      }
 
       // The reason only exists once there is a discount to explain.
       const wantsReason = !badDiscount && discount > 0;
@@ -649,7 +717,10 @@ spanning lines, it isn't stripped and renders onto the page as text.
 
       let adjustError = '';
       if (badDelivery) adjustError = 'Delivery must be a positive number.';
-      else if (badDiscount) adjustError = 'Discount must be a positive number.';
+      else if (badEntered) adjustError = isPct
+        ? 'Discount % must be a positive number.'
+        : 'Discount must be a positive number.';
+      else if (overPct) adjustError = "A percentage discount can't be more than 100%.";
       else if (overDiscounted) adjustError = 'The discount is more than the bill.';
       else if (missingReason) adjustError = 'Give a reason for the discount.';
 
@@ -1518,7 +1589,11 @@ spanning lines, it isn't stripped and renders onto the page as text.
         walk_in_name: walkinName.value.trim(),
         bill_date: billDate.value,
         delivery_charge: deliveryEl.value.trim(),
-        discount_amount: discountEl.value.trim(),
+        // The server recomputes the money from the percent, so in percent mode
+        // discount_amount is left out and discount_percent carries the rate.
+        discount_type: discountMode,
+        discount_amount: discountMode === 'amount' ? discountEl.value.trim() : '',
+        discount_percent: discountMode === 'percent' ? discountEl.value.trim() : '',
         discount_reason: reasonEl.value.trim(),
         lines: out,
         payment: paymentPayload(),
@@ -1537,6 +1612,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
       deliveryEl.value = '';
       discountEl.value = '';
       reasonEl.value = '';
+      setDiscountMode('amount');
 
       // The payment belongs to the bill that was just abandoned.
       const picked = document.querySelector('.js-type:checked');
@@ -1867,7 +1943,15 @@ spanning lines, it isn't stripped and renders onto the page as text.
       if (INITIAL.delivery_charge && Number(INITIAL.delivery_charge) !== 0) {
         deliveryEl.value = INITIAL.delivery_charge;
       }
-      if (INITIAL.discount_amount && Number(INITIAL.discount_amount) !== 0) {
+      // Reopen in the mode the bill was saved in. A percentage bill shows the
+      // rate in the box with % active; a flat bill shows the money with Rs.
+      if (INITIAL.discount_type === 'percent' &&
+          INITIAL.discount_percent && Number(INITIAL.discount_percent) !== 0) {
+        setDiscountMode('percent');
+        discountEl.value = String(Number(INITIAL.discount_percent));
+        reasonEl.value = INITIAL.discount_reason || '';
+      } else if (INITIAL.discount_amount && Number(INITIAL.discount_amount) !== 0) {
+        setDiscountMode('amount');
         discountEl.value = INITIAL.discount_amount;
         reasonEl.value = INITIAL.discount_reason || '';
       }

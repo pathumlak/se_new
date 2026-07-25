@@ -212,7 +212,14 @@ class Bill(models.Model):
     bill_date = models.DateField()
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # discount_amount is always the money actually taken off, whether it was
+    # entered as an amount or as a percentage. discount_percent records the
+    # rate when the discount was given as a percentage (0 means "entered as a
+    # flat amount"). Keeping both means the print/ledger can show "5% off" and
+    # an edit can reopen the bill in the same mode it was saved in, while every
+    # downstream figure still reads one plain money column.
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_reason = models.CharField(max_length=255, blank=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)

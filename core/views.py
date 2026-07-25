@@ -2541,7 +2541,8 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         if bill.delivery_charge:
             extra.append(f"+{bill.delivery_charge:.2f} delivery")
         if bill.discount_amount:
-            extra.append(f"-{bill.discount_amount:.2f} discount")
+            pct = f" ({bill.discount_percent:g}%)" if bill.discount_percent else ""
+            extra.append(f"-{bill.discount_amount:.2f} discount{pct}")
         description = f"Sale ({', '.join(extra)})" if extra else "Sale"
 
         entries.append(
@@ -3494,14 +3495,37 @@ def _write_bill(bill, user, payload):
     # Delivery is charged on top of the goods; the discount comes off the lot.
     # Both are optional, so a payload without them prices exactly as before.
     delivery_charge = _optional_decimal(payload.get("delivery_charge"), "Delivery charge")
-    discount_amount = _optional_decimal(payload.get("discount_amount"), "Discount")
+
+    # Discount can be entered two ways. "percent" reads the value as a rate and
+    # works out the money here — never trusting the amount the browser computed,
+    # for the same reason line totals are recomputed above: a figure off the
+    # page is a figure the biller could have typed. "amount" (the default, and
+    # every legacy bill) reads the value as flat money.
+    discount_type = str(payload.get("discount_type") or "amount").strip().lower()
     discount_reason = str(payload.get("discount_reason") or "").strip()[:255]
+    discount_percent = ZERO
+
+    if discount_type == "percent":
+        discount_percent = _optional_decimal(
+            payload.get("discount_percent"), "Discount percent"
+        )
+        if discount_percent > Decimal("100"):
+            raise BillError("A percentage discount can't be more than 100%.")
+        # Percentage comes off the goods subtotal, not the delivery — delivery
+        # is a pass-through charge, not something the shop discounts. Rounded
+        # to the cent so the stored amount and the printed one never disagree.
+        discount_amount = (subtotal * discount_percent / Decimal("100")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    else:
+        discount_amount = _optional_decimal(payload.get("discount_amount"), "Discount")
 
     if discount_amount > ZERO and not discount_reason:
         # Money off a bill is the one figure on it that nothing else explains.
         raise BillError("Give a reason for the discount.")
     if discount_amount == ZERO:
         discount_reason = ""
+        discount_percent = ZERO
 
     total = subtotal + delivery_charge - discount_amount
     if total < ZERO:
@@ -3559,6 +3583,7 @@ def _write_bill(bill, user, payload):
     bill.subtotal = subtotal
     bill.delivery_charge = delivery_charge
     bill.discount_amount = discount_amount
+    bill.discount_percent = discount_percent
     bill.discount_reason = discount_reason
     bill.total_amount = total
     bill.paid_amount = paid
@@ -4166,6 +4191,10 @@ def _bill_initial(bill):
         "walk_in_name": bill.walk_in_name,
         "delivery_charge": f"{bill.delivery_charge:.2f}",
         "discount_amount": f"{bill.discount_amount:.2f}",
+        "discount_percent": f"{bill.discount_percent:.2f}",
+        # Reopen the bill in the mode it was saved in: a percentage bill shows
+        # the % field with its rate, a flat one shows the money field.
+        "discount_type": "percent" if bill.discount_percent > 0 else "amount",
         "discount_reason": bill.discount_reason,
         "lines": [
             {

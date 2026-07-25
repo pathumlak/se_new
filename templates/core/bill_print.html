@@ -449,7 +449,7 @@
           {% if bill.discount_amount %}
             <div class="totals-row">
               <span class="totals-label">
-                Discount{% if bill.discount_reason %} · {{ bill.discount_reason }}{% endif %}
+                Discount{% if bill.discount_percent %} ({{ bill.discount_percent|floatformat:"-2" }}%){% endif %}{% if bill.discount_reason %} · {{ bill.discount_reason }}{% endif %}
               </span>
               <span class="cell-num">− Rs {{ bill.discount_amount|floatformat:2|intcomma }}</span>
             </div>
