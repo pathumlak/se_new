@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
@@ -354,6 +354,58 @@ def dashboard(request):
         .order_by("-revenue")[:5]
     )
 
+    # A compact copy for the horizontal bar chart — full name plus revenue as
+    # a plain float, so the template hands Chart.js numbers rather than
+    # Decimals it would have to coerce.
+    top_products_json = json.dumps(
+        [
+            {
+                "label": f"{row['product__name']} {row['product__size']}".strip(),
+                "value": float(row["revenue"]),
+            }
+            for row in top_products
+        ]
+    )
+
+    # ── Revenue by month, last 6 months ──────────────────────────────────
+    # Six cheap aggregates for the trend bar chart. Walking first-of-month to
+    # first-of-month keeps each bucket a whole calendar month regardless of
+    # length, which a rolling 30-day window could not.
+    def _add_months(anchor, delta):
+        """First-of-month `delta` months from `anchor` (delta may be negative)."""
+        month_index = anchor.year * 12 + (anchor.month - 1) + delta
+        return date(month_index // 12, month_index % 12 + 1, 1)
+
+    monthly_labels = []
+    monthly_values = []
+    for back in range(5, -1, -1):
+        m_start = _add_months(month_start, -back)
+        m_end = _add_months(month_start, -back + 1)
+        m_total = (
+            Bill.objects.filter(bill_date__gte=m_start, bill_date__lt=m_end)
+            .exclude(status=Bill.Status.CANCELLED)
+            .aggregate(total=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY))["total"]
+        )
+        monthly_labels.append(m_start.strftime("%b"))
+        monthly_values.append(float(m_total))
+
+    # ── Bill status mix (open receivables health) ────────────────────────
+    # A doughnut of how the live bills sit — paid vs part vs unpaid — reads as
+    # "how healthy is what's on the books" at a glance.
+    status_rows = (
+        Bill.objects.exclude(status=Bill.Status.CANCELLED)
+        .values("status")
+        .annotate(n=Count("id"))
+    )
+    status_map = {row["status"]: row["n"] for row in status_rows}
+    status_display = dict(Bill.Status.choices)
+    status_labels = []
+    status_values = []
+    for key in (Bill.Status.PAID, Bill.Status.PARTIAL, Bill.Status.UNPAID):
+        if status_map.get(key):
+            status_labels.append(status_display[key])
+            status_values.append(status_map[key])
+
     return render(
         request,
         "core/dashboard.html",
@@ -385,6 +437,11 @@ def dashboard(request):
             "month_delta_pct": month_delta_pct,
             "month_label": month_start.strftime("%B %Y"),
             "top_products": top_products,
+            "top_products_json": top_products_json,
+            "monthly_labels_json": json.dumps(monthly_labels),
+            "monthly_values_json": json.dumps(monthly_values),
+            "status_labels_json": json.dumps(status_labels),
+            "status_values_json": json.dumps(status_values),
         },
     )
 

@@ -7,37 +7,73 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  /* ── Stat card: Premium Modern System styling ── */
+  /* ── Hero greeting strip ── */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    padding: 22px 26px;
+    color: #e2e8f0;
+    background:
+      radial-gradient(1200px 200px at 0% 0%, rgba(59,130,246,0.35), transparent 60%),
+      radial-gradient(900px 240px at 100% 100%, rgba(139,92,246,0.30), transparent 55%),
+      linear-gradient(135deg, #0b1120 0%, #111a30 60%, #0b1120 100%);
+    box-shadow: 0 18px 40px -18px rgba(15,23,42,0.55);
+  }
+  .hero::after {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px),
+      linear-gradient(to right, rgba(148,163,184,0.06) 1px, transparent 1px);
+    background-size: 34px 34px;
+    pointer-events: none;
+  }
+  .hero-quick {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    border-radius: 11px;
+    font-size: 12.5px; font-weight: 600;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #fff; text-decoration: none;
+    transition: background 0.15s, transform 0.15s;
+    backdrop-filter: blur(6px);
+  }
+  .hero-quick:hover { background: rgba(255,255,255,0.16); transform: translateY(-1px); }
+
+  /* ── Stat card ── */
   .stat-card {
+    display: block;
+    text-decoration: none;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-    border: 1px solid rgba(226, 232, 240, 0.8);
+    border: 1px solid rgba(226, 232, 240, 0.9);
     border-radius: 16px;
-    padding: 24px;
+    padding: 22px;
     box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.05), 0 2px 4px -2px rgba(15, 23, 42, 0.03);
     position: relative;
     overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .stat-card:hover {
-    box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.05);
-    transform: translateY(-3px);
-    border-color: rgba(203, 213, 225, 0.8);
+    box-shadow: 0 22px 30px -12px rgba(15, 23, 42, 0.16), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
+    transform: translateY(-4px);
+    border-color: rgba(203, 213, 225, 0.9);
   }
   .stat-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 4px;
-    border-radius: 16px 16px 0 0;
+    background-size: 200% auto;
+    animation: shine 3s linear infinite;
   }
-  .stat-card.card-danger::before  { background: linear-gradient(90deg, #f43f5e, #fb7185, #f43f5e); background-size: 200% auto; animation: shine 3s linear infinite; }
-  .stat-card.card-success::before { background: linear-gradient(90deg, #10b981, #34d399, #10b981); background-size: 200% auto; animation: shine 3s linear infinite; }
-  .stat-card.card-blue::before    { background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6); background-size: 200% auto; animation: shine 3s linear infinite; }
-  .stat-card.card-amber::before   { background: linear-gradient(90deg, #f59e0b, #fbbf24, #f59e0b); background-size: 200% auto; animation: shine 3s linear infinite; }
-
-  @keyframes shine {
-    to { background-position: 200% center; }
-  }
+  .stat-card.card-danger::before  { background: linear-gradient(90deg, #f43f5e, #fb7185, #f43f5e); background-size: 200% auto; }
+  .stat-card.card-success::before { background: linear-gradient(90deg, #10b981, #34d399, #10b981); background-size: 200% auto; }
+  .stat-card.card-blue::before    { background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6); background-size: 200% auto; }
+  .stat-card.card-amber::before   { background: linear-gradient(90deg, #f59e0b, #fbbf24, #f59e0b); background-size: 200% auto; }
+  .stat-card.card-violet::before  { background: linear-gradient(90deg, #8b5cf6, #a78bfa, #8b5cf6); background-size: 200% auto; }
+  @keyframes shine { to { background-position: 200% center; } }
 
   .stat-icon {
     width: 42px; height: 42px;
@@ -46,267 +82,211 @@
     flex-shrink: 0;
     box-shadow: inset 0 2px 4px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(0,0,0,0.05);
   }
+  /* the little "open" arrow that fades in on hover to signal clickability */
+  .stat-go {
+    position: absolute; right: 16px; bottom: 14px;
+    opacity: 0; transform: translateX(-4px);
+    transition: opacity 0.2s, transform 0.2s;
+    color: #94a3b8;
+  }
+  .stat-card:hover .stat-go { opacity: 1; transform: translateX(0); }
 
-  /* ── Chart cards ── */
-  .chart-card {
+  /* ── Chart / section cards ── */
+  .chart-card, .section-card {
     background: #ffffff;
-    border: 1px solid rgba(226, 232, 240, 0.8);
+    border: 1px solid rgba(226, 232, 240, 0.9);
     border-radius: 16px;
     box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.04);
     overflow: hidden;
     transition: box-shadow 0.3s ease;
   }
-  .chart-card:hover {
-    box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.08);
-  }
-  .chart-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 20px 24px;
-    border-bottom: 1px solid rgba(241, 245, 249, 0.8);
+  .chart-card:hover, .section-card:hover { box-shadow: 0 12px 20px -6px rgba(15, 23, 42, 0.10); }
+  .chart-card-header, .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 22px;
+    border-bottom: 1px solid rgba(241, 245, 249, 0.9);
     background: rgba(255,255,255,0.9);
     backdrop-filter: blur(8px);
   }
-  .chart-card-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #0f172a;
-    letter-spacing: -0.015em;
-  }
-  .chart-body { padding: 24px; }
-
-  /* ── Section card (table/list) ── */
-  .section-card {
-    background: #ffffff;
-    border: 1px solid rgba(226, 232, 240, 0.8);
-    border-radius: 16px;
-    box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.04);
-    overflow: hidden;
-    transition: box-shadow 0.3s ease;
-  }
-  .section-card:hover {
-    box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.08);
-  }
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 24px;
-    border-bottom: 1px solid rgba(241, 245, 249, 0.8);
-    background: rgba(255,255,255,0.9);
-    backdrop-filter: blur(8px);
-  }
-  .section-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #0f172a;
-  }
+  .chart-card-title, .section-title { font-size: 15px; font-weight: 700; color: #0f172a; letter-spacing: -0.015em; }
+  .chart-body { padding: 20px 22px; }
   .section-link {
-    font-size: 11px;
-    font-weight: 700;
-    color: #3b82f6;
-    text-decoration: none;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    transition: color 0.15s;
-    background: rgba(59, 130, 246, 0.1);
-    padding: 4px 10px;
-    border-radius: 99px;
+    font-size: 11px; font-weight: 700; color: #3b82f6; text-decoration: none;
+    letter-spacing: 0.03em; text-transform: uppercase; transition: color 0.15s;
+    background: rgba(59, 130, 246, 0.1); padding: 4px 10px; border-radius: 99px;
   }
   .section-link:hover { color: #1e3a8a; background: rgba(59, 130, 246, 0.2); }
 
   /* ── Status badges ── */
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: 99px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-  }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
   .badge-paid    { background:#f0fdf4; color:#15803d; box-shadow:inset 0 0 0 1px #bbf7d0; }
   .badge-partial { background:#fffbeb; color:#b45309; box-shadow:inset 0 0 0 1px #fde68a; }
   .badge-unpaid  { background:#fff1f2; color:#be123c; box-shadow:inset 0 0 0 1px #fecdd3; }
   .badge-cancelled { background:#f8fafc; color:#94a3b8; box-shadow:inset 0 0 0 1px #e2e8f0; text-decoration:line-through; }
   .badge-default { background:#f8fafc; color:#475569; box-shadow:inset 0 0 0 1px #e2e8f0; }
 
-  /* ── Cheque warning cards ── */
   .cheque-card {
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 1px 3px rgba(245,158,11,0.08);
+    display:block; text-decoration:none;
+    background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:16px;
+    box-shadow:0 1px 3px rgba(245,158,11,0.08); transition: transform 0.15s, box-shadow 0.15s;
   }
+  .cheque-card:hover { transform: translateY(-2px); box-shadow:0 10px 18px -8px rgba(245,158,11,0.35); }
 
-  /* ── Customer rank bubbles ── */
-  .rank-bubble {
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px;
-    font-weight: 700;
-    flex-shrink: 0;
-  }
-  .rank-1 { background:#fef3c7; color:#92400e; }
-  .rank-2 { background:#f1f5f9; color:#475569; }
-  .rank-3 { background:#fff7ed; color:#9a3412; }
-  .rank-n { background:#f8fafc; color:#64748b; }
+  .rank-bubble { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; }
+  .rank-1 { background:#fef3c7; color:#92400e; } .rank-2 { background:#f1f5f9; color:#475569; }
+  .rank-3 { background:#fff7ed; color:#9a3412; } .rank-n { background:#f8fafc; color:#64748b; }
 
-  /* ── Table row hover ── */
   .data-table tbody tr { transition: background 0.1s; }
   .data-table tbody tr:hover { background: #f8fafc; }
+  .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 
-  /* ── Dot legend ── */
-  .legend-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
+  /* staggered entrance */
+  .reveal { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }
+  @keyframes rise { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
 </style>
 {% endblock %}
 
 {% block content %}
 
-<!-- ═══════════════════ STAT CARDS ═══════════════════ -->
-<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-
-  <!-- Outstanding -->
-  <div class="stat-card card-danger">
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Total Outstanding</p>
-        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
-          Rs {{ total_outstanding|floatformat:2|intcomma }}
-        </p>
-        <p class="mt-1.5 text-[11px] text-slate-400">Owed to the company</p>
-      </div>
-      <span class="stat-icon bg-rose-50">
-        <svg class="h-[18px] w-[18px] text-rose-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33"/>
-        </svg>
-      </span>
+<!-- ═══════════════════ HERO ═══════════════════ -->
+<div class="hero reveal mb-5">
+  <div class="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <p id="hero-greeting" class="text-[13px] font-medium text-blue-300">Welcome back</p>
+      <h2 class="mt-1 text-2xl font-extrabold tracking-tight text-white">{{ user.get_username }}</h2>
+      <p class="mt-1 text-[12px] text-slate-400">{{ today|date:"l, d F Y" }} · Senovka Plastics ERP</p>
     </div>
-  </div>
-
-  <!-- Today's sales -->
-  <div class="stat-card card-success">
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Today's Sales</p>
-        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
-          Rs {{ todays_sales|floatformat:2|intcomma }}
-        </p>
-        <p class="mt-1.5 text-[11px] text-slate-400">{{ today|date:"D, d M Y" }}</p>
-      </div>
-      <span class="stat-icon bg-emerald-50">
-        <svg class="h-[18px] w-[18px] text-emerald-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.306A11.95 11.95 0 0119.8 10.6M21.75 6v6h-6"/>
-        </svg>
-      </span>
-    </div>
-  </div>
-
-  <!-- Cash drawer -->
-  <div class="stat-card card-blue">
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Cash Drawer</p>
-        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if cash_balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
-          Rs {{ cash_balance|floatformat:2|intcomma }}
-        </p>
-        <p class="mt-1.5 text-[11px] text-slate-400">Net cash on hand</p>
-      </div>
-      <span class="stat-icon bg-blue-50">
-        <svg class="h-[18px] w-[18px] text-blue-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
-        </svg>
-      </span>
-    </div>
-  </div>
-
-  <!-- Cheques maturing -->
-  <div class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p class="text-[11px] font-semibold uppercase tracking-wider {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %} mb-2">
-          Cheques Maturing
-        </p>
-        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if maturing_count %}text-amber-900{% else %}text-slate-900{% endif %}">
-          {{ maturing_count }}
-        </p>
-        <p class="mt-1.5 text-[11px] {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %}">
-          Within {{ warning_days }} day{{ warning_days|pluralize }}
-        </p>
-      </div>
-      <span class="stat-icon {% if maturing_count %}bg-amber-100{% else %}bg-slate-100{% endif %}">
-        <svg class="h-[18px] w-[18px] {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-      </span>
+    <div class="flex flex-wrap gap-2">
+      <a href="{% url 'core:bill_create' %}" class="hero-quick">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+        New Bill
+      </a>
+      <a href="{% url 'core:cheque_list' %}" class="hero-quick">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9z"/></svg>
+        Cheques
+      </a>
+      <a href="{% url 'core:sales_report' %}" class="hero-quick">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
+        Reports
+      </a>
     </div>
   </div>
 </div>
 
-<!-- ═══════════════════ SECOND STAT ROW: STOCK HEALTH + MONTH COMPARE ═══════════════════ -->
-<div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+<!-- ═══════════════════ PRIMARY KPI CARDS ═══════════════════ -->
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
-  <!-- Low stock count -->
-  <div class="stat-card {% if low_stock_count %}card-amber{% else %}card-blue{% endif %}">
+  <a href="{% url 'core:outstanding_report' %}" class="stat-card card-danger reveal">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Total Outstanding</p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
+          Rs <span class="js-count" data-count="{{ total_outstanding|floatformat:2 }}" data-decimals="2">{{ total_outstanding|floatformat:2|intcomma }}</span>
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">Owed to the company</p>
+      </div>
+      <span class="stat-icon bg-rose-50">
+        <svg class="h-[18px] w-[18px] text-rose-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33"/></svg>
+      </span>
+    </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
+
+  <a href="{% url 'core:bill_list' %}" class="stat-card card-success reveal">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Today's Sales</p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
+          Rs <span class="js-count" data-count="{{ todays_sales|floatformat:2 }}" data-decimals="2">{{ todays_sales|floatformat:2|intcomma }}</span>
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">{{ today|date:"D, d M Y" }}</p>
+      </div>
+      <span class="stat-icon bg-emerald-50">
+        <svg class="h-[18px] w-[18px] text-emerald-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.306A11.95 11.95 0 0119.8 10.6M21.75 6v6h-6"/></svg>
+      </span>
+    </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
+
+  <a href="{% url 'core:cash_drawer' %}" class="stat-card card-blue reveal">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Cash Drawer</p>
+        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if cash_balance < 0 %}text-rose-600{% else %}text-slate-900{% endif %}">
+          Rs <span class="js-count" data-count="{{ cash_balance|floatformat:2 }}" data-decimals="2">{{ cash_balance|floatformat:2|intcomma }}</span>
+        </p>
+        <p class="mt-1.5 text-[11px] text-slate-400">Net cash on hand</p>
+      </div>
+      <span class="stat-icon bg-blue-50">
+        <svg class="h-[18px] w-[18px] text-blue-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/></svg>
+      </span>
+    </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
+
+  <a href="{% url 'core:cheque_list' %}?status=pending" class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} reveal {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-semibold uppercase tracking-wider {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %} mb-2">Cheques Maturing</p>
+        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if maturing_count %}text-amber-900{% else %}text-slate-900{% endif %}">
+          <span class="js-count" data-count="{{ maturing_count }}" data-decimals="0">{{ maturing_count }}</span>
+        </p>
+        <p class="mt-1.5 text-[11px] {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %}">Within {{ warning_days }} day{{ warning_days|pluralize }}</p>
+      </div>
+      <span class="stat-icon {% if maturing_count %}bg-amber-100{% else %}bg-slate-100{% endif %}">
+        <svg class="h-[18px] w-[18px] {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </span>
+    </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
+</div>
+
+<!-- ═══════════════════ SECONDARY KPI CARDS ═══════════════════ -->
+<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+  <a href="{% url 'core:product_list' %}?view=stock" class="stat-card {% if low_stock_count %}card-amber{% else %}card-blue{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Low Stock</p>
-        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">{{ low_stock_count }}</p>
-        <p class="mt-1.5 text-[11px] text-slate-400">≤ {{ low_stock_threshold }} on the shelf</p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none"><span class="js-count" data-count="{{ low_stock_count }}" data-decimals="0">{{ low_stock_count }}</span></p>
+        <p class="mt-1.5 text-[11px] text-slate-400">&le; {{ low_stock_threshold|intcomma }} on the shelf</p>
       </div>
       <span class="stat-icon bg-amber-50">
-        <svg class="h-[18px] w-[18px] text-amber-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
+        <svg class="h-[18px] w-[18px] text-amber-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
       </span>
     </div>
-  </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
 
-  <!-- Out of stock count -->
-  <div class="stat-card {% if out_of_stock_count %}card-danger{% else %}card-success{% endif %}">
+  <a href="{% url 'core:product_list' %}" class="stat-card {% if out_of_stock_count %}card-danger{% else %}card-success{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Out of Stock</p>
-        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if out_of_stock_count %}text-rose-600{% else %}text-slate-900{% endif %}">
-          {{ out_of_stock_count }}
-        </p>
+        <p class="text-[26px] font-extrabold tracking-tight leading-none {% if out_of_stock_count %}text-rose-600{% else %}text-slate-900{% endif %}"><span class="js-count" data-count="{{ out_of_stock_count }}" data-decimals="0">{{ out_of_stock_count }}</span></p>
         <p class="mt-1.5 text-[11px] text-slate-400">Empty or oversold</p>
       </div>
       <span class="stat-icon {% if out_of_stock_count %}bg-rose-50{% else %}bg-emerald-50{% endif %}">
-        <svg class="h-[18px] w-[18px] {% if out_of_stock_count %}text-rose-500{% else %}text-emerald-500{% endif %}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25l.75-1.5m2.5 1.5l-.75-1.5M9 15h6M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
-        </svg>
+        <svg class="h-[18px] w-[18px] {% if out_of_stock_count %}text-rose-500{% else %}text-emerald-500{% endif %}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25l.75-1.5m2.5 1.5l-.75-1.5M9 15h6M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/></svg>
       </span>
     </div>
-  </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
 
-  <!-- This month total -->
-  <div class="stat-card card-blue">
+  <a href="{% url 'core:sales_report' %}" class="stat-card card-blue reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">{{ month_label }} Sales</p>
-        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">
-          Rs {{ this_month_total|floatformat:2|intcomma }}
-        </p>
+        <p class="text-[26px] font-extrabold tracking-tight text-slate-900 leading-none">Rs <span class="js-count" data-count="{{ this_month_total|floatformat:2 }}" data-decimals="2">{{ this_month_total|floatformat:2|intcomma }}</span></p>
         <p class="mt-1.5 text-[11px] text-slate-400">{{ this_month_count }} bill{{ this_month_count|pluralize }}</p>
       </div>
       <span class="stat-icon bg-blue-50">
-        <svg class="h-[18px] w-[18px] text-blue-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/>
-        </svg>
+        <svg class="h-[18px] w-[18px] text-blue-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg>
       </span>
     </div>
-  </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
 
-  <!-- Month vs previous month -->
-  <div class="stat-card {% if month_delta_pct >= 0 %}card-success{% else %}card-danger{% endif %}">
+  <a href="{% url 'core:sales_report' %}" class="stat-card {% if month_delta_pct >= 0 %}card-success{% else %}card-danger{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">vs Last Month</p>
@@ -317,56 +297,83 @@
       </div>
       <span class="stat-icon {% if month_delta_pct >= 0 %}bg-emerald-50{% else %}bg-rose-50{% endif %}">
         {% if month_delta_pct >= 0 %}
-          <svg class="h-[18px] w-[18px] text-emerald-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.306A11.95 11.95 0 0119.8 10.6M21.75 6v6h-6"/>
-          </svg>
+          <svg class="h-[18px] w-[18px] text-emerald-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.306A11.95 11.95 0 0119.8 10.6M21.75 6v6h-6"/></svg>
         {% else %}
-          <svg class="h-[18px] w-[18px] text-rose-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6L9 12.75l4.286-4.286a11.948 11.948 0 014.306-3.213m3.408-2.501L21 12v6"/>
-          </svg>
+          <svg class="h-[18px] w-[18px] text-rose-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6L9 12.75l4.286-4.286a11.948 11.948 0 014.306-3.213m3.408-2.501L21 12v6"/></svg>
         {% endif %}
       </span>
     </div>
-  </div>
+    <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+  </a>
 </div>
 
-<!-- ═══════════════════ CHARTS ROW ═══════════════════ -->
+<!-- ═══════════════════ CHARTS ROW 1 ═══════════════════ -->
 <div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-
-  <!-- 7-day Sales Trend (area) — spans 2 cols -->
-  <div class="chart-card xl:col-span-2">
+  <div class="chart-card xl:col-span-2 reveal">
     <div class="chart-card-header">
       <div>
         <p class="chart-card-title">Sales Trend</p>
         <p class="text-[11px] text-slate-400 mt-0.5">Last 7 days · Revenue (Rs)</p>
       </div>
       <div class="flex items-center gap-3">
-        <span class="flex items-center gap-1.5 text-[11px] text-slate-500">
-          <span class="legend-dot bg-blue-500"></span> Revenue
-        </span>
-        <span class="flex items-center gap-1.5 text-[11px] text-slate-500">
-          <span class="legend-dot bg-emerald-400"></span> Bills
-        </span>
+        <span class="flex items-center gap-1.5 text-[11px] text-slate-500"><span class="legend-dot bg-blue-500"></span> Revenue</span>
+        <span class="flex items-center gap-1.5 text-[11px] text-slate-500"><span class="legend-dot bg-emerald-400"></span> Bills</span>
       </div>
     </div>
-    <div class="chart-body" style="height:240px">
-      <canvas id="salesTrendChart"></canvas>
-    </div>
+    <div class="chart-body" style="height:250px"><canvas id="salesTrendChart"></canvas></div>
   </div>
 
-  <!-- Payment type donut -->
-  <div class="chart-card">
+  <div class="chart-card reveal">
     <div class="chart-card-header">
       <div>
         <p class="chart-card-title">Payment Mix</p>
-        <p class="text-[11px] text-slate-400 mt-0.5">This month</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">Last 30 days</p>
       </div>
     </div>
-    <div class="chart-body flex flex-col items-center" style="height:240px">
+    <div class="chart-body flex flex-col items-center" style="height:250px">
       <canvas id="paymentDonutChart" style="max-height:180px"></canvas>
       <div id="donutLegend" class="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5"></div>
     </div>
   </div>
+</div>
+
+<!-- ═══════════════════ CHARTS ROW 2 ═══════════════════ -->
+<div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
+  <div class="chart-card xl:col-span-2 reveal">
+    <div class="chart-card-header">
+      <div>
+        <p class="chart-card-title">Revenue by Month</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">Last 6 months</p>
+      </div>
+      <a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>
+    </div>
+    <div class="chart-body" style="height:250px"><canvas id="monthlyRevenueChart"></canvas></div>
+  </div>
+
+  <div class="chart-card reveal">
+    <div class="chart-card-header">
+      <div>
+        <p class="chart-card-title">Bill Status</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">All live bills</p>
+      </div>
+    </div>
+    <div class="chart-body flex flex-col items-center" style="height:250px">
+      <canvas id="statusDonutChart" style="max-height:180px"></canvas>
+      <div id="statusLegend" class="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ TOP PRODUCTS BAR ═══════════════════ -->
+<div class="mt-5 chart-card reveal">
+  <div class="chart-card-header">
+    <div>
+      <p class="chart-card-title">Top Products</p>
+      <p class="text-[11px] text-slate-400 mt-0.5">{{ month_label }} · by revenue</p>
+    </div>
+    <a href="{% url 'core:sales_report' %}" class="section-link">Sales →</a>
+  </div>
+  <div class="chart-body" style="height:230px"><canvas id="topProductsChart"></canvas></div>
 </div>
 
 <!-- ═══════════════════ CHEQUE WARNINGS ═══════════════════ -->
@@ -374,41 +381,27 @@
 <section id="cheque-warnings" class="mt-5" data-signature="{{ cheque_signature }}">
   <div class="mb-3 flex items-center gap-2.5">
     <span class="flex h-6 w-6 items-center justify-center rounded-full bg-amber-100">
-      <svg class="h-3.5 w-3.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-      </svg>
+      <svg class="h-3.5 w-3.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
     </span>
-    <h2 class="text-[13px] font-semibold text-slate-800">
-      Cheques maturing within {{ warning_days }} day{{ warning_days|pluralize }}
-    </h2>
-    <a href="{% url 'core:cheque_list' %}?status=pending"
-       class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>
-    <button type="button" id="dismiss-cheques"
-            class="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500
-                   hover:bg-slate-50 hover:text-slate-800 transition shadow-sm">
-      Dismiss
-    </button>
+    <h2 class="text-[13px] font-semibold text-slate-800">Cheques maturing within {{ warning_days }} day{{ warning_days|pluralize }}</h2>
+    <a href="{% url 'core:cheque_list' %}?status=pending" class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>
+    <button type="button" id="dismiss-cheques" class="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition shadow-sm">Dismiss</button>
   </div>
-
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
     {% for cheque in maturing_cheques %}
-      <div class="cheque-card">
+      <a href="{% url 'core:cheque_list' %}?status=pending" class="cheque-card">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="truncate text-[13px] font-bold text-amber-900">Cheque #{{ cheque.cheque_no }}</p>
             <p class="truncate text-[12px] text-amber-700 mt-0.5">{{ cheque.customer.name }}</p>
           </div>
-          <p class="shrink-0 text-[14px] font-extrabold text-amber-900">
-            Rs {{ cheque.amount|floatformat:2|intcomma }}
-          </p>
+          <p class="shrink-0 text-[14px] font-extrabold text-amber-900">Rs {{ cheque.amount|floatformat:2|intcomma }}</p>
         </div>
         <div class="mt-3 flex items-center justify-between border-t border-amber-200 pt-3">
           <span class="text-[11px] text-amber-600">Matures {{ cheque.maturity_date|date:"d M Y" }}</span>
-          <span class="rounded-full bg-amber-200 px-2.5 py-0.5 text-[10px] font-bold text-amber-900">
-            {% if cheque.maturity_date == today %}Due today{% else %}in {{ cheque.maturity_date|timeuntil:today }}{% endif %}
-          </span>
+          <span class="rounded-full bg-amber-200 px-2.5 py-0.5 text-[10px] font-bold text-amber-900">{% if cheque.maturity_date == today %}Due today{% else %}in {{ cheque.maturity_date|timeuntil:today }}{% endif %}</span>
         </div>
-      </div>
+      </a>
     {% endfor %}
   </div>
 </section>
@@ -416,15 +409,12 @@
 
 <!-- ═══════════════════ RECENT ACTIVITY ═══════════════════ -->
 <div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-
-  <!-- Recent Bills — spans 2 cols -->
-  <section class="xl:col-span-2">
+  <section class="xl:col-span-2 reveal">
     <div class="section-card">
       <div class="section-header">
         <h2 class="section-title">Recent Bills</h2>
         <a href="{% url 'core:bill_list' %}" class="section-link">View all →</a>
       </div>
-
       <div class="overflow-x-auto">
         <table class="data-table min-w-full text-sm">
           <thead>
@@ -436,39 +426,23 @@
               <th class="px-5 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
             </tr>
           </thead>
-          <tbody style="divide-y:1px solid #f1f5f9">
+          <tbody>
             {% for bill in recent_bills %}
-              <tr style="border-bottom:1px solid #f8fafc">
+              <tr style="border-bottom:1px solid #f8fafc; cursor:pointer" onclick="window.location='{% url 'core:bill_detail' bill.pk %}'">
                 <td class="whitespace-nowrap px-5 py-3 text-[12px] text-slate-500">{{ bill.bill_date|date:"d M Y" }}</td>
-                <td class="px-5 py-3 text-[13px] font-semibold text-slate-800">{{ bill.customer.name }}</td>
-                <td class="whitespace-nowrap px-5 py-3 text-right text-[13px] font-bold text-slate-900">
-                  Rs {{ bill.total_amount|floatformat:2|intcomma }}
-                </td>
+                <td class="px-5 py-3 text-[13px] font-semibold text-slate-800">{{ bill.customer.name|default:"Walk-in" }}</td>
+                <td class="whitespace-nowrap px-5 py-3 text-right text-[13px] font-bold text-slate-900">Rs {{ bill.total_amount|floatformat:2|intcomma }}</td>
+                <td class="whitespace-nowrap px-5 py-3"><span class="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{{ bill.get_payment_type_display }}</span></td>
                 <td class="whitespace-nowrap px-5 py-3">
-                  <span class="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                    {{ bill.get_payment_type_display }}
-                  </span>
-                </td>
-                <td class="whitespace-nowrap px-5 py-3">
-                  {% if bill.status == 'paid' %}
-                    <span class="badge badge-paid">Paid</span>
-                  {% elif bill.status == 'partial' %}
-                    <span class="badge badge-partial">Partial</span>
-                  {% elif bill.status == 'unpaid' %}
-                    <span class="badge badge-unpaid">Unpaid</span>
-                  {% elif bill.status == 'cancelled' %}
-                    <span class="badge badge-cancelled">Cancelled</span>
-                  {% else %}
-                    <span class="badge badge-default">{{ bill.get_status_display }}</span>
-                  {% endif %}
+                  {% if bill.status == 'paid' %}<span class="badge badge-paid">Paid</span>
+                  {% elif bill.status == 'partial' %}<span class="badge badge-partial">Partial</span>
+                  {% elif bill.status == 'unpaid' %}<span class="badge badge-unpaid">Unpaid</span>
+                  {% elif bill.status == 'cancelled' %}<span class="badge badge-cancelled">Cancelled</span>
+                  {% else %}<span class="badge badge-default">{{ bill.get_status_display }}</span>{% endif %}
                 </td>
               </tr>
             {% empty %}
-              <tr>
-                <td colspan="5" class="px-5 py-12 text-center text-[13px] text-slate-400">
-                  No bills yet. <a href="{% url 'core:bill_create' %}" class="text-blue-500 font-medium hover:underline">Create one</a>
-                </td>
-              </tr>
+              <tr><td colspan="5" class="px-5 py-12 text-center text-[13px] text-slate-400">No bills yet. <a href="{% url 'core:bill_create' %}" class="text-blue-500 font-medium hover:underline">Create one</a></td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -476,30 +450,23 @@
     </div>
   </section>
 
-  <!-- Top customers by outstanding -->
-  <section>
+  <section class="reveal">
     <div class="section-card h-full">
       <div class="section-header">
         <h2 class="section-title">Top Outstanding</h2>
         <a href="{% url 'core:ledger_index' %}" class="section-link">Ledger →</a>
       </div>
-
       <ul>
         {% for customer in top_customers %}
-          <li class="flex items-center gap-3 px-5 py-3" style="border-bottom:1px solid #f8fafc">
-            <span class="rank-bubble
-              {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">
-              {{ forloop.counter }}
-            </span>
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-[13px] font-semibold text-slate-800">{{ customer.name }}</p>
-              {% if customer.phone %}
-                <p class="truncate text-[11px] text-slate-400">{{ customer.phone }}</p>
-              {% endif %}
-            </div>
-            <p class="shrink-0 text-[13px] font-bold text-rose-600">
-              Rs {{ customer.owed|floatformat:2|intcomma }}
-            </p>
+          <li class="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition" style="border-bottom:1px solid #f8fafc">
+            <a href="{% url 'core:customer_ledger' customer.pk %}" class="flex flex-1 items-center gap-3 min-w-0">
+              <span class="rank-bubble {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">{{ forloop.counter }}</span>
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-[13px] font-semibold text-slate-800">{{ customer.name }}</p>
+                {% if customer.phone %}<p class="truncate text-[11px] text-slate-400">{{ customer.phone }}</p>{% endif %}
+              </div>
+              <p class="shrink-0 text-[13px] font-bold text-rose-600">Rs {{ customer.owed|floatformat:2|intcomma }}</p>
+            </a>
           </li>
         {% empty %}
           <li class="px-5 py-12 text-center text-[13px] text-slate-400">No outstanding balances.</li>
@@ -509,55 +476,41 @@
   </section>
 </div>
 
-<!-- ═══════════════════ STOCK HEALTH + TOP PRODUCTS ═══════════════════ -->
+<!-- ═══════════════════ STOCK + SELLERS ═══════════════════ -->
 <div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
-
-  <!-- Low stock quick list -->
-  <section>
+  <section class="reveal">
     <div class="section-card h-full">
       <div class="section-header">
         <div>
           <h2 class="section-title">Low Stock</h2>
-          <p class="text-[11px] text-slate-400 mt-0.5">Products at or below {{ low_stock_threshold }}</p>
+          <p class="text-[11px] text-slate-400 mt-0.5">Products at or below {{ low_stock_threshold|intcomma }}</p>
         </div>
         <a href="{% url 'core:product_list' %}?view=stock" class="section-link">All stock →</a>
       </div>
-
       <ul>
         {% for product in low_stock_items %}
-          <li class="flex items-center gap-3 px-5 py-3" style="border-bottom:1px solid #f8fafc">
+          <li class="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition" style="border-bottom:1px solid #f8fafc">
             <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50">
-              <svg class="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
-              </svg>
+              <svg class="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
             </span>
             <div class="min-w-0 flex-1">
-              <a href="{% url 'core:product_prices' product.pk %}" class="text-[13px] font-semibold text-slate-800 hover:text-blue-600 truncate block">
-                {{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}
-              </a>
-              <p class="text-[11px] text-slate-400 mt-0.5">
-                {{ product.qty|floatformat:"-3" }} left · reorder recommended
-              </p>
+              <a href="{% url 'core:product_prices' product.pk %}" class="text-[13px] font-semibold text-slate-800 hover:text-blue-600 truncate block">{{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}</a>
+              <p class="text-[11px] text-slate-400 mt-0.5">{{ product.qty|floatformat:"-3" }} left · reorder recommended</p>
             </div>
             <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Low</span>
           </li>
         {% empty %}
           <li class="px-5 py-12 text-center">
-            <span class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50">
-              <svg class="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </span>
+            <span class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50"><svg class="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
             <p class="mt-3 text-[13px] font-semibold text-slate-700">Every shelf is comfortable</p>
-            <p class="mt-1 text-[11px] text-slate-400">Nothing at or below {{ low_stock_threshold }} right now.</p>
+            <p class="mt-1 text-[11px] text-slate-400">Nothing at or below {{ low_stock_threshold|intcomma }} right now.</p>
           </li>
         {% endfor %}
       </ul>
     </div>
   </section>
 
-  <!-- Top products this month -->
-  <section>
+  <section class="reveal">
     <div class="section-card h-full">
       <div class="section-header">
         <div>
@@ -566,30 +519,18 @@
         </div>
         <a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>
       </div>
-
       <ul>
         {% for row in top_products %}
           <li class="flex items-center gap-3 px-5 py-3" style="border-bottom:1px solid #f8fafc">
-            <span class="rank-bubble
-              {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">
-              {{ forloop.counter }}
-            </span>
+            <span class="rank-bubble {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">{{ forloop.counter }}</span>
             <div class="min-w-0 flex-1">
-              <p class="truncate text-[13px] font-semibold text-slate-800">
-                {{ row.product__name }}{% if row.product__size %} · {{ row.product__size }}{% endif %}
-              </p>
-              <p class="truncate text-[11px] text-slate-400 mt-0.5">
-                {{ row.qty_sold|floatformat:"-3" }} units sold
-              </p>
+              <p class="truncate text-[13px] font-semibold text-slate-800">{{ row.product__name }}{% if row.product__size %} · {{ row.product__size }}{% endif %}</p>
+              <p class="truncate text-[11px] text-slate-400 mt-0.5">{{ row.qty_sold|floatformat:"-3" }} units sold</p>
             </div>
-            <p class="shrink-0 text-[13px] font-bold text-slate-900">
-              Rs {{ row.revenue|floatformat:2|intcomma }}
-            </p>
+            <p class="shrink-0 text-[13px] font-bold text-slate-900">Rs {{ row.revenue|floatformat:2|intcomma }}</p>
           </li>
         {% empty %}
-          <li class="px-5 py-12 text-center text-[13px] text-slate-400">
-            No sales yet this month.
-          </li>
+          <li class="px-5 py-12 text-center text-[13px] text-slate-400">No sales yet this month.</li>
         {% endfor %}
       </ul>
     </div>
@@ -600,7 +541,35 @@
 
 {% block extra_js %}
 <script>
-/* ─── Cheque dismiss logic ─── */
+/* ── Time-of-day greeting ── */
+(function () {
+  const el = document.getElementById('hero-greeting');
+  if (!el) return;
+  const h = new Date().getHours();
+  el.textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+})();
+
+/* ── Count-up animation on KPI numbers ── */
+(function () {
+  const fmt = (n, dp) => n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  const els = document.querySelectorAll('.js-count');
+  els.forEach(function (el) {
+    const target = parseFloat(el.dataset.count);
+    const dp = parseInt(el.dataset.decimals || '0', 10);
+    if (Number.isNaN(target)) return;
+    const dur = 900, start = performance.now(), from = 0;
+    function tick(now) {
+      const p = Math.min((now - start) / dur, 1);
+      const eased = 1 - Math.pow(1 - p, 3);        // easeOutCubic
+      el.textContent = fmt(from + (target - from) * eased, dp);
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = fmt(target, dp);
+    }
+    requestAnimationFrame(tick);
+  });
+})();
+
+/* ── Cheque dismiss ── */
 (function () {
   const warnings = document.getElementById('cheque-warnings');
   if (!warnings) return;
@@ -615,168 +584,89 @@
   });
 })();
 
-/* ─── Chart helpers ─── */
+/* ── Chart defaults ── */
 Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
 Chart.defaults.color = '#94a3b8';
+const TIP = { backgroundColor:'#1e293b', titleColor:'#e2e8f0', bodyColor:'#94a3b8', borderColor:'#334155', borderWidth:1, padding:11, cornerRadius:10 };
+const rs = (v) => 'Rs ' + Number(v).toLocaleString();
 
-/* ─── Sales Trend (area) ─── */
+/* ── Sales Trend (area) ── */
 (function () {
-  const labels  = {{ sales_labels_json|safe }};
-  const revenue = {{ sales_values_json|safe }};
-  const bills   = {{ bill_counts_json|safe }};
-
-  const ctx = document.getElementById('salesTrendChart');
-  if (!ctx) return;
-
+  const ctx = document.getElementById('salesTrendChart'); if (!ctx) return;
   new Chart(ctx, {
     type: 'line',
     data: {
-      labels,
+      labels: {{ sales_labels_json|safe }},
       datasets: [
-        {
-          label: 'Revenue (Rs)',
-          data: revenue,
-          borderColor: '#3b82f6',
-          backgroundColor: (ctx) => {
-            const chart = ctx.chart;
-            const {ctx: c, chartArea} = chart;
-            if (!chartArea) return 'rgba(59,130,246,0.08)';
-            const gradient = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-            gradient.addColorStop(0, 'rgba(59,130,246,0.18)');
-            gradient.addColorStop(1, 'rgba(59,130,246,0.01)');
-            return gradient;
-          },
-          borderWidth: 2.5,
-          tension: 0.42,
-          fill: true,
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          pointBackgroundColor: '#3b82f6',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          yAxisID: 'y',
-        },
-        {
-          label: 'Bills',
-          data: bills,
-          borderColor: '#34d399',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          borderDash: [5, 4],
-          tension: 0.42,
-          fill: false,
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          pointBackgroundColor: '#34d399',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          yAxisID: 'y2',
-        }
+        { label:'Revenue', data:{{ sales_values_json|safe }}, borderColor:'#3b82f6', borderWidth:2.5, tension:0.42, fill:true,
+          backgroundColor:(c)=>{ const {ctx:cc,chartArea}=c.chart; if(!chartArea) return 'rgba(59,130,246,0.08)';
+            const g=cc.createLinearGradient(0,chartArea.top,0,chartArea.bottom); g.addColorStop(0,'rgba(59,130,246,0.20)'); g.addColorStop(1,'rgba(59,130,246,0.01)'); return g; },
+          pointRadius:4, pointHoverRadius:6, pointBackgroundColor:'#3b82f6', pointBorderColor:'#fff', pointBorderWidth:2, yAxisID:'y' },
+        { label:'Bills', data:{{ bill_counts_json|safe }}, borderColor:'#34d399', borderWidth:2, borderDash:[5,4], tension:0.42, fill:false,
+          pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#34d399', pointBorderColor:'#fff', pointBorderWidth:2, yAxisID:'y2' }
       ]
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e293b',
-          titleColor: '#e2e8f0',
-          bodyColor: '#94a3b8',
-          borderColor: '#334155',
-          borderWidth: 1,
-          padding: 12,
-          cornerRadius: 10,
-          callbacks: {
-            label: (ctx) => {
-              if (ctx.datasetIndex === 0) return ' Rs ' + ctx.parsed.y.toLocaleString();
-              return ' ' + ctx.parsed.y + ' bills';
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          border: { display: false },
-          ticks: { font: { size: 11 }, color: '#94a3b8' }
-        },
-        y: {
-          position: 'left',
-          grid: { color: 'rgba(148,163,184,0.1)', drawBorder: false },
-          border: { display: false, dash: [4, 4] },
-          ticks: {
-            font: { size: 11 },
-            color: '#94a3b8',
-            callback: (v) => 'Rs ' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v)
-          }
-        },
-        y2: {
-          position: 'right',
-          grid: { display: false },
-          border: { display: false },
-          ticks: { font: { size: 11 }, color: '#34d399', stepSize: 1 }
-        }
-      }
-    }
+    options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      plugins:{ legend:{display:false}, tooltip:{...TIP, callbacks:{ label:(c)=> c.datasetIndex===0 ? ' '+rs(c.parsed.y) : ' '+c.parsed.y+' bills' }}},
+      scales:{ x:{grid:{display:false},border:{display:false},ticks:{font:{size:11}}},
+        y:{position:'left',grid:{color:'rgba(148,163,184,0.1)'},border:{display:false},ticks:{font:{size:11},callback:(v)=> v>=1000?'Rs '+(v/1000).toFixed(0)+'k':'Rs '+v}},
+        y2:{position:'right',grid:{display:false},border:{display:false},ticks:{font:{size:11},color:'#34d399',stepSize:1}} } }
   });
 })();
 
-/* ─── Payment Mix (donut) ─── */
+/* ── Payment Mix (donut) ── */
 (function () {
-  const labels = {{ payment_labels_json|safe }};
-  const values = {{ payment_values_json|safe }};
-  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+  const ctx = document.getElementById('paymentDonutChart'); if (!ctx) return;
+  const labels = {{ payment_labels_json|safe }}, values = {{ payment_values_json|safe }};
+  const colors = ['#3b82f6','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4'];
+  new Chart(ctx, { type:'doughnut', data:{ labels, datasets:[{ data:values, backgroundColor:colors, borderColor:'#fff', borderWidth:3, hoverOffset:6 }]},
+    options:{ responsive:true, maintainAspectRatio:false, cutout:'68%',
+      plugins:{ legend:{display:false}, tooltip:{...TIP, callbacks:{ label:(c)=> ' '+c.label+': '+rs(c.parsed) }}}}});
+  const leg = document.getElementById('donutLegend');
+  if (leg) labels.forEach((l,i)=>{ const s=document.createElement('span'); s.style.cssText='display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b;font-weight:500';
+    s.innerHTML=`<span style="width:8px;height:8px;border-radius:50%;background:${colors[i%colors.length]}"></span>${l}`; leg.appendChild(s); });
+})();
 
-  const ctx = document.getElementById('paymentDonutChart');
-  if (!ctx) return;
+/* ── Revenue by Month (bar, gradient) ── */
+(function () {
+  const ctx = document.getElementById('monthlyRevenueChart'); if (!ctx) return;
+  new Chart(ctx, { type:'bar',
+    data:{ labels:{{ monthly_labels_json|safe }}, datasets:[{ label:'Revenue', data:{{ monthly_values_json|safe }},
+      borderRadius:8, maxBarThickness:46,
+      backgroundColor:(c)=>{ const {ctx:cc,chartArea}=c.chart; if(!chartArea) return '#3b82f6';
+        const g=cc.createLinearGradient(0,chartArea.bottom,0,chartArea.top); g.addColorStop(0,'rgba(59,130,246,0.35)'); g.addColorStop(1,'rgba(99,102,241,0.95)'); return g; } }]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{...TIP, callbacks:{ label:(c)=> ' '+rs(c.parsed.y) }}},
+      scales:{ x:{grid:{display:false},border:{display:false},ticks:{font:{size:11}}},
+        y:{grid:{color:'rgba(148,163,184,0.1)'},border:{display:false},ticks:{font:{size:11},callback:(v)=> v>=1000?'Rs '+(v/1000).toFixed(0)+'k':'Rs '+v}} } }});
+})();
 
-  new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{
-        data: values,
-        backgroundColor: colors,
-        borderColor: '#ffffff',
-        borderWidth: 3,
-        hoverBorderWidth: 3,
-        hoverOffset: 6,
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '68%',
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e293b',
-          titleColor: '#e2e8f0',
-          bodyColor: '#94a3b8',
-          borderColor: '#334155',
-          borderWidth: 1,
-          padding: 10,
-          cornerRadius: 10,
-          callbacks: {
-            label: (ctx) => ' ' + ctx.label + ': ' + ctx.parsed + '%'
-          }
-        }
-      }
-    }
-  });
+/* ── Bill Status (donut) ── */
+(function () {
+  const ctx = document.getElementById('statusDonutChart'); if (!ctx) return;
+  const labels = {{ status_labels_json|safe }}, values = {{ status_values_json|safe }};
+  const colors = ['#10b981','#f59e0b','#ef4444'];   // paid / partial / unpaid
+  new Chart(ctx, { type:'doughnut', data:{ labels, datasets:[{ data:values, backgroundColor:colors, borderColor:'#fff', borderWidth:3, hoverOffset:6 }]},
+    options:{ responsive:true, maintainAspectRatio:false, cutout:'68%',
+      plugins:{ legend:{display:false}, tooltip:{...TIP, callbacks:{ label:(c)=> ' '+c.label+': '+c.parsed+' bills' }}}}});
+  const leg = document.getElementById('statusLegend');
+  if (leg) labels.forEach((l,i)=>{ const s=document.createElement('span'); s.style.cssText='display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b;font-weight:500';
+    s.innerHTML=`<span style="width:8px;height:8px;border-radius:50%;background:${colors[i%colors.length]}"></span>${l}`; leg.appendChild(s); });
+})();
 
-  // Render custom legend
-  const legend = document.getElementById('donutLegend');
-  if (legend) {
-    labels.forEach((label, i) => {
-      const item = document.createElement('span');
-      item.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b;font-weight:500;';
-      item.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${colors[i]};flex-shrink:0"></span>${label} ${values[i]}%`;
-      legend.appendChild(item);
-    });
-  }
+/* ── Top Products (horizontal bar) ── */
+(function () {
+  const ctx = document.getElementById('topProductsChart'); if (!ctx) return;
+  const rows = {{ top_products_json|safe }};
+  if (!rows.length) { ctx.parentElement.innerHTML = '<p style="text-align:center;color:#94a3b8;font-size:13px;padding:40px 0">No sales yet this month.</p>'; return; }
+  new Chart(ctx, { type:'bar',
+    data:{ labels: rows.map(r=>r.label), datasets:[{ label:'Revenue', data: rows.map(r=>r.value), borderRadius:7, maxBarThickness:26,
+      backgroundColor:(c)=>{ const {ctx:cc,chartArea}=c.chart; if(!chartArea) return '#8b5cf6';
+        const g=cc.createLinearGradient(chartArea.left,0,chartArea.right,0); g.addColorStop(0,'rgba(139,92,246,0.85)'); g.addColorStop(1,'rgba(59,130,246,0.85)'); return g; } }]},
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{...TIP, callbacks:{ label:(c)=> ' '+rs(c.parsed.x) }}},
+      scales:{ x:{grid:{color:'rgba(148,163,184,0.1)'},border:{display:false},ticks:{font:{size:11},callback:(v)=> v>=1000?'Rs '+(v/1000).toFixed(0)+'k':'Rs '+v}},
+        y:{grid:{display:false},border:{display:false},ticks:{font:{size:11}}} } }});
 })();
 </script>
 {% endblock %}

@@ -119,6 +119,20 @@ LOGIN_REDIRECT_URL = "core:dashboard"  # -> /dashboard/
 LOGOUT_REDIRECT_URL = "core:landing"  # -> /
 
 
+# --- Session expiry -------------------------------------------------------
+# Every session is a hard one-day login. A shared shop terminal that someone
+# forgot to sign out of must not stay signed in indefinitely, so the cookie
+# is stamped with a 24-hour life at login and is NOT refreshed on activity
+# (SESSION_SAVE_EVERY_REQUEST stays False) — that makes it a fixed expiry
+# from sign-in, not a rolling idle timeout. After 24 hours the cookie is
+# dead, the session is gone, and the next request lands on the login page.
+SESSION_COOKIE_AGE = 60 * 60 * 24  # 24 hours, in seconds
+SESSION_SAVE_EVERY_REQUEST = False
+# Survive a browser restart within the 24-hour window rather than dying the
+# moment the tab closes — the expiry is time-based, not tab-based.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+
 # --- Crispy forms ---------------------------------------------------------
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "tailwind"
