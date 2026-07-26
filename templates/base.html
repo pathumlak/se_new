@@ -5,12 +5,175 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Senovka Plastics{% endblock %}</title>
+
+  <!-- Theme bootstrap. Runs before anything paints so a dark-mode user never
+       sees a white flash on load. Reads the saved choice, or falls back to
+       the operating system's preference the first time. Sets both the class
+       (for our CSS overrides) and color-scheme (for native controls). -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('senovka-theme');
+        var dark = saved ? saved === 'dark'
+                         : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) {}
+    })();
+  </script>
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     * { font-family: 'Inter', system-ui, sans-serif; }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       DARK THEME
+       The app is written in a consistent slate palette, so rather than add
+       dark: variants to seventy templates, we remap that palette once here
+       under html.dark. Surfaces get darker, text gets lighter, the sidebar
+       (which is already dark via an arbitrary hex, not these utilities) is
+       left alone. !important is used throughout because we are overriding
+       Tailwind utilities and a handful of inline styles.
+       ═══════════════════════════════════════════════════════════════════ */
+    html.dark { color-scheme: dark; }
+
+    /* Page canvas. The body itself carries the bg-slate-100 utility, so this
+       rule must out-specify html.dark .bg-slate-100 below — hence the class
+       is named explicitly on the body element (specificity 0,2,1 beats the
+       utility's 0,2,0). A .h-full fallback covers any future body class swap. */
+    html.dark body.bg-slate-100,
+    html.dark body.h-full { background-color: #0b1120 !important; color: #cbd5e1 !important; }
+
+    /* Surfaces (light → dark). Cards sit above the page; slate-50 is a
+       slightly deeper inset used for headers and subtle fills. */
+    html.dark .bg-white        { background-color: #161f33 !important; }
+    html.dark .bg-slate-50     { background-color: #131b2c !important; }
+    html.dark .bg-slate-100    { background-color: #223049 !important; }
+    html.dark .bg-slate-200    { background-color: #2b3a56 !important; }
+
+    /* Hover surfaces (row/list hovers must not flash white). */
+    html.dark .hover\:bg-slate-50:hover  { background-color: #1b2740 !important; }
+    html.dark .hover\:bg-slate-100:hover { background-color: #243350 !important; }
+
+    /* Text (dark → light). slate-300/200 and white are left as-is: they are
+       used on already-dark surfaces (sidebar, primary buttons, badges). */
+    html.dark .text-slate-900 { color: #f1f5f9 !important; }
+    html.dark .text-slate-800 { color: #e2e8f0 !important; }
+    html.dark .text-slate-700 { color: #cbd5e1 !important; }
+    html.dark .text-slate-600 { color: #aeb9ca !important; }
+    html.dark .text-slate-500 { color: #8b97a9 !important; }
+    html.dark .text-slate-400 { color: #7c889b !important; }
+
+    /* Borders / dividers. */
+    html.dark .border-slate-100 { border-color: #222f47 !important; }
+    html.dark .border-slate-200 { border-color: #293650 !important; }
+    html.dark .border-slate-300 { border-color: #34425c !important; }
+    html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #222f47 !important; }
+    html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #293650 !important; }
+
+    /* Primary dark buttons: lift so white text pops on dark cards. The
+       opacity-modified backdrops (bg-slate-900/60 etc.) are different
+       classes and stay dark-transparent. */
+    html.dark .bg-slate-900 { background-color: #334155 !important; }
+    html.dark .hover\:bg-slate-800:hover { background-color: #475569 !important; }
+
+    /* Ring colours used on inputs/badges. */
+    html.dark .ring-slate-200 { --tw-ring-color: #293650 !important; }
+    html.dark .ring-inset.ring-slate-200 { --tw-ring-color: #293650 !important; }
+
+    /* Form controls — text-like fields, selects and textareas go dark. The
+       :not() list keeps toggles, colour pickers and file inputs native. */
+    html.dark input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]):not([type=file]),
+    html.dark select,
+    html.dark textarea {
+      background-color: #0f1728 !important;
+      color: #e2e8f0 !important;
+      border-color: #34425c !important;
+    }
+    html.dark input::placeholder,
+    html.dark textarea::placeholder { color: #64748b !important; }
+    /* Native date/time picker glyph is black by default — invert it. */
+    html.dark input::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+
+    /* Inline light backgrounds sprinkled through a few tables — caught by
+       substring match on the style attribute so we don't have to touch the
+       markup. */
+    html.dark [style*="background:#f8fafc"],
+    html.dark [style*="background: #f8fafc"],
+    html.dark [style*="background:#ffffff"],
+    html.dark [style*="background:#fff;"],
+    html.dark [style*="background: #fff"] { background-color: #131b2c !important; }
+    html.dark [style*="border-bottom:1px solid #f8fafc"],
+    html.dark [style*="border-bottom:1px solid #f1f5f9"] { border-color: #222f47 !important; }
+
+    /* Table header stripe (rendered via inline style on the dashboard). */
+    html.dark thead tr[style*="#f8fafc"] { background-color: #131b2c !important; }
+
+    /* ── Component overrides (our own classes) ── */
+    html.dark .topbar {
+      background: rgba(11,17,32,0.82) !important;
+      border-bottom: 1px solid rgba(148,163,184,0.12) !important;
+    }
+    html.dark .bell-btn { background: rgba(148,163,184,0.10); color: #cbd5e1; }
+    html.dark .bell-btn:hover { background: rgba(148,163,184,0.18); color: #fff; }
+    html.dark .notif-panel {
+      background: #131c30 !important;
+      border-color: #2a3750 !important;
+      box-shadow: 0 24px 48px -12px rgba(0,0,0,0.6) !important;
+    }
+    html.dark .notif-item { border-bottom-color: #222f47 !important; }
+    html.dark .notif-item:hover { background: #1b2740 !important; }
+
+    /* Dashboard / shared card components. */
+    html.dark .stat-card {
+      background: linear-gradient(180deg, #1a2338 0%, #141c2e 100%) !important;
+      border-color: #29344c !important;
+    }
+    html.dark .stat-card:hover { border-color: #3a4763 !important; }
+    html.dark .chart-card,
+    html.dark .section-card {
+      background: #161f33 !important;
+      border-color: #29344c !important;
+    }
+    html.dark .chart-card-header,
+    html.dark .section-header {
+      background: rgba(19,27,44,0.9) !important;
+      border-bottom-color: #222f47 !important;
+    }
+    html.dark .data-table tbody tr:hover { background: #1b2740 !important; }
+    html.dark .cheque-card {
+      background: #2a2410 !important;
+      border-color: #665315 !important;
+    }
+    html.dark .cheque-card:hover { box-shadow: 0 10px 18px -8px rgba(0,0,0,0.5) !important; }
+
+    /* Flash-message toasts keep their hue but on a darker tint. */
+    html.dark .toast-success { background:#0e2a1a !important; border-color:#1c5137 !important; color:#86efac !important; }
+    html.dark .toast-error   { background:#2c1416 !important; border-color:#6b2733 !important; color:#fca5a5 !important; }
+    html.dark .toast-warning { background:#2a2410 !important; border-color:#6b5518 !important; color:#fcd34d !important; }
+    html.dark .toast-info    { background:#0e2233 !important; border-color:#1c4b6b !important; color:#93c5fd !important; }
+
+    /* Scrollbar tint for dark surfaces (WebKit). */
+    html.dark ::-webkit-scrollbar-thumb { background: #334155; }
+    html.dark ::-webkit-scrollbar-track { background: #0f1728; }
+
+    /* Theme toggle button in the topbar. */
+    .theme-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; border-radius: 10px;
+      background: rgba(15,23,42,0.04); color: #475569;
+      transition: background 0.15s, color 0.15s;
+    }
+    .theme-toggle:hover { background: rgba(15,23,42,0.08); color: #0f172a; }
+    html.dark .theme-toggle { background: rgba(148,163,184,0.10); color: #cbd5e1; }
+    html.dark .theme-toggle:hover { background: rgba(148,163,184,0.18); color: #fff; }
+    /* Sun shows in dark mode (tap to go light), moon shows in light mode. */
+    .theme-toggle .icon-sun  { display: none; }
+    html.dark .theme-toggle .icon-sun  { display: block; }
+    html.dark .theme-toggle .icon-moon { display: none; }
 
     /* Sidebar tab-style active indicator */
     .nav-link {
@@ -518,6 +681,16 @@
           </span>
         {% endif %}
 
+        <!-- ═══ Theme toggle ═══ -->
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle light / dark">
+          <svg class="icon-moon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/>
+          </svg>
+          <svg class="icon-sun h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/>
+          </svg>
+        </button>
+
         <!-- ═══ Notification bell ═══ -->
         <div class="relative" id="notif-root"
              data-dismiss-url="{% url 'core:notification_dismiss' %}"
@@ -642,6 +815,18 @@
 {% endwith %}
 
 <script>
+  /* ── Theme toggle ── */
+  (function () {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      const root = document.documentElement;
+      const dark = root.classList.toggle('dark');
+      root.style.colorScheme = dark ? 'dark' : 'light';
+      try { localStorage.setItem('senovka-theme', dark ? 'dark' : 'light'); } catch (e) {}
+    });
+  })();
+
   (function () {
     const sidebar = document.getElementById('sidebar');
     const backdrop = document.getElementById('sidebar-backdrop');

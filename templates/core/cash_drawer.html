@@ -293,6 +293,65 @@
   .empty-state p { font-size: 13px; color: #94a3b8; }
   .empty-state a { color: #3b82f6; font-weight: 600; text-decoration: none; }
   .empty-state a:hover { text-decoration: underline; }
+
+  /* ═══════════════ DARK THEME ═══════════════
+     This page carries its own component classes (not Tailwind utilities),
+     so the app-wide dark overrides in base.html don't reach them. Remap
+     each surface here. Coloured accents (amount in/out, strip gradients,
+     primary/emerald/danger buttons) are left as-is — they read fine on a
+     dark card. */
+  html.dark .drawer-stat { background: #161f33; border-color: #29344c; }
+  html.dark .drawer-stat:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.45); }
+
+  html.dark .info-callout {
+    background: #131b2c; border-color: #29344c; color: #94a3b8;
+    border-left-color: #3b82f6;
+  }
+
+  html.dark .filter-input,
+  html.dark #out-modal input, html.dark #out-modal select, html.dark #out-modal textarea,
+  html.dark #insert-modal input, html.dark #insert-modal select, html.dark #insert-modal textarea,
+  html.dark #edit-modal input, html.dark #edit-modal select, html.dark #edit-modal textarea {
+    background: #0f1728; color: #e2e8f0; border-color: #34425c;
+  }
+  html.dark .filter-input::placeholder { color: #64748b; }
+
+  html.dark .log-table thead th {
+    background: #131b2c; color: #7c889b; border-bottom-color: #222f47;
+  }
+  html.dark .log-table tbody tr { border-bottom-color: #222f47; }
+  html.dark .log-table tbody tr:hover { background: #1b2740; }
+  html.dark .log-table tfoot { background: #131b2c; border-top-color: #29344c; }
+  html.dark .opening-row td { background: #1b2740; color: #94a3b8; }
+
+  html.dark .bill-link { color: #93c5fd; }
+  html.dark .bill-link:hover { color: #bfdbfe; }
+  html.dark .from-bill-tag { background: #223049; border-color: #34425c; color: #94a3b8; }
+
+  html.dark .badge-edited { background: #2a2410; color: #fcd34d; border-color: #665315; }
+
+  html.dark .btn-row-edit { color: #cbd5e1; border-color: #34425c; }
+  html.dark .btn-row-edit:hover { background: #1b2740; color: #f1f5f9; border-color: #475569; }
+  html.dark .btn-row-delete { color: #fb7185; border-color: #6b2733; }
+  html.dark .btn-row-delete:hover { background: #2c1416; color: #fecdd3; }
+
+  html.dark .modal-box { background: #161f33; box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(148,163,184,0.12); }
+  html.dark .modal-title { color: #f1f5f9; }
+  html.dark .modal-sub { color: #94a3b8; }
+  html.dark .modal-close-btn:hover { color: #f1f5f9; background: #1b2740; }
+
+  html.dark .form-label { color: #cbd5e1; }
+  html.dark .form-divider { border-top-color: #222f47; }
+
+  html.dark .btn-modal-cancel { background: #0f1728; border-color: #34425c; color: #cbd5e1; }
+  html.dark .btn-modal-cancel:hover { background: #1b2740; border-color: #475569; color: #f1f5f9; }
+
+  html.dark .delete-detail-box { background: #131b2c; border-color: #29344c; color: #94a3b8; }
+
+  html.dark .btn-filter { background: #0f1728; border-color: #34425c; color: #cbd5e1; }
+  html.dark .btn-filter:hover { background: #1b2740; border-color: #475569; color: #f1f5f9; }
+  html.dark .btn-clear { color: #94a3b8; }
+  html.dark .btn-clear:hover { color: #f1f5f9; }
 </style>
 {% endblock %}
 
