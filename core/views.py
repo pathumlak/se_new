@@ -1907,15 +1907,31 @@ def _customers():
         default=Value(ZERO),
         output_field=MONEY,
     )
+
+    # Pending cheques MUST be a subquery, not Sum("cheques__amount") over a
+    # join. This queryset also carries four Count() aggregates over bills,
+    # supplier_bills, cheques and custom_prices; Django resolves them all in a
+    # single grouped query, and a joined Sum gets multiplied by the row-count
+    # of the *other* joins (a Cartesian fan-out). The Counts guard themselves
+    # with distinct=True, but a Sum of amounts cannot — distinct would collapse
+    # two cheques that happen to share an amount. So a customer with, say, six
+    # custom prices had their real 440,000 of pending cheques counted six times
+    # (2,640,000), which wiped out their whole available credit to 0. The
+    # subquery aggregates on its own, immune to the surrounding joins.
+    pending_cheques_sq = (
+        Cheque.objects.filter(
+            customer=OuterRef("pk"), status=Cheque.Status.PENDING
+        )
+        .values("customer")
+        .annotate(total=Sum("amount"))
+        .values("total")
+    )
+
     return (
         Customer.objects.annotate(owed=owed)
         .annotate(
             pending_cheques=Coalesce(
-                Sum(
-                    "cheques__amount",
-                    filter=Q(cheques__status=Cheque.Status.PENDING),
-                    output_field=MONEY,
-                ),
+                Subquery(pending_cheques_sq, output_field=MONEY),
                 ZERO,
                 output_field=MONEY,
             )
