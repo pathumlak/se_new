@@ -118,6 +118,13 @@ CHEQUE_WARNING_DAYS = 3
 MONEY = DecimalField(max_digits=12, decimal_places=2)
 ZERO = Decimal("0.00")
 
+#: The day the system went live. Every customer's balance the moment they were
+#: created is treated as an opening balance carried in from before this date —
+#: pre-system debt that has no bill or payment behind it in this database. The
+#: ledger prints it as its first line so the running balance reconciles to the
+#: customer's current balance instead of starting from zero.
+SYSTEM_START_DATE = date(2026, 7, 1)
+
 #: Prefix on ProductionEntry.reason for entries the bill-save path auto-created
 #: to cover an oversell. _reverse_bill looks these up by prefix to undo them
 #: when the bill is edited or deleted, and the stock ledger uses it to render
@@ -2742,6 +2749,43 @@ def _ledger_rows(customer, from_date=None, to_date=None):
             }
         )
 
+    # ── Opening balance ──────────────────────────────────────────────────
+    # The system went live after these customers already had money on their
+    # accounts, so a customer's balance is not fully explained by the bills and
+    # payments recorded here — part of it is pre-system debt. Without a first
+    # line for that, the running balance starts at zero and never reaches the
+    # customer's real current balance.
+    #
+    # We do not store the opening figure; we DERIVE it, so it can never drift
+    # from the truth. Customer.balance is the authority (negative = owes us),
+    # and the ledger convention is the opposite (positive = owes us), so the
+    # customer's balance in ledger terms is `-customer.balance`. Everything the
+    # ledger already records nets to `movements`. Whatever is left over —
+    # current balance minus recorded movements — is what they must have started
+    # with on the system-start date. By construction this makes the final
+    # running balance land exactly on the current balance.
+    #
+    # Computed over ALL entries, before any date filter, so a filtered view
+    # still reports the true all-time opening rather than a windowed fragment.
+    movements = sum(
+        ((e["sale"] or ZERO) - (e["credit"] or ZERO) for e in entries), ZERO
+    )
+    opening = -customer.balance - movements
+
+    opening_entry = {
+        # Dated the system-start day and given a kind that sorts ahead of any
+        # real transaction on that day, so it is always the first line.
+        "date": SYSTEM_START_DATE,
+        "kind": -1,
+        "pk": 0,
+        "description": "Opening Balance",
+        "sale": opening if opening > ZERO else None,
+        "credit": -opening if opening < ZERO else None,
+        "is_note": False,
+        "is_opening": True,
+    }
+    entries.append(opening_entry)
+
     if from_date:
         entries = [e for e in entries if e["date"] >= from_date]
     if to_date:
@@ -2774,6 +2818,12 @@ def customer_ledger(request, pk):
     # is the whole account, not page 1 of it.
     page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
 
+    # Top-card current balance in the ledger's own convention (positive = owes
+    # us), so the number the reader sees at the top is the same number the
+    # running balance lands on at the bottom. The opening-balance line in
+    # _ledger_rows guarantees the all-time ledger closes exactly here.
+    current_balance = -customer.balance
+
     return render(
         request,
         "core/customer_ledger.html",
@@ -2787,6 +2837,8 @@ def customer_ledger(request, pk):
             "total_sale": sum((r["sale"] or ZERO for r in rows), ZERO),
             "total_credit": sum((r["credit"] or ZERO for r in rows), ZERO),
             "closing_balance": rows[-1]["balance"] if rows else ZERO,
+            # Positive = owes us (matches the ledger rows and the final total).
+            "current_balance": current_balance,
         },
     )
 

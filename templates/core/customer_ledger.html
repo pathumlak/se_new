@@ -92,17 +92,18 @@
 <div class="mb-5 grid gap-4 sm:grid-cols-3">
   <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print-plain">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Balance</p>
+    
     <p class="mt-1 text-2xl font-semibold
-              {% if customer.balance < 0 %}text-rose-600
-              {% elif customer.balance > 0 %}text-emerald-600
+              {% if current_balance > 0 %}text-rose-600
+              {% elif current_balance < 0 %}text-emerald-600
               {% else %}text-slate-400{% endif %}">
-      {{ customer.balance|floatformat:2|intcomma }}
+      {{ current_balance|floatformat:2|intcomma }}
     </p>
     <p class="mt-1 text-xs text-slate-500">
-      {% if customer.balance < 0 %}
-        Owes us {{ customer.owed|floatformat:2|intcomma }}
-      {% elif customer.balance > 0 %}
-        We owe them {{ customer.balance|floatformat:2|intcomma }}
+      {% if current_balance > 0 %}
+        Owes us {{ current_balance|floatformat:2|intcomma }}
+      {% elif current_balance < 0 %}
+        In credit {{ current_balance|floatformat:2|intcomma }}
       {% else %}
         Settled
       {% endif %}
@@ -178,12 +179,19 @@
       <tbody class="divide-y divide-slate-100">
         
         {% for row in rows %}
-          <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %}">
+          <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %} {% if row.is_opening %}bg-slate-50 font-semibold{% endif %}">
             <td class="whitespace-nowrap px-5 py-3 {% if row.is_note %}text-slate-400{% else %}text-slate-600{% endif %}">
               {{ row.date|date:"j M Y" }}
             </td>
             <td class="px-5 py-3 {% if row.is_note %}text-slate-400{% else %}text-slate-900{% endif %}">
-              {{ row.description }}
+              {% if row.is_opening %}
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">Opening</span>
+                  Balance carried forward
+                </span>
+              {% else %}
+                {{ row.description }}
+              {% endif %}
             </td>
 
             <td class="whitespace-nowrap px-5 py-3 text-right text-slate-900">
