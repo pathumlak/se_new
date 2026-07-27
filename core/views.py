@@ -943,8 +943,14 @@ def product_list(request):
     category_id = request.GET.get("category", "").strip()
     # ?view=stock — the sidebar's Stock Ledgers link — narrows the list to
     # products the operator would want to open a ledger for: negative
-    # (oversold), zero, or low.
+    # (oversold), zero, or low. ?stock= then splits that further:
+    #   all  (default) — everything at or below the low threshold
+    #   low  — only the low band (still on the shelf, but running down)
+    #   out  — only empty or oversold (qty <= 0)
     stock_view = request.GET.get("view", "").strip() == "stock"
+    stock_filter = request.GET.get("stock", "all").strip().lower()
+    if stock_filter not in {"all", "low", "out"}:
+        stock_filter = "all"
 
     # order_by repeats Product.Meta.ordering, which the annotate() below would
     # otherwise drop — see _bills_with_counts.
@@ -963,9 +969,25 @@ def product_list(request):
         products = products.filter(category_id=selected_category)
 
     if stock_view:
-        products = products.filter(qty__lte=settings.LOW_STOCK_THRESHOLD)
+        if stock_filter == "low":
+            # On the shelf but at or below the threshold — reorder soon.
+            products = products.filter(
+                qty__gt=0, qty__lte=settings.LOW_STOCK_THRESHOLD
+            )
+        elif stock_filter == "out":
+            # Empty (0) or oversold (negative).
+            products = products.filter(qty__lte=0)
+        else:
+            products = products.filter(qty__lte=settings.LOW_STOCK_THRESHOLD)
 
     page_obj = _paginate(request, products)
+
+    # Counts for the filter tabs, computed over the whole active catalogue so
+    # each tab shows how many it holds regardless of which is selected.
+    low_stock_total = Product.objects.filter(
+        qty__gt=0, qty__lte=settings.LOW_STOCK_THRESHOLD
+    ).count()
+    out_stock_total = Product.objects.filter(qty__lte=0).count()
 
     # For the native <datalist> autocomplete on the search box. Flat list
     # of names; the browser filters as the operator types and Enter submits
@@ -986,6 +1008,9 @@ def product_list(request):
             "query": query,
             "selected_category": selected_category,
             "stock_view": stock_view,
+            "stock_filter": stock_filter,
+            "low_stock_total": low_stock_total,
+            "out_stock_total": out_stock_total,
             "is_filtered": bool(query or selected_category or stock_view),
             "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
             "suggest_names": suggest_names,
@@ -2772,10 +2797,21 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     )
     opening = -customer.balance - movements
 
+    # The opening line is dated to the first of the month the account was
+    # opened: a customer created in August opens on 1 August, one carried over
+    # from before go-live opens on the system-start date (the back-fill set
+    # their created_at there). Falls back to the system-start date if
+    # created_at is somehow unset.
+    if customer.created_at:
+        opened = timezone.localtime(customer.created_at).date()
+        opening_date = opened.replace(day=1)
+    else:
+        opening_date = SYSTEM_START_DATE
+
     opening_entry = {
-        # Dated the system-start day and given a kind that sorts ahead of any
-        # real transaction on that day, so it is always the first line.
-        "date": SYSTEM_START_DATE,
+        # Given a kind that sorts ahead of any real transaction on its day, so
+        # it is always the first line.
+        "date": opening_date,
         "kind": -1,
         "pk": 0,
         "description": "Opening Balance",

@@ -92,6 +92,15 @@ class Customer(models.Model):
     # time someone renamed this one.
     is_walk_in_account = models.BooleanField(default=False)
 
+    # When the account was opened. Drives the date of the ledger's Opening
+    # Balance line: a customer created in August opens on 1 August, one carried
+    # over from before go-live opens on the system-start date. auto_now_add
+    # stamps new rows; the data migration back-fills every existing row to the
+    # system-start date, since they were all carried in at launch. Nullable so
+    # the auto_now_add addition doesn't need a prompt, and defensive readers
+    # fall back to the system-start date when it is somehow unset.
+    created_at = models.DateTimeField(null=True, blank=True, auto_now_add=True)
+
     class Meta:
         ordering = ["name"]
 
