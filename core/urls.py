@@ -89,6 +89,11 @@ urlpatterns = [
         name="stock_adjust_create",
     ),
     path(
+        "stock-adjustments/<int:pk>/edit/",
+        views.stock_adjust_edit,
+        name="stock_adjust_edit",
+    ),
+    path(
         "stock-adjustments/<int:pk>/delete/",
         views.stock_adjust_delete,
         name="stock_adjust_delete",

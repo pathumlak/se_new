@@ -176,10 +176,19 @@
                 <span class="font-medium text-amber-700">{{ row.bill_number }}</span>
                 {% if is_super_admin %}
                   <button type="button"
+                          class="js-adj-edit ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 hover:bg-amber-50"
+                          data-action="{% url 'core:stock_adjust_edit' row.adjustment_pk %}"
+                          data-target="{{ row.adj_target|floatformat:'-3' }}"
+                          data-date="{{ row.adj_date|date:'Y-m-d' }}"
+                          data-reason="{{ row.adj_reason }}"
+                          title="Edit this adjustment">
+                    Edit
+                  </button>
+                  <button type="button"
                           class="js-adj-delete ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 hover:bg-rose-50"
                           data-action="{% url 'core:stock_adjust_delete' row.adjustment_pk %}"
                           data-label="{{ row.customer }}"
-                          title="Reverse this adjustment">
+                          title="Remove this adjustment">
                     Delete
                   </button>
                 {% endif %}
@@ -228,7 +237,8 @@
       </button>
     </div>
 
-    <form method="post" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4">
+    <form method="post" id="adjust-form" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4"
+          data-create-action="{% url 'core:stock_adjust_create' product.pk %}">
       {% csrf_token %}
 
       <div class="grid gap-3 sm:grid-cols-2">
@@ -260,7 +270,7 @@
 
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        <button type="submit" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
+        <button type="submit" id="adjust-submit" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
           Save adjustment
         </button>
       </div>
@@ -274,10 +284,10 @@
      class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
      role="dialog" aria-modal="true">
   <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-    <h3 class="text-base font-semibold text-slate-900">Reverse adjustment</h3>
+    <h3 class="text-base font-semibold text-slate-900">Remove adjustment</h3>
     <p class="mt-2 text-sm text-slate-600">
       Delete <span id="adj-del-label" class="font-semibold text-slate-900"></span>?
-      The shelf will move back by the same amount.
+      The ledger re-flows without it and the shelf figure updates to match.
     </p>
     <div class="mt-6 flex justify-end gap-2">
       <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
@@ -347,7 +357,15 @@
          delta > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800');
     }
 
+    const form = document.getElementById('adjust-form');
+    const title = document.getElementById('adjust-title');
+    const submit = document.getElementById('adjust-submit');
+    const CREATE_ACTION = form.dataset.createAction;
+
     document.getElementById('open-adjust').addEventListener('click', function () {
+      form.action = CREATE_ACTION;
+      title.textContent = 'Adjust stock';
+      submit.textContent = 'Save adjustment';
       dateEl.value = TODAY;
       qtyEl.value = '';
       reasonEl.value = '';
@@ -356,6 +374,22 @@
       setTimeout(function () { qtyEl.focus(); }, 30);
     });
     qtyEl.addEventListener('input', refreshPreview);
+
+    // Adjustment edit (super-admin): same modal, retargeted and prefilled with
+    // the target the row was set to, so the operator edits the exact figure.
+    document.querySelectorAll('.js-adj-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        form.action = btn.dataset.action;
+        title.textContent = 'Edit adjustment';
+        submit.textContent = 'Update adjustment';
+        dateEl.value = btn.dataset.date || TODAY;
+        qtyEl.value = btn.dataset.target || '';
+        reasonEl.value = btn.dataset.reason || '';
+        refreshPreview();
+        open(modal);
+        setTimeout(function () { qtyEl.focus(); }, 30);
+      });
+    });
 
     // Adjustment delete (super-admin)
     const delModal = document.getElementById('adj-del-modal');

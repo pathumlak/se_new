@@ -1228,23 +1228,20 @@ def product_export_excel(request):
     return response
 
 
-def _stock_ledger_rows(product):
-    """Every stock movement on `product`, oldest first, with a running balance
-    and running production total.
+def _stock_events(product):
+    """Every stock movement on `product` as event dicts, sorted oldest-first.
 
-    Three sources land in one column layout:
-      Production       — a ProductionEntry row (own manufacture, corrections,
-                         or an auto Oversale row that covered a shortfall)
+    Shared by `_stock_ledger_rows` (which turns them into display rows) and
+    `_recompute_stock` (which walks them to reset adjustment deltas and the
+    shelf figure). Keeping one builder means the two can never disagree on the
+    order events happened in — and the order is what decides the balance an
+    adjustment sees on its date.
+
+    Four sources land in one column layout:
+      Production       — a ProductionEntry (own manufacture / oversale cover)
       Supplier receipt — a SupplierBillItem (goods arriving from a supplier)
       Sale             — a BillItem (goods leaving on a customer bill)
-
-    An opening "as stock" row is always first, holding the balance the ledger
-    has to start from so it ends at Product.qty. Computed rather than stored:
-    opening = current stock − sum(inputs) + sum(outputs). If everything has
-    been recorded through the app since day one, opening comes out as 0.
-
-    All work happens in Python because the balance and total both depend on
-    every earlier row — SQL cannot express that a page at a time.
+      Adjustment       — a StockAdjustment (a manual "set the shelf to X")
     """
     events = []
 
@@ -1315,31 +1312,110 @@ def _stock_ledger_rows(product):
             }
         )
 
-    # Manual stock corrections. Signed qty: positive rides in the PRODUCTION
-    # column (also bumps the running total, since the shelf gained it),
-    # negative rides in the SALES column (the shelf lost it, though not to
-    # a sale). The kind='adjust_up' / 'adjust_down' tint keeps them
-    # visually distinct from real production or a customer sale.
+    # Manual stock corrections. An adjustment SETS the shelf to an exact figure
+    # on its date; the delta it stores (`qty`) is what it took to get there
+    # from the balance the ledger stood at *at that date* — recomputed by
+    # `_recompute_stock`, never against the latest stock. Positive delta rides
+    # in the PRODUCTION column, negative in the SALES column, and the
+    # adjustment object is carried so the recompute can re-set it.
     for adj in StockAdjustment.objects.filter(product=product).select_related("adjusted_by"):
         is_up = adj.qty >= 0
         events.append(
             {
                 "date": adj.adjustment_date,
-                # Same day, after production and supplier receipts (kind=2)
-                # but before same-day sales (they'd read as adjusting to a
-                # position before the day's selling started).
+                # Same day, after production and supplier receipts but before
+                # same-day sales (an adjustment reads as the position before
+                # the day's selling started).
                 "_sort": (adj.adjustment_date, 0, adj.created_at, adj.pk),
                 "kind": "adjust_up" if is_up else "adjust_down",
                 "production": adj.qty if is_up else None,
                 "sales": (-adj.qty) if not is_up else None,
                 "customer": f"Adjustment — {adj.reason} · by {adj.adjusted_by.username}",
                 "bill_number": f"ADJ-{adj.pk}",
-                # For the delete button in the template.
                 "adjustment_pk": adj.pk,
+                # The SET target and the object, for the recompute.
+                "adjustment": adj,
+                "target": adj.stock_after,
+                # For the edit form in the ledger template.
+                "adj_target": adj.stock_after,
+                "adj_date": adj.adjustment_date,
+                "adj_reason": adj.reason,
             }
         )
 
     events.sort(key=lambda e: e["_sort"])
+    return events
+
+
+#: Quantity zero, three decimal places — the shelf is counted in thousandths.
+ZERO_QTY = Decimal("0.000")
+
+
+def _stock_opening(product):
+    """The shelf's baseline before any recorded movement (pre-app stock).
+
+    opening = current shelf − everything the ledger says came in + everything
+    it says went out, adjustments included at their current stored delta. A
+    fact about history that does not move, so it is the fixed starting point
+    the recompute walks from. Computed from the CURRENT consistent state, so
+    call it before mutating an adjustment, never after.
+    """
+    events = _stock_events(product)
+    total_in = sum((e["production"] or ZERO_QTY for e in events), ZERO_QTY)
+    total_out = sum((e["sales"] or ZERO_QTY for e in events), ZERO_QTY)
+    return product.qty - total_in + total_out
+
+
+def _recompute_stock(product, opening):
+    """Walk the ledger from `opening`, resetting every adjustment to a SET.
+
+    Production and sales apply as deltas; an adjustment SETS the running
+    balance to its target (`stock_after`) on its date, and its stored delta is
+    rewritten to exactly (target − balance-at-that-date) so the ledger row
+    lands on the number the operator typed — whatever the balance was just
+    above it, higher or lower. Product.qty becomes the closing balance, so the
+    shelf reflects the adjustment plus everything that happened after it.
+
+    `opening` is passed in (not re-derived) because a delete removes an
+    adjustment whose delta is still baked into Product.qty; the caller captures
+    the opening from the consistent pre-mutation state and hands it here.
+    """
+    events = _stock_events(product)
+    balance = opening
+    for e in events:
+        adj = e.get("adjustment")
+        if adj is not None:
+            target = adj.stock_after
+            new_delta = target - balance
+            if adj.qty != new_delta or adj.stock_before != balance:
+                adj.qty = new_delta
+                adj.stock_before = balance
+                adj.save(update_fields=["qty", "stock_before"])
+            balance = target
+        elif e["production"] is not None:
+            balance += e["production"]
+        else:
+            balance -= e["sales"]
+
+    if product.qty != balance:
+        Product.objects.filter(pk=product.pk).update(qty=balance)
+        product.qty = balance
+    return balance
+
+
+def _stock_ledger_rows(product):
+    """Every stock movement on `product`, oldest first, with a running balance
+    and running production total.
+
+    An opening "as stock" row is always first, holding the balance the ledger
+    has to start from so it ends at Product.qty. Computed rather than stored:
+    opening = current stock − sum(inputs) + sum(outputs). If everything has
+    been recorded through the app since day one, opening comes out as 0.
+
+    All work happens in Python because the balance and total both depend on
+    every earlier row — SQL cannot express that a page at a time.
+    """
+    events = _stock_events(product)
 
     total_in = sum(
         (e["production"] or Decimal("0.000") for e in events), Decimal("0.000")
@@ -1385,6 +1461,10 @@ def _stock_ledger_rows(product):
                     "kind": e["kind"],
                     "bill_pk": e.get("bill_pk"),
                     "adjustment_pk": e.get("adjustment_pk"),
+                    # For the edit form: the target set, the date, the reason.
+                    "adj_target": e.get("adj_target"),
+                    "adj_date": e.get("adj_date"),
+                    "adj_reason": e.get("adj_reason"),
                 }
             )
         else:
@@ -1403,6 +1483,9 @@ def _stock_ledger_rows(product):
                     "kind": e["kind"],
                     "bill_pk": e.get("bill_pk"),
                     "adjustment_pk": e.get("adjustment_pk"),
+                    "adj_target": e.get("adj_target"),
+                    "adj_date": e.get("adj_date"),
+                    "adj_reason": e.get("adj_reason"),
                 }
             )
 
@@ -1418,14 +1501,15 @@ def _stock_ledger_rows(product):
 @require_POST
 @login_required
 def stock_adjust_create(request, pk):
-    """Manually set a product's shelf to an exact quantity.
+    """Set a product's shelf to an exact quantity on a chosen date.
 
-    The form's `qty` field holds the *target* stock value the operator
-    wants on the shelf.  The actual delta applied to Product.qty is
-    (target − current), computed here after a fresh DB read so that a
-    concurrent sale or production is priced in before the delta lands.
-    Wrapping the shelf update and audit row in one transaction means a
-    mid-flight failure cannot leave Product.qty half-moved.
+    The form's `qty` field is the TARGET the operator wants the ledger to read
+    on the adjustment's date — not a delta. `_recompute_stock` works out the
+    delta needed to hit that target from the balance the ledger stood at on
+    that date (which can be higher or lower than the target), rewrites the
+    stored delta to match, and recomputes Product.qty as the new closing.
+    Wrapped in one transaction so a mid-flight failure cannot leave the shelf
+    half-moved.
     """
     product = get_object_or_404(Product, pk=pk)
     form = StockAdjustmentForm(request.POST)
@@ -1433,24 +1517,71 @@ def stock_adjust_create(request, pk):
         messages.error(request, f"Adjustment not saved: {form.first_error()}")
         return redirect("core:stock_ledger", pk=product.pk)
 
+    target = form.cleaned_data["qty"]  # desired stock on the adjustment date
+
     with transaction.atomic():
-        # Fresh read so a concurrent sale/production is priced in.
-        current = Product.objects.values_list("qty", flat=True).get(pk=product.pk)
-        target = form.cleaned_data["qty"]  # desired final stock value
-        delta = target - current           # signed change to apply
+        product = Product.objects.select_for_update().get(pk=product.pk)
+        # Capture the baseline while the shelf and the adjustments still agree.
+        opening = _stock_opening(product)
+
         entry = form.save(commit=False)
         entry.product = product
         entry.adjusted_by = request.user
-        entry.stock_before = current
         entry.stock_after = target
-        entry.qty = delta                  # store delta so ledger & delete work
+        entry.stock_before = target        # placeholder; recompute fixes it
+        entry.qty = ZERO_QTY               # placeholder; recompute fixes it
         entry.save()
-        Product.objects.filter(pk=product.pk).update(qty=target)
+
+        _recompute_stock(product, opening)
+        entry.refresh_from_db()
 
     messages.success(
         request,
-        f"Stock set to {target} on {product.name}. "
-        f"(Changed by {'+' if delta >= 0 else ''}{delta}.)",
+        f"Stock set to {target} on {entry.adjustment_date:%d %b %Y} for "
+        f"{product.name}. "
+        f"(Changed by {'+' if entry.qty >= 0 else ''}{entry.qty} on that date.)",
+    )
+    return redirect("core:stock_ledger", pk=product.pk)
+
+
+@require_POST
+@super_admin_required
+def stock_adjust_edit(request, pk):
+    """Change an existing adjustment's target, date or reason.
+
+    Editing the target to 9,000 makes that date's row read exactly 9,000,
+    whatever it read before, and re-flows every later movement (and any later
+    adjustment) from there. Super-admin only, the same bar as delete: an
+    adjustment is what a counted-shelf correction rests on.
+    """
+    entry = get_object_or_404(
+        StockAdjustment.objects.select_related("product"), pk=pk
+    )
+    # Bind the form to the row but present the TARGET (stock_after) in the qty
+    # field, not the stored delta — the operator edits the figure they want on
+    # the shelf, exactly as when creating one.
+    form = StockAdjustmentForm(request.POST, instance=entry)
+    if not form.is_valid():
+        messages.error(request, f"Adjustment not saved: {form.first_error()}")
+        return redirect("core:stock_ledger", pk=entry.product_id)
+
+    target = form.cleaned_data["qty"]
+
+    with transaction.atomic():
+        product = Product.objects.select_for_update().get(pk=entry.product_id)
+        opening = _stock_opening(product)   # before mutating
+
+        entry = form.save(commit=False)
+        entry.stock_after = target          # new SET target
+        # qty/stock_before are rewritten by the recompute.
+        entry.save()
+
+        _recompute_stock(product, opening)
+
+    messages.success(
+        request,
+        f"Adjustment updated — stock set to {target} on "
+        f"{entry.adjustment_date:%d %b %Y} for {product.name}.",
     )
     return redirect("core:stock_ledger", pk=product.pk)
 
@@ -1458,21 +1589,25 @@ def stock_adjust_create(request, pk):
 @require_POST
 @super_admin_required
 def stock_adjust_delete(request, pk):
-    """Reverse an adjustment: undo its stock movement and drop the row.
+    """Remove an adjustment and re-flow the ledger without it.
 
     Super-admin only — an adjustment is what accountability rests on for
     counted-shelf and scrap corrections, so managers can create them but
-    only a super admin can rewind one.
+    only a super admin can rewind one. Deleting one re-flows every later
+    movement from the balance that stood before it.
     """
     entry = get_object_or_404(
         StockAdjustment.objects.select_related("product"), pk=pk
     )
-    product = entry.product
     with transaction.atomic():
-        Product.objects.filter(pk=product.pk).update(qty=F("qty") - entry.qty)
+        product = Product.objects.select_for_update().get(pk=entry.product_id)
+        # Baseline captured while the deleted row's delta is still in Product.qty
+        # and in the events — so opening comes out as the true pre-app stock.
+        opening = _stock_opening(product)
         entry.delete()
+        _recompute_stock(product, opening)
 
-    messages.success(request, f"Adjustment on {product.name} reversed.")
+    messages.success(request, f"Adjustment on {product.name} removed.")
     return redirect("core:stock_ledger", pk=product.pk)
 
 
