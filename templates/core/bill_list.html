@@ -9,6 +9,21 @@
 <!-- Toolbar -->
 <div class="mb-5 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
   <form method="get" class="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+    <div class="flex-1 sm:min-w-[220px]">
+      <label for="q" class="mb-1.5 block text-xs font-medium text-slate-600">Search</label>
+      <div class="relative">
+        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+          </svg>
+        </span>
+        <input type="search" id="q" name="q" value="{{ query }}"
+               placeholder="Bill #, customer or walk-in name"
+               class="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm
+                      placeholder:text-slate-400
+                      focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+    </div>
     <div>
       <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
       <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
@@ -76,7 +91,7 @@
   </form>
 
   <div class="flex flex-col gap-2 sm:flex-row">
-    <a href="{% url 'core:bill_list_excel' %}?from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&customer={{ selected_customer|default_if_none:'' }}&payment_type={{ payment_type }}&status={{ status }}"
+    <a href="{% url 'core:bill_list_excel' %}?from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&customer={{ selected_customer|default_if_none:'' }}&payment_type={{ payment_type }}&status={{ status }}&q={{ query|urlencode }}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
       <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />

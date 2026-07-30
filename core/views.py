@@ -3354,16 +3354,21 @@ def _read_walkin_payment(raw, total):
         raise BillError("A walk-in sale can only be paid by full cash.")
 
     cash = _decimal(raw.get("cash"), "Amount received", 2)
-    account = _read_cash_account(raw.get("account"))
 
     target = total.quantize(Decimal("0.01"))
     if cash != target:
         raise BillError(f"Payment must total {target:.2f} — got {cash:.2f}.")
 
+    # A walk-in's cash always lands in the physical drawer. Any account the
+    # page might have sent is deliberately ignored: banking it to a named
+    # account on the spot would record the same money in and straight back out
+    # (net zero in the drawer), and the whole point of a walk-in cash sale is
+    # that the notes are sitting in the till. Forcing an empty account here
+    # guarantees the sale shows up as a single cash-in row in the drawer.
     return {
         "type": kind,
         "cash": cash,
-        "cash_account": account,
+        "cash_account": "",
         "cheques": [],
         "paid": cash,
         "credit_override": False,
@@ -4719,6 +4724,8 @@ def _filtered_bills(request):
     if status not in {value for value, _ in Bill.Status.choices}:
         status = ""
 
+    query = request.GET.get("q", "").strip()
+
     bills = _bills_with_counts().annotate(
         # paid_amount can run past total_amount when a payment also clears old
         # debt, and a bill can't owe less than nothing.
@@ -4738,12 +4745,26 @@ def _filtered_bills(request):
     if status:
         bills = bills.filter(status=status)
 
-    return bills, from_date, to_date, selected_customer, payment_type, status
+    if query:
+        # Free-text search across every page, not just the loaded one: find a
+        # bill by its number ("123" or "#123"), the account customer's name, or
+        # the walk-in name written on the till. A bare number matches the bill
+        # id exactly so "123" doesn't also drag in every bill totalling 1,230.
+        q_filter = (
+            Q(customer__name__icontains=query)
+            | Q(walk_in_name__icontains=query)
+        )
+        digits = query.lstrip("#").strip()
+        if digits.isdigit():
+            q_filter |= Q(pk=int(digits))
+        bills = bills.filter(q_filter)
+
+    return bills, from_date, to_date, selected_customer, payment_type, status, query
 
 
 @login_required
 def bill_list(request):
-    bills, from_date, to_date, selected_customer, payment_type, status = _filtered_bills(request)
+    bills, from_date, to_date, selected_customer, payment_type, status, query = _filtered_bills(request)
 
     # Paginate before the per-row work below: _reversal_summary queries per
     # bill, so priced over the whole filtered set it would cost a page's worth
@@ -4766,10 +4787,11 @@ def bill_list(request):
             "selected_customer": selected_customer,
             "payment_type": payment_type,
             "status": status,
+            "query": query,
             "payment_types": Bill.PaymentType.choices,
             "statuses": Bill.Status.choices,
             "is_filtered": bool(
-                from_date or to_date or selected_customer or payment_type or status
+                from_date or to_date or selected_customer or payment_type or status or query
             ),
         },
     )
@@ -4779,7 +4801,7 @@ def bill_list(request):
 def bill_list_excel(request):
     from openpyxl import Workbook
     from openpyxl.styles import Font
-    bills, _, _, _, _, _ = _filtered_bills(request)
+    bills, _, _, _, _, _, _ = _filtered_bills(request)
     # Re-order the queryset for excel output if needed, though they should be in default order
     # Let's ensure it's ordered properly
     bills = bills.order_by("-bill_date", "-pk")

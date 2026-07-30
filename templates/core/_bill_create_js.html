@@ -306,6 +306,23 @@ spanning lines, it isn't stripped and renders onto the page as text.
       const note = $('walkin-payment-note');
       if (note) note.classList.toggle('hidden', !walk);
 
+      // A walk-in's cash always stays in the physical drawer — never banked to
+      // a named account on the spot. Force the "Transfer to" selector back to
+      // "Physical Cash (drawer)" and lock it so the notes always show up in the
+      // cash drawer. The save step ignores any account for a walk-in anyway.
+      const fca = $('fullcash-account');
+      if (fca) {
+        const wrap = fca.closest('div');
+        if (walk) {
+          fca.value = '';
+          fca.disabled = true;
+          if (wrap) wrap.classList.add('hidden');
+        } else {
+          fca.disabled = false;
+          if (wrap) wrap.classList.remove('hidden');
+        }
+      }
+
       // Picks it for them — a walk-in only ever has the one option, so
       // there's nothing to choose.
       if (walk && cashRadio && !cashRadio.checked) {
