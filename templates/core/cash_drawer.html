@@ -460,6 +460,21 @@
     Showing: <strong class="text-slate-800">{{ month_filter.label }}</strong>
     {% if from_date or to_date %} · custom range{% endif %}
   </span>
+
+  <!-- Client-side live search: filters the rows already on the page (reason,
+       bill #, customer, amount, type) without touching the running balance,
+       which depends on every prior row. Widen the range with the month
+       filter / All time first, then search within it. -->
+  <div class="relative" style="min-width:230px">
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+      </svg>
+    </span>
+    <input type="search" id="js-drawer-search" autocomplete="off"
+           placeholder="Search reason, bill #, customer, amount…"
+           class="filter-input" style="padding-left:32px;width:100%">
+  </div>
 </div>
 
 
@@ -501,7 +516,8 @@
         {% endif %}
 
         {% for row in rows %}
-          <tr>
+          <tr class="js-drawer-row"
+              data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
             <td class="whitespace-nowrap" style="color:#64748b">{{ row.entry.txn_date|date:"j M Y" }}</td>
 
             <td>
@@ -583,6 +599,18 @@
             </td>
           </tr>
         {% endfor %}
+
+        <!-- Shown by JS when a search matches nothing on this page. -->
+        <tr id="js-drawer-noresults" style="display:none">
+          <td colspan="6">
+            <div class="empty-state">
+              <p>No rows on this page match your search.</p>
+              <p style="margin-top:4px;font-size:11px;color:#94a3b8">
+                Try widening the range with the month filter or “All time”, then search again.
+              </p>
+            </div>
+          </td>
+        </tr>
       </tbody>
 
       {% if rows %}
@@ -829,6 +857,33 @@
 </script>
 
 <script>
+/* ─── Live search over the drawer rows on this page ───────────────────────
+   Filters the loaded rows without a round-trip. The running-balance column
+   is left untouched — each visible row keeps the true drawer balance it
+   stood at, so hiding rows never makes the figures lie. Widen the date range
+   first (month filter / All time) to search a bigger set. */
+(function () {
+  const input = document.getElementById('js-drawer-search');
+  if (!input) return;
+  const rows = Array.prototype.slice.call(document.querySelectorAll('.js-drawer-row'));
+  const noResults = document.getElementById('js-drawer-noresults');
+
+  function apply() {
+    const term = input.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(function (row) {
+      const hay = row.dataset.search || '';
+      const match = !term || hay.indexOf(term) !== -1;
+      row.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
+    if (noResults) {
+      noResults.style.display = (term && shown === 0 && rows.length > 0) ? '' : 'none';
+    }
+  }
+  input.addEventListener('input', apply);
+})();
+
 /* ─── Shared modal helpers ─── */
 function openModal(el) {
   el.classList.add('open');
