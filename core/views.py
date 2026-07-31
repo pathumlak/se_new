@@ -8865,9 +8865,7 @@ def order_delivery_note_excel(request, pk):
         name = product.name
         if size and name.upper().startswith(size.upper()):
             name = name[len(size):].strip(" -–")
-        name = re.sub(
-            r"\s*-\s*(SENOVKA|KRISHAN|SURESH)$", "", name, flags=re.IGNORECASE
-        ).strip()
+        name = re.sub(r"\s*-\s*[^-]+$", "", name).strip()
         return size, (name or product.name)
 
     for offset in range(ITEM_ROWS):
