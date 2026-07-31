@@ -1,4 +1,5 @@
 {% load humanize %}
+{% load product_filters %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -118,7 +119,7 @@
     {% for item in items %}
       <tr>
         <td class="c">{{ forloop.counter }}</td>
-        <td>{{ item.product.name }}</td>
+        <td>{{ item.product.name|clean_product_name }}</td>
         <td>{% if item.product.size %}{{ item.product.size }}{% else %}—{% endif %}</td>
         <td class="r">{{ item.qty|floatformat:"-3" }}</td>
         <td class="r">{{ item.unit_price|floatformat:2|intcomma }}</td>
