@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
@@ -1349,6 +1350,27 @@ def _stock_events(product):
 
 #: Quantity zero, three decimal places — the shelf is counted in thousandths.
 ZERO_QTY = Decimal("0.000")
+
+
+def _clean_product_name(name):
+    """A product name with its trailing owner tag stripped, for customer-facing
+    documents.
+
+    The catalogue tags a product's owner after a hyphen — "50MM ELBOW-SENOVKA",
+    "110MM PIPE-KRISHAN", and whatever new name might be added later. Rather
+    than hardcode a list of owners (which would miss any new one), we drop
+    everything from the LAST hyphen to the end, so "50MM ELBOW-<anything>"
+    reads as "50MM ELBOW". Using the last hyphen means a product name that
+    itself contains one keeps it and only the trailing owner segment goes.
+
+    A name with no hyphen is returned unchanged, and a name that is *only* a
+    tag falls back to the original so a row never prints blank.
+    """
+    text = (name or "").strip()
+    if "-" not in text:
+        return text
+    cleaned = text.rsplit("-", 1)[0].strip()
+    return cleaned or text
 
 
 def _stock_opening(product):
@@ -6607,34 +6629,109 @@ def sales_report(request):
     return render(request, "core/sales_report.html", context)
 
 
+def _render_pdf_bytes(html, request):
+    """Turn print-template HTML into PDF bytes, or None if no engine can.
+
+    Two engines, tried in order:
+
+      1. WeasyPrint — best fidelity, but binds to native GTK/Pango libraries
+         that pip cannot deliver, so importing it fails on a box where those
+         libraries aren't installed (Windows dev, a bare Ubuntu server).
+      2. xhtml2pdf — pure Python, no native dependencies, so it works wherever
+         pip does. Slightly plainer output, but a real downloadable PDF.
+
+    The point of the ladder is that "Download PDF" always yields a PDF the
+    browser saves, never a print view it opens in a tab.
+    """
+    # 1. WeasyPrint, if its native libraries are present.
+    try:
+        from weasyprint import HTML
+
+        return HTML(string=html, base_url=request.build_absolute_uri()).write_pdf()
+    except (ImportError, OSError):
+        pass
+
+    # 2. xhtml2pdf — pure Python fallback. The print templates carry
+    # WeasyPrint's nested @page margin boxes (@bottom-left { content: … } for
+    # running page footers), which xhtml2pdf's stricter CSS parser rejects. It
+    # has no use for them anyway, so strip every @page block before handing it
+    # over — the body renders the same, just without the page-number footer.
+    try:
+        from io import BytesIO
+
+        from xhtml2pdf import pisa
+
+        buffer = BytesIO()
+        result = pisa.CreatePDF(
+            src=_strip_at_page(html), dest=buffer, encoding="utf-8"
+        )
+        if not result.err:
+            return buffer.getvalue()
+    except Exception:
+        # Any parse/render failure here drops through to the HTML fallback
+        # rather than 500ing on a download.
+        pass
+
+    return None
+
+
+def _strip_at_page(html):
+    """Remove every CSS `@page { … }` block, nested braces and all.
+
+    Regex can't match balanced braces, so this scans for `@page`, finds its
+    matching close brace by counting depth, and drops the whole run. Used only
+    on the xhtml2pdf path — WeasyPrint keeps its @page rules.
+    """
+    out = []
+    i = 0
+    while True:
+        idx = html.find("@page", i)
+        if idx == -1:
+            out.append(html[i:])
+            break
+        out.append(html[i:idx])
+        brace = html.find("{", idx)
+        if brace == -1:
+            out.append(html[idx:])
+            break
+        depth = 1
+        j = brace + 1
+        while j < len(html) and depth > 0:
+            if html[j] == "{":
+                depth += 1
+            elif html[j] == "}":
+                depth -= 1
+            j += 1
+        i = j  # resume after the closing brace of the @page block
+    return "".join(out)
+
+
 def _pdf_response(request, template, context, filename):
-    """Render a print template to PDF, or to itself when that isn't possible.
+    """Render a print template to a downloadable PDF.
 
     Shared by every report. The templates are written to stand up unaided —
-    WeasyPrint fetches nothing and runs no JavaScript — which is what lets the
-    fallback hand the very same document to the browser to print.
+    no external fetches, no JavaScript — so both PDF engines and the last-ditch
+    HTML view all render the same document.
     """
     html = render_to_string(template, context, request=request)
 
-    try:
-        from weasyprint import HTML
-    except (ImportError, OSError):
-        # OSError, not just ImportError: `pip install weasyprint` succeeds on
-        # Windows and then importing it fails, because the GTK libraries it
-        # binds to are not something pip can deliver. Rather than 500, say so
-        # and hand back the document.
-        messages.warning(
-            request,
-            "WeasyPrint can't run here, so this is the print view rather than a "
-            "PDF download — use your browser's Print to PDF. To get real PDFs, "
-            "install WeasyPrint's GTK libraries on the server.",
-        )
-        return HttpResponse(html)
+    pdf = _render_pdf_bytes(html, request)
+    if pdf is not None:
+        response = HttpResponse(pdf, content_type="application/pdf")
+        # attachment, not inline: clicking "Download PDF" saves the file to the
+        # browser's downloads, it never opens a PDF viewer tab.
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
-    pdf = HTML(string=html, base_url=request.build_absolute_uri()).write_pdf()
-    response = HttpResponse(pdf, content_type="application/pdf")
-    response["Content-Disposition"] = f'inline; filename="{filename}"'
-    return response
+    # Neither engine is available — hand back the print view as a genuine last
+    # resort so the operator can still Print to PDF from the browser.
+    messages.warning(
+        request,
+        "No PDF engine is installed, so this is the print view — use your "
+        "browser's Print to PDF. Install xhtml2pdf (or WeasyPrint's GTK "
+        "libraries) on the server for one-click PDF downloads.",
+    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -8451,9 +8548,14 @@ def order_set_status(request, pk, status):
 
 
 def _order_pdf_context(order):
+    items = list(order.items.select_related("product"))
+    # Strip the owner tag off each product name so the quotation reads
+    # "50MM ELBOW", not "50MM ELBOW-SENOVKA".
+    for item in items:
+        item.clean_name = _clean_product_name(item.product.name)
     return {
         "order": order,
-        "items": list(order.items.select_related("product")),
+        "items": items,
         "generated_at": timezone.localtime(),
     }
 
@@ -8528,7 +8630,7 @@ def order_excel(request, pk):
     row_num = header_row + 1
     for i, item in enumerate(items, start=1):
         ws.cell(row=row_num, column=1, value=i)
-        ws.cell(row=row_num, column=2, value=item.product.name)
+        ws.cell(row=row_num, column=2, value=_clean_product_name(item.product.name))
         ws.cell(row=row_num, column=3, value=item.product.size or "—")
         c_qty = ws.cell(row=row_num, column=4, value=float(item.qty))
         c_price = ws.cell(row=row_num, column=5, value=float(item.unit_price))

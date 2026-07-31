@@ -2,12 +2,19 @@ Django>=5.0
 django-crispy-forms>=2.1
 crispy-tailwind>=1.0
 
-# Sales report PDF export. The wheel installs anywhere, but importing it needs
-# native GTK/Pango libraries that pip does not carry:
-#   Debian/Ubuntu  apt install libpango-1.0-0 libpangoft2-1.0-0
-#   Windows        install the GTK3 runtime, or skip it — the report falls back
-#                  to a print-friendly page and the browser's Print to PDF.
+# PDF export. Two engines, tried in order by core.views._render_pdf_bytes:
+#
+#   weasyprint  — best fidelity, but importing it needs native GTK/Pango
+#                 libraries pip cannot carry:
+#                   Debian/Ubuntu  apt install libpango-1.0-0 libpangoft2-1.0-0
+#                   Windows        install the GTK3 runtime
+#   xhtml2pdf   — pure Python, no native dependencies, so PDF downloads work
+#                 wherever pip does even when WeasyPrint's libraries are absent.
+#
+# With xhtml2pdf installed, "Download PDF" always downloads a real PDF; the
+# in-browser print view only appears if BOTH engines are missing.
 weasyprint>=60
+xhtml2pdf>=0.2.11
 
 # Quotation export from the order book. Pure Python, no native dependencies —
 # unlike WeasyPrint above, this one just works wherever pip does.
