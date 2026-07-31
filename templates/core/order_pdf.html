@@ -118,7 +118,7 @@
     {% for item in items %}
       <tr>
         <td class="c">{{ forloop.counter }}</td>
-        <td>{{ item.clean_name|default:item.product.name }}</td>
+        <td>{{ item.product.name }}</td>
         <td>{% if item.product.size %}{{ item.product.size }}{% else %}—{% endif %}</td>
         <td class="r">{{ item.qty|floatformat:"-3" }}</td>
         <td class="r">{{ item.unit_price|floatformat:2|intcomma }}</td>
