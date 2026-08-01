@@ -6993,6 +6993,22 @@ def _petty_cash_context(request, active_tab="expenses"):
         reimb_qs = PettyCashReimbursement.objects.select_related(
             "fund", "added_by"
         ).order_by("-date", "-id")
+
+        # The summary tiles must describe the whole list below, not the single
+        # `fund` used to front the page. Expenses and reimbursements sum across
+        # every month; the opening is the earliest month's opening; and the
+        # available balance is the *latest* month's closing — the cash actually
+        # in the tin now, which the carry-forward chain has rolled up into.
+        earliest = PettyCashFund.objects.order_by("month").first()
+        latest = PettyCashFund.objects.order_by("-month").first()
+        tile_opening = earliest.opening_balance if earliest else Decimal("0.00")
+        tile_available = latest.closing_balance if latest else Decimal("0.00")
+        tile_expenses = expense_qs.aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0.00")
+        tile_reimbursements = reimb_qs.aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0.00")
     else:
         expense_qs = fund.entries.filter(
             entry_type=PettyCashEntry.EntryType.EXPENSE
@@ -7000,6 +7016,10 @@ def _petty_cash_context(request, active_tab="expenses"):
         reimb_qs = fund.reimbursements.select_related("added_by").order_by(
             "-date", "-id"
         )
+        tile_opening = fund.opening_balance
+        tile_available = fund.available_balance
+        tile_expenses = fund.total_expenses
+        tile_reimbursements = fund.total_reimbursements
 
     # Two paginators because the tabs are independent — ?page= applies to
     # whichever tab was clicked, so the two share the same page number and
@@ -7020,6 +7040,12 @@ def _petty_cash_context(request, active_tab="expenses"):
         "reimbursements": reimb_page.object_list,
         "active_tab": active_tab,
         "low_balance_threshold": Decimal("1000.00"),
+        # Tile figures: this month's fund normally, but aggregated across every
+        # fund when the All-months list is showing, so the tiles match the list.
+        "tile_opening": tile_opening,
+        "tile_expenses": tile_expenses,
+        "tile_reimbursements": tile_reimbursements,
+        "tile_available": tile_available,
     }
 
 

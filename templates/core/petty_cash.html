@@ -61,26 +61,32 @@
 <div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
   <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-blue-700">Opening balance</p>
-    <p class="mt-1 text-2xl font-semibold text-blue-900">{{ fund.opening_balance|floatformat:2|intcomma }}</p>
+    <p class="mt-1 text-2xl font-semibold text-blue-900">{{ tile_opening|floatformat:2|intcomma }}</p>
   </div>
   <div class="rounded-xl border border-rose-200 bg-rose-50/60 p-4 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">Total expenses</p>
-    <p class="mt-1 text-2xl font-semibold text-rose-700">{{ fund.total_expenses|floatformat:2|intcomma }}</p>
+    <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">
+      Total expenses{% if month_filter.is_all_time %} <span class="normal-case font-normal text-rose-400">(all months)</span>{% endif %}
+    </p>
+    <p class="mt-1 text-2xl font-semibold text-rose-700">{{ tile_expenses|floatformat:2|intcomma }}</p>
   </div>
   <div class="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm">
-    <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Total reimbursements</p>
-    <p class="mt-1 text-2xl font-semibold text-emerald-700">{{ fund.total_reimbursements|floatformat:2|intcomma }}</p>
+    <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+      Total reimbursements{% if month_filter.is_all_time %} <span class="normal-case font-normal text-emerald-400">(all months)</span>{% endif %}
+    </p>
+    <p class="mt-1 text-2xl font-semibold text-emerald-700">{{ tile_reimbursements|floatformat:2|intcomma }}</p>
   </div>
   <div class="rounded-xl border p-4 shadow-sm
-              {% if fund.available_balance < low_balance_threshold %}border-amber-300 bg-amber-50/70{% else %}border-slate-200 bg-white{% endif %}">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available balance</p>
-    <p class="mt-1 text-3xl font-bold
-              {% if fund.available_balance < 0 %}text-rose-700
-              {% elif fund.available_balance < low_balance_threshold %}text-amber-700
-              {% else %}text-emerald-700{% endif %}">
-      {{ fund.available_balance|floatformat:2|intcomma }}
+              {% if tile_available < low_balance_threshold %}border-amber-300 bg-amber-50/70{% else %}border-slate-200 bg-white{% endif %}">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      Available balance{% if month_filter.is_all_time %} <span class="normal-case font-normal text-slate-400">(latest month)</span>{% endif %}
     </p>
-    {% if fund.available_balance < low_balance_threshold %}
+    <p class="mt-1 text-3xl font-bold
+              {% if tile_available < 0 %}text-rose-700
+              {% elif tile_available < low_balance_threshold %}text-amber-700
+              {% else %}text-emerald-700{% endif %}">
+      {{ tile_available|floatformat:2|intcomma }}
+    </p>
+    {% if tile_available < low_balance_threshold %}
       <p class="mt-1 text-[11px] font-medium text-amber-800">Low — consider a top-up.</p>
     {% endif %}
   </div>
