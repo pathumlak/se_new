@@ -657,11 +657,12 @@ class PettyCashFund(models.Model):
     system; `PettyCashFund.for_month` is the only thing that should build one,
     and it normalises to day 1.
 
-    opening_balance is a snapshot, not a lookup: it is copied from the previous
-    month's closing balance when the fund is created and then left alone. Were
-    it derived on read, correcting a six-month-old expense would silently
-    rewrite every opening balance since, and the tin on the shelf would no
-    longer match any of them.
+    opening_balance is stored, but it is kept as a live running balance rather
+    than a frozen snapshot: it always equals the previous month's closing. Any
+    write re-syncs the whole chain via `resync_chain`, so correcting an old
+    month rolls its new balance forward through every later month's opening.
+    This is a deliberate choice — the tin is one continuous float, so next
+    month's opening must track last month's closing even when history is edited.
     """
 
     month = models.DateField(unique=True)
@@ -706,31 +707,55 @@ class PettyCashFund(models.Model):
             month=first,
             defaults={"opening_balance": opening, "closing_balance": opening},
         )
+        # Inserting a month between two existing ones would leave the later
+        # month's opening pointing past the new fund. Re-sync so the chain is
+        # correct the moment the fund appears, then reload our own figures.
+        if created:
+            cls.resync_chain()
+            fund.refresh_from_db(fields=["opening_balance", "closing_balance"])
         return fund, (previous if created and previous else None)
 
     def recalculate(self):
-        """Rewrite closing_balance from the entries that make it up.
+        """Re-sync the whole float so every month's opening equals the previous
+        month's closing, and return this fund's refreshed closing balance.
 
-        Called after every write to an entry or a reimbursement rather than
-        adjusting by a delta, because a full recount cannot drift: an edit that
-        reverses 500 and applies 600 has no way to leave the fund 100 out if the
-        fund is never told about either number.
+        The tin is one running balance: correcting any month has to move every
+        month after it, or a July expense added late leaves August opening on a
+        stale figure (the bug this replaced). So rather than touch one month,
+        this recomputes the entire chain oldest-to-newest — funds are one per
+        month, so the walk is cheap and, being a full recount, cannot drift.
 
-        Only this month's closing balance moves. A later month's opening balance
-        was snapshotted when it was created and is deliberately left alone — see
-        the class docstring.
+        Instance method for call-site compatibility; the work is in the
+        classmethod. `self` is refreshed so a caller reading closing_balance
+        straight after (e.g. a success message) sees the new number.
         """
-        expenses = self.entries.filter(
-            entry_type=PettyCashEntry.EntryType.EXPENSE
-        ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0.00")
-
-        reimbursements = self.reimbursements.aggregate(
-            total=models.Sum("amount")
-        )["total"] or Decimal("0.00")
-
-        self.closing_balance = self.opening_balance + reimbursements - expenses
-        self.save(update_fields=["closing_balance"])
+        type(self).resync_chain()
+        self.refresh_from_db(fields=["opening_balance", "closing_balance"])
         return self.closing_balance
+
+    @classmethod
+    def resync_chain(cls):
+        """Rewrite opening and closing for every fund so the carry-forward is
+        a live running balance: fund[n].opening = fund[n-1].closing, starting
+        from 0 for the earliest month.
+
+        Idempotent and safe to run at any time — it derives every figure from
+        the entries and reimbursements on record, so running it twice lands on
+        the same numbers.
+        """
+        previous_closing = Decimal("0.00")
+        for fund in cls.objects.order_by("month"):
+            expenses = fund.entries.filter(
+                entry_type=PettyCashEntry.EntryType.EXPENSE
+            ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0.00")
+            reimbursements = fund.reimbursements.aggregate(
+                total=models.Sum("amount")
+            )["total"] or Decimal("0.00")
+
+            fund.opening_balance = previous_closing
+            fund.closing_balance = previous_closing + reimbursements - expenses
+            fund.save(update_fields=["opening_balance", "closing_balance"])
+            previous_closing = fund.closing_balance
 
     @property
     def total_expenses(self):
