@@ -847,10 +847,10 @@ class BillEditReasonForm(forms.Form):
         ),
     )
     reason = forms.CharField(
-        label="Reason for Edit",
+        label="Reason for Edit (optional)",
         max_length=500,
+        required=False,
         error_messages={
-            "required": "Give a reason for this edit.",
             "max_length": "Keep the reason under 500 characters.",
         },
         widget=forms.TextInput(
@@ -864,12 +864,9 @@ class BillEditReasonForm(forms.Form):
     )
 
     def clean_reason(self):
-        """A reason of spaces is no reason. CharField already strips, so this
-        only has to reject what stripping leaves empty."""
-        reason = self.cleaned_data["reason"].strip()
-        if not reason:
-            raise forms.ValidationError("Give a reason for this edit.")
-        return reason
+        """Optional. Normalised to stripped text (possibly empty) so a
+        spaces-only reason is stored as blank rather than whitespace."""
+        return self.cleaned_data["reason"].strip()
 
 
 class CustomerPriceForm(forms.Form):

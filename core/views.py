@@ -2802,30 +2802,11 @@ def _ledger_rows(customer, from_date=None, to_date=None):
             }
         )
 
-    # Cancelled bills are excluded above and their notes go with them: a
-    # cancelled sale isn't in the ledger, so the story of how it was corrected
-    # has nothing left to annotate.
-    audits = BillEditAudit.objects.filter(bill__customer=customer).exclude(
-        bill__status=Bill.Status.CANCELLED
-    )
-    for audit in audits:
-        entries.append(
-            {
-                "date": audit.edit_date,
-                # Last on its day: the note explains rows already read, and
-                # sorting it into the middle of them would imply it split the
-                # day's money in two.
-                "kind": 3,
-                "pk": audit.pk,
-                "description": f"Bill #{audit.bill_id} edited: {audit.reason}",
-                # Both None is what makes this a note. The running balance
-                # below adds 0 and carries the previous row's figure forward,
-                # which is exactly what a note should do to an account.
-                "sale": None,
-                "credit": None,
-                "is_note": True,
-            }
-        )
+    # Bill-edit audit notes are deliberately NOT shown on the ledger: they
+    # carry no money and only clutter a customer's account with correction
+    # history. The BillEditAudit rows are still written on every edit (see
+    # _update_bill) and remain in the database for audit — this just keeps
+    # them off the customer-facing ledger, on screen and in exports alike.
 
     for supplier_bill in customer.supplier_bills.exclude(
         status=SupplierBill.Status.CANCELLED
@@ -4564,9 +4545,10 @@ def _read_edit_gate(request, pk):
 
     edit_date = _parse_date(gate.get("edit_date"))
     reason = str(gate.get("reason") or "").strip()[:500]
-    if edit_date is None or not reason:
-        # Half a gate is no gate — an old or hand-made session value gets sent
-        # back through the form rather than saved as a blank reason.
+    if edit_date is None:
+        # The date is the only required half now — the reason is optional. A
+        # gate with no date is old or hand-made and gets sent back through the
+        # form rather than saved.
         return None
     return {"edit_date": edit_date, "reason": reason}
 
@@ -4599,7 +4581,7 @@ def bill_edit(request, pk):
             return JsonResponse(
                 {
                     "success": False,
-                    "error": "This edit needs a date and reason. Reload the page and confirm them.",
+                    "error": "This edit needs a date. Reload the page and confirm it.",
                 },
                 status=400,
             )

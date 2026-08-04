@@ -1056,65 +1056,41 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
             created_by=self.user,
         )
 
-    def test_an_edit_note_carries_the_balance_through_untouched(self):
-        """The note explains a figure; it must not move one. 4 Jun closes at
-        600, so a note that day leaves the ledger closing at 600."""
+    def test_edit_notes_are_not_shown_on_the_ledger(self):
+        """Bill-edit audits are kept in the database for history but are
+        deliberately never rendered on the customer ledger — the account stays
+        clean whether or not a bill was ever edited."""
+        before = len(self.rows())
         self.audit(self.june1, 4, reason="Price correction")
         rows = self.rows()
 
-        note = rows[-1]
-        self.assertEqual(
-            self.shape([note]),
-            [(
-                date(2026, 6, 4),
-                f"Bill #{self.june1.pk} edited: Price correction",
-                None,
-                None,
-                Decimal("600.00"),
-            )],
+        self.assertNotIn("Price correction", [r["description"] for r in rows])
+        self.assertFalse(any(r.get("is_note") for r in rows))
+        # The note added no row to the ledger …
+        self.assertEqual(len(rows), before)
+        # … but the audit record still exists for the record.
+        self.assertTrue(
+            BillEditAudit.objects.filter(reason="Price correction").exists()
         )
-        self.assertTrue(note["is_note"])
-        self.assertEqual(self.response.context["closing_balance"], Decimal("600.00"))
+        self.assertNotContains(self.response, "Price correction")
 
-    def test_an_edit_note_is_not_counted_in_the_totals(self):
+    def test_an_edit_note_leaves_the_balance_and_totals_untouched(self):
         self.rows()
         totals = (
             self.response.context["total_sale"],
             self.response.context["total_credit"],
+            self.response.context["closing_balance"],
         )
         self.audit(self.june1, 3)
         self.rows()
         self.assertEqual(
-            (self.response.context["total_sale"], self.response.context["total_credit"]),
+            (
+                self.response.context["total_sale"],
+                self.response.context["total_credit"],
+                self.response.context["closing_balance"],
+            ),
             totals,
         )
-
-    def test_an_edit_note_lands_last_on_its_day(self):
-        """It annotates rows already read; sorting it into the middle of the
-        day's money would imply it split them."""
-        self.audit(self.june3, 3)
-        june3 = [r["description"] for r in self.rows() if r["date"] == date(2026, 6, 3)]
-        self.assertEqual(june3[-1], f"Bill #{self.june3.pk} edited: Wrong qty entered")
-
-    def test_a_cancelled_bills_edit_notes_are_excluded(self):
-        cancelled = Bill.objects.create(
-            customer=self.customer,
-            bill_date=date(2026, 6, 1),
-            total_amount=Decimal("1234.00"),
-            payment_type=Bill.PaymentType.PAY_LATER,
-            status=Bill.Status.CANCELLED,
-        )
-        self.audit(cancelled, 4, reason="Should not show")
-        self.assertNotIn(
-            "Should not show", [r["description"] for r in self.rows()]
-        )
-
-    def test_the_note_renders_italic_and_dashed(self):
-        self.audit(self.june1, 4, reason="Price correction")
-        self.rows()
-        self.assertContains(self.response, "Price correction")
-        self.assertContains(self.response, "italic")
-        self.assertContains(self.response, "—")
 
     def test_supplier_bill_notes_land_in_the_description(self):
         SupplierBill.objects.create(
@@ -3018,13 +2994,14 @@ class BillEditReasonGateTests(BillMutationMixin, TestCase):
         self.assertRedirects(response, self.url())
         self.assertContains(self.client.get(self.url()), 'id="bill-initial"')
 
-    def test_a_blank_reason_is_refused(self):
+    def test_a_blank_reason_is_accepted(self):
+        """The reason is optional now — a blank one still passes the gate and
+        opens the edit form; only the date is required."""
         response = self.client.post(
             self.url(), {"edit_date": "2026-07-17", "reason": "   "}
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Give a reason for this edit.")
-        self.assertNotIn(f"bill_edit_gate:{self.bill.pk}", self.client.session)
+        self.assertRedirects(response, self.url())
+        self.assertContains(self.client.get(self.url()), 'id="bill-initial"')
 
     def test_a_missing_date_is_refused(self):
         response = self.client.post(self.url(), {"edit_date": "", "reason": "Typo"})
@@ -3044,7 +3021,7 @@ class BillEditReasonGateTests(BillMutationMixin, TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("needs a date and reason", response.json()["error"])
+        self.assertIn("needs a date", response.json()["error"])
         self.assertFalse(BillEditAudit.objects.exists())
         self.bill.refresh_from_db()
         self.assertEqual(self.bill.total_amount, Decimal("1000.00"))
