@@ -43,14 +43,14 @@
          class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>
     {% endif %}
 
-    <a href="{% url 'core:order_production_check' %}"
+    <!-- <a href="{% url 'core:order_production_check' %}"
        class="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-       title="See what's ordered against current stock, per product">
+       title="See everything that's ordered against current stock, across all open quotations">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
       </svg>
-      Production check
-    </a>
+      All-orders check
+    </a> -->
     <a href="{% url 'core:order_create' %}"
        class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -63,11 +63,31 @@
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
 
+<!-- Selection helper bar: shows how many orders are ticked, quick clear. -->
+<div class="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm">
+  <span class="inline-flex items-center gap-2 font-medium text-slate-700">
+    <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    Tick orders to run a live production check
+  </span>
+  <span id="selection-count"
+        class="hidden rounded-full bg-slate-900 px-2.5 py-0.5 text-xs font-semibold text-white"></span>
+  <button type="button" id="clear-selection"
+          class="ml-auto hidden rounded-lg px-2.5 py-1 text-xs font-medium text-slate-500 hover:text-slate-900">
+    Clear selection
+  </button>
+</div>
+
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
   <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-slate-200 text-sm">
       <thead class="bg-slate-50">
         <tr>
+          <th class="px-4 py-2.5 text-left">
+            <input type="checkbox" id="check-all" aria-label="Select all orders on this page"
+                   class="h-4 w-4 cursor-pointer rounded border-slate-300 text-slate-900 focus:ring-slate-900">
+          </th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Ref No</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
@@ -79,7 +99,15 @@
       </thead>
       <tbody class="divide-y divide-slate-100">
         {% for order in orders %}
-          <tr class="hover:bg-slate-50">
+          <tr class="transition-colors hover:bg-slate-50" data-order-row="{{ order.pk }}">
+            <td class="px-4 py-3">
+              {% if order.status != 'cancelled' %}
+                <input type="checkbox" value="{{ order.pk }}" aria-label="Select order {{ order.reference_no }}"
+                       class="js-order-check h-4 w-4 cursor-pointer rounded border-slate-300 text-slate-900 focus:ring-slate-900">
+              {% else %}
+                <span class="text-slate-300" title="Cancelled orders can't be production-checked">—</span>
+              {% endif %}
+            </td>
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
               <a href="{% url 'core:order_detail' order.pk %}" class="hover:underline">{{ order.reference_no }}</a>
             </td>
@@ -107,7 +135,7 @@
           </tr>
         {% empty %}
           <tr>
-            <td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
+            <td colspan="8" class="px-4 py-12 text-center text-sm text-slate-500">
               {% if is_filtered %}No quotations match these filters.{% else %}No quotations yet — <a href="{% url 'core:order_create' %}" class="font-medium text-slate-900 hover:underline">create the first one</a>.{% endif %}
             </td>
           </tr>
@@ -117,4 +145,348 @@
   </div>
 </div>
 
+<!-- ═══════════════════════ LIVE PRODUCTION CHECK ═══════════════════════ -->
+<section id="production-check" class="mt-8" aria-live="polite">
+  <div class="mb-4 flex items-center gap-2">
+    <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-slate-900">Production Check</h2>
+    <span id="pc-spinner" class="hidden items-center gap-1.5 text-xs font-medium text-slate-500">
+      <svg class="h-4 w-4 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      Calculating…
+    </span>
+  </div>
+
+  <!-- Summary tiles -->
+  <div id="pc-summary" class="mb-5 hidden grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected orders</p>
+      <p id="sum-orders" class="mt-1 text-2xl font-semibold text-slate-900">0</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total products</p>
+      <p id="sum-products" class="mt-1 text-2xl font-semibold text-slate-900">0</p>
+    </div>
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Ready to dispatch</p>
+      <p id="sum-ready" class="mt-1 text-2xl font-semibold text-emerald-700">0</p>
+    </div>
+    <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Need production</p>
+      <p id="sum-production" class="mt-1 text-2xl font-semibold text-amber-700">0</p>
+    </div>
+    <div class="col-span-2 rounded-xl border border-rose-200 bg-rose-50/60 p-4 shadow-sm sm:col-span-3 lg:col-span-1">
+      <p class="text-xs font-semibold uppercase tracking-wide text-rose-700">Total shortage</p>
+      <p id="sum-shortage" class="mt-1 text-2xl font-semibold text-rose-700">0</p>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="pc-empty" class="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-16 text-center">
+    <span class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200">
+      <svg class="h-7 w-7 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+    </span>
+    <p class="mt-4 text-base font-semibold text-slate-800">No orders selected</p>
+    <p class="mt-1 text-sm text-slate-500">
+      Please select one or more orders from the Order Book to perform a Production Check.
+    </p>
+  </div>
+
+  <!-- Results (hidden until we have data) -->
+  <div id="pc-results" class="hidden space-y-6">
+
+    <!-- Sufficient -->
+    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex items-center gap-2 border-b border-slate-200 bg-emerald-50/70 px-4 py-3">
+        <span class="text-lg">✅</span>
+        <h3 class="text-sm font-semibold text-emerald-800">Sufficient Products</h3>
+        <span id="ready-badge" class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">0</span>
+        <span class="ml-2 text-xs text-emerald-700/80">Enough stock — ready to dispatch</span>
+      </div>
+      <div class="max-h-[26rem] overflow-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="sticky top-0 z-10 bg-slate-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Code</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Required</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Available</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Remaining</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+            </tr>
+          </thead>
+          <tbody id="ready-body" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+      <div id="ready-none" class="hidden px-4 py-8 text-center text-sm text-slate-500">
+        No products are fully covered by current stock for this selection.
+      </div>
+    </div>
+
+    <!-- Insufficient -->
+    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex items-center gap-2 border-b border-slate-200 bg-amber-50/70 px-4 py-3">
+        <span class="text-lg">⚠️</span>
+        <h3 class="text-sm font-semibold text-amber-800">Insufficient Products</h3>
+        <span id="prod-badge" class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">0</span>
+        <span class="ml-2 text-xs text-amber-700/80">Production required before dispatch</span>
+      </div>
+      <div class="max-h-[26rem] overflow-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="sticky top-0 z-10 bg-slate-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Code</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Required</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Available</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Shortage</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Produce</th>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+            </tr>
+          </thead>
+          <tbody id="prod-body" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+      <div id="prod-none" class="hidden px-4 py-8 text-center text-sm text-slate-500">
+        🎉 Every selected product is covered — nothing needs producing.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Error state -->
+  <div id="pc-error" class="hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
+    Something went wrong while calculating the production check. Please try again.
+  </div>
+</section>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const DATA_URL = "{% url 'core:order_production_check_data' %}";
+    const CSRF = "{{ csrf_token }}";
+
+    const checkAll   = document.getElementById('check-all');
+    const boxes      = Array.from(document.querySelectorAll('.js-order-check'));
+    const countPill  = document.getElementById('selection-count');
+    const clearBtn   = document.getElementById('clear-selection');
+
+    const spinner    = document.getElementById('pc-spinner');
+    const summary    = document.getElementById('pc-summary');
+    const emptyState = document.getElementById('pc-empty');
+    const results    = document.getElementById('pc-results');
+    const errorState = document.getElementById('pc-error');
+
+    const sumOrders    = document.getElementById('sum-orders');
+    const sumProducts  = document.getElementById('sum-products');
+    const sumReady     = document.getElementById('sum-ready');
+    const sumProduction= document.getElementById('sum-production');
+    const sumShortage  = document.getElementById('sum-shortage');
+
+    const readyBody  = document.getElementById('ready-body');
+    const readyNone  = document.getElementById('ready-none');
+    const readyBadge = document.getElementById('ready-badge');
+    const prodBody   = document.getElementById('prod-body');
+    const prodNone   = document.getElementById('prod-none');
+    const prodBadge  = document.getElementById('prod-badge');
+
+    let debounceTimer = null;
+    let requestToken = 0;   // guards against out-of-order responses
+
+    function show(el)  { el.classList.remove('hidden'); }
+    function hide(el)  { el.classList.add('hidden'); }
+    function showGrid(el) { el.classList.remove('hidden'); el.classList.add('grid'); }
+    function hideGrid(el) { el.classList.add('hidden'); el.classList.remove('grid'); }
+
+    function selectedIds() {
+      return boxes.filter(b => b.checked).map(b => b.value);
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s == null ? '' : String(s);
+      return d.innerHTML;
+    }
+
+    function productCell(row) {
+      const size = row.size
+        ? '<span class="ml-1 text-xs text-slate-400">' + esc(row.size) + '</span>' : '';
+      return '<a href="/products/' + row.product_id + '/stock-ledger/" class="font-medium text-slate-900 hover:underline">'
+             + esc(row.name) + '</a>' + size;
+    }
+
+    function refreshSelectionUI() {
+      const ids = selectedIds();
+      if (ids.length) {
+        countPill.textContent = ids.length + (ids.length === 1 ? ' order selected' : ' orders selected');
+        show(countPill);
+        show(clearBtn);
+      } else {
+        hide(countPill);
+        hide(clearBtn);
+      }
+      // Header checkbox reflects the collective state.
+      if (boxes.length) {
+        const checked = ids.length;
+        checkAll.checked = checked === boxes.length;
+        checkAll.indeterminate = checked > 0 && checked < boxes.length;
+      }
+    }
+
+    function renderEmpty() {
+      hideGrid(summary);
+      hide(results);
+      hide(errorState);
+      show(emptyState);
+    }
+
+    function renderError() {
+      hide(spinner);
+      hideGrid(summary);
+      hide(results);
+      hide(emptyState);
+      show(errorState);
+    }
+
+    function render(data) {
+      hide(emptyState);
+      hide(errorState);
+      showGrid(summary);
+      show(results);
+
+      const s = data.summary;
+      sumOrders.textContent     = s.selected_orders;
+      sumProducts.textContent   = s.total_products;
+      sumReady.textContent      = s.ready_count;
+      sumProduction.textContent = s.production_count;
+      sumShortage.textContent   = s.total_shortage;
+
+      // ── Sufficient ──
+      readyBadge.textContent = data.sufficient.length;
+      readyBody.innerHTML = '';
+      if (data.sufficient.length) {
+        hide(readyNone);
+        data.sufficient.forEach(function (r) {
+          const remainClass = r.low_stock ? 'text-amber-600' : 'text-emerald-700';
+          const dot = r.low_stock
+            ? '<span class="inline-block h-2 w-2 rounded-full bg-amber-400 align-middle"></span>'
+            : '<span class="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle"></span>';
+          const badge = r.low_stock
+            ? '<span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Ready · low stock</span>'
+            : '<span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Ready to dispatch</span>';
+          const tr = document.createElement('tr');
+          tr.className = 'transition-colors hover:bg-slate-50';
+          tr.innerHTML =
+            '<td class="px-4 py-3">' + dot + ' ' + productCell(r) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-500">' + esc(r.code) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">' + esc(r.required) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">' + esc(r.available) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right font-semibold ' + remainClass + '">' + esc(r.remaining) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3">' + badge + '</td>';
+          readyBody.appendChild(tr);
+        });
+      } else {
+        show(readyNone);
+      }
+
+      // ── Insufficient ──
+      prodBadge.textContent = data.insufficient.length;
+      prodBody.innerHTML = '';
+      if (data.insufficient.length) {
+        hide(prodNone);
+        data.insufficient.forEach(function (r) {
+          const dot = r.out_of_stock
+            ? '<span class="inline-block h-2 w-2 rounded-full bg-rose-500 align-middle"></span>'
+            : '<span class="inline-block h-2 w-2 rounded-full bg-amber-400 align-middle"></span>';
+          const availClass = r.out_of_stock ? 'text-rose-600 font-medium' : 'text-slate-900';
+          const badge = r.out_of_stock
+            ? '<span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Production needed · out of stock</span>'
+            : '<span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Production needed</span>';
+          const tr = document.createElement('tr');
+          tr.className = 'border-l-4 border-amber-400 transition-colors hover:bg-slate-50' +
+                         (r.out_of_stock ? ' !border-rose-400' : '');
+          tr.innerHTML =
+            '<td class="px-4 py-3">' + dot + ' ' + productCell(r) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-500">' + esc(r.code) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">' + esc(r.required) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right ' + availClass + '">' + esc(r.available) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-rose-700">−' + esc(r.shortage) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-amber-700">' + esc(r.production_required) + '</td>' +
+            '<td class="whitespace-nowrap px-4 py-3">' + badge + '</td>';
+          prodBody.appendChild(tr);
+        });
+      } else {
+        show(prodNone);
+      }
+    }
+
+    function runCheck() {
+      const ids = selectedIds();
+      if (!ids.length) {
+        hide(spinner);
+        renderEmpty();
+        return;
+      }
+
+      show(spinner);
+      const token = ++requestToken;
+
+      fetch(DATA_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ order_ids: ids }),
+      })
+        .then(function (resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.json();
+        })
+        .then(function (data) {
+          if (token !== requestToken) return;   // a newer request superseded this
+          hide(spinner);
+          render(data);
+        })
+        .catch(function () {
+          if (token !== requestToken) return;
+          hide(spinner);
+          renderError();
+        });
+    }
+
+    function scheduleCheck() {
+      refreshSelectionUI();
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runCheck, 180);
+    }
+
+    boxes.forEach(function (b) {
+      b.addEventListener('change', scheduleCheck);
+    });
+
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        boxes.forEach(function (b) { b.checked = checkAll.checked; });
+        scheduleCheck();
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        boxes.forEach(function (b) { b.checked = false; });
+        scheduleCheck();
+      });
+    }
+
+    // Initial paint.
+    refreshSelectionUI();
+    renderEmpty();
+  })();
+</script>
 {% endblock %}

@@ -9229,6 +9229,123 @@ def order_production_check(request):
     )
 
 
+@login_required
+@require_POST
+def order_production_check_data(request):
+    """AJAX endpoint behind the Order Book's live production check.
+
+    Takes the set of order ids the operator has ticked and answers one
+    question per product: can the shelf cover everything those orders ask
+    for? Nothing outside the selection is considered — an unticked order
+    contributes zero. Cancelled orders are dropped even if selected, since a
+    cancelled quotation isn't owed any stock.
+
+    Request body: JSON ``{"order_ids": [1, 2, ...]}``. An empty selection is
+    a valid request and returns empty result sets so the front-end can show
+    its empty state without special-casing.
+
+    Response: two product buckets — ``sufficient`` (shelf covers the whole
+    requirement) and ``insufficient`` (production needed) — plus a ``summary``
+    block for the dashboard tiles. All quantities are pre-formatted strings
+    (3 dp, trailing zeros trimmed) so the client just prints them.
+    """
+    try:
+        payload = json.loads(request.body or "{}")
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "Malformed request."}, status=400)
+
+    raw_ids = payload.get("order_ids", [])
+    if not isinstance(raw_ids, list):
+        return JsonResponse({"error": "order_ids must be a list."}, status=400)
+
+    order_ids = []
+    for value in raw_ids:
+        try:
+            order_ids.append(int(value))
+        except (ValueError, TypeError):
+            continue
+
+    def fmt(quantity):
+        """Trim a Decimal to a clean, human string: 12.500 → '12.5', 12 → '12'."""
+        q = (quantity or Decimal("0")).quantize(Decimal("0.001"))
+        text = format(q, "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text or "0"
+
+    # Which selected orders actually count (exist and aren't cancelled). We
+    # confirm the id set separately from the aggregate so the "selected
+    # orders" tile reflects real, countable orders rather than ticked ids.
+    valid_ids = list(
+        Order.objects.filter(pk__in=order_ids)
+        .exclude(status=Order.Status.CANCELLED)
+        .values_list("pk", flat=True)
+    )
+
+    sufficient = []
+    insufficient = []
+    total_shortage = Decimal("0.000")
+
+    if valid_ids:
+        ordered = (
+            OrderItem.objects.filter(order_id__in=valid_ids)
+            .values("product_id", "product__name", "product__size", "product__qty")
+            .annotate(required=Coalesce(
+                Sum("qty"),
+                Decimal("0.000"),
+                output_field=DecimalField(max_digits=12, decimal_places=3),
+            ))
+            .order_by("product__name", "product__size")
+        )
+
+        for row in ordered:
+            available = row["product__qty"] or Decimal("0.000")
+            required = row["required"] or Decimal("0.000")
+            shortage = required - available
+
+            base = {
+                "product_id": row["product_id"],
+                "name": row["product__name"],
+                "size": row["product__size"] or "",
+                "code": f"PRD-{row['product_id']:04d}",
+                "required": fmt(required),
+                "available": fmt(available),
+            }
+
+            if shortage > 0:
+                total_shortage += shortage
+                insufficient.append({
+                    **base,
+                    "shortage": fmt(shortage),
+                    "production_required": fmt(shortage),
+                    # Low-stock flag lets the client paint an amber (rather
+                    # than red) indicator when there's some stock but not
+                    # enough — matches LOW_STOCK_THRESHOLD used elsewhere.
+                    "low_stock": bool(0 < available <= settings.LOW_STOCK_THRESHOLD),
+                    "out_of_stock": bool(available <= 0),
+                })
+            else:
+                sufficient.append({
+                    **base,
+                    "remaining": fmt(available - required),
+                    "low_stock": bool(0 < (available - required) <= settings.LOW_STOCK_THRESHOLD),
+                })
+
+    total_products = len(sufficient) + len(insufficient)
+
+    return JsonResponse({
+        "sufficient": sufficient,
+        "insufficient": insufficient,
+        "summary": {
+            "selected_orders": len(valid_ids),
+            "total_products": total_products,
+            "ready_count": len(sufficient),
+            "production_count": len(insufficient),
+            "total_shortage": fmt(total_shortage),
+        },
+    })
+
+
 # =========================================================== daily machine run
 # The floor log: which machines ran today, who operated them, what they
 # were making. Plus a single "other works" row per day for driver,

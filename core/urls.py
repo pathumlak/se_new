@@ -373,6 +373,12 @@ urlpatterns = [
         views.order_production_check,
         name="order_production_check",
     ),
+    # AJAX: live production check for the orders ticked in the Order Book.
+    path(
+        "orders/production-check/data/",
+        views.order_production_check_data,
+        name="order_production_check_data",
+    ),
     path("orders/<int:pk>/", views.order_detail, name="order_detail"),
     path("orders/<int:pk>/edit/", views.order_edit, name="order_edit"),
     path("orders/<int:pk>/delete/", views.order_delete, name="order_delete"),
