@@ -403,21 +403,27 @@
   <div class="drawer-stat strip-emerald">
     <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Senovka Acc</p>
     <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
-    <p class="mt-1.5 text-[11px] text-slate-400">Banked from bill payments only.</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">
+      {% if month_filter.is_all_time %}All time · bill payments only.{% else %}{{ month_filter.label }} · resets each month.{% endif %}
+    </p>
   </div>
 
   <div class="drawer-stat strip-violet">
     <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Dinusha Acc</p>
     <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ dinusha_banked|floatformat:2|intcomma }}</p>
-    <p class="mt-1.5 text-[11px] text-slate-400">Banked from bill payments only.</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">
+      {% if month_filter.is_all_time %}All time · bill payments only.{% else %}{{ month_filter.label }} · resets each month.{% endif %}
+    </p>
   </div>
 </div>
 
 <!-- Info callout -->
 <div class="info-callout mb-5">
-  The two account totals cover cash banked as part of a bill payment. A transfer recorded on this page
-  comes off the drawer and is named in the log below, but isn't counted in those totals — the drawer
-  has nowhere to record which account it went to.
+  The two account totals track how much was transferred to each account
+  {% if month_filter.is_all_time %}across all time{% else %}in {{ month_filter.label }}{% endif %}
+  from bill payments. They reset to zero at the start of each month — pick another month above to see its total.
+  A transfer recorded on this page comes off the drawer and is named in the log below, but isn't counted in
+  those totals — the drawer has nowhere to record which account it went to.
 </div>
 
 <!-- ═══════════════ MONTH FILTER ═══════════════ -->

@@ -5366,14 +5366,30 @@ def cheque_list(request):
 # Money comes in only by saving a bill; this page is where it leaves.
 
 
-def _account_banked(account):
-    """What bill payments have put into one account.
+def _account_banked(account, month_filter=None):
+    """What bill payments have put into one account, for one month.
 
     Read off CashTransfer, which is the only place an account is recorded.
     Manual transfers on this page are CashDrawer rows with no account column,
     so they lower the drawer without ever reaching this figure.
+
+    Scoped to `month_filter` when one is given (and not all-time): the two
+    account tiles are a *monthly* tally that starts fresh each month, so a new
+    month reads zero until transfers land in it — no stored counter to reset,
+    the sum simply covers a different window. transferred_at is a datetime, so
+    the window is [first of month, first of next month) rather than the
+    inclusive DateField bound MonthFilter.apply uses.
     """
-    return CashTransfer.objects.filter(to_account=account).aggregate(
+    qs = CashTransfer.objects.filter(to_account=account)
+    if month_filter is not None and not month_filter.is_all_time:
+        # __date compares the local calendar date of the aware datetime against
+        # a plain date — no naive-datetime timezone warning, and the inclusive
+        # end bound matches how MonthFilter frames a month elsewhere.
+        qs = qs.filter(
+            transferred_at__date__gte=month_filter.start,
+            transferred_at__date__lte=month_filter.end,
+        )
+    return qs.aggregate(
         total=Coalesce(Sum("amount"), ZERO, output_field=MONEY)
     )["total"]
 
@@ -5484,8 +5500,13 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
             "edit_entry": edit_entry,
             # The drawer as it stands now, whatever the filter shows.
             "balance": balance,
-            "senovka_banked": _account_banked(CashTransfer.Account.SENOVKA),
-            "dinusha_banked": _account_banked(CashTransfer.Account.DINUSHA),
+            # Scoped to the viewed month so the account tiles reset each month.
+            "senovka_banked": _account_banked(
+                CashTransfer.Account.SENOVKA, month_filter
+            ),
+            "dinusha_banked": _account_banked(
+                CashTransfer.Account.DINUSHA, month_filter
+            ),
             "page_obj": page_obj,
             "rows": page_obj.object_list,
             "opening": opening,
