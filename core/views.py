@@ -5181,10 +5181,15 @@ def cheque_list_excel(request):
         status = ""
     customer_id = request.GET.get("customer", "").strip()
     selected_customer = int(customer_id) if customer_id.isdigit() else None
+    sort = request.GET.get("sort", "").strip()
+    if sort not in CHEQUE_SORTS:
+        sort = CHEQUE_SORT_DEFAULT
+    month_filter = get_month_filter(request)
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
-    cheques = Cheque.objects.select_related("customer")
+    cheques = Cheque.objects.select_related("customer", "bill", "payment")
+    cheques = month_filter.apply(cheques, field="received_date")
     if status:
         cheques = cheques.filter(status=status)
     if selected_customer:
@@ -5193,6 +5198,7 @@ def cheque_list_excel(request):
         cheques = cheques.filter(maturity_date__gte=from_date)
     if to_date:
         cheques = cheques.filter(maturity_date__lte=to_date)
+    cheques = cheques.order_by(*CHEQUE_SORTS[sort])
 
     wb = Workbook()
     ws = wb.active
@@ -5205,10 +5211,10 @@ def cheque_list_excel(request):
 
     ws["A1"] = "Senovka Plastics — Cheques"
     ws["A1"].font = Font(bold=True, size=14)
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:J1")
 
     # Filter summary
-    filter_bits = []
+    filter_bits = [f"Received: {month_filter.label}"]
     if status:
         label = dict(Cheque.Status.choices).get(status, status.title())
         filter_bits.append(f"Status: {label}")
@@ -5228,10 +5234,10 @@ def cheque_list_excel(request):
     ws["G2"] = "Generated"
     ws["G2"].font = Font(bold=True)
     ws["H2"] = timezone.localtime().strftime("%d %b %Y %H:%M")
-    ws.merge_cells("H2:I2")
+    ws.merge_cells("H2:J2")
 
     HEADERS = [
-        "No", "Cheque No", "Customer", "Bank", "Branch",
+        "No", "Cheque No", "Bill No", "Customer", "Bank", "Branch",
         "Amount", "Received", "Maturity", "Status",
     ]
     header_row = 4
@@ -5244,28 +5250,32 @@ def cheque_list_excel(request):
     row = header_row + 1
     total = Decimal("0.00")
     for i, cheque in enumerate(cheques, start=1):
+        bill_ref = _cheque_bill_ref(cheque)
         ws.cell(row=row, column=1, value=i).alignment = center
         ws.cell(row=row, column=2, value=cheque.cheque_no)
-        ws.cell(row=row, column=3, value=cheque.customer.name)
-        ws.cell(row=row, column=4, value=cheque.bank_name)
-        ws.cell(row=row, column=5, value=cheque.branch or "")
-        c = ws.cell(row=row, column=6, value=float(cheque.amount))
+        ws.cell(row=row, column=3,
+                value=f"#{bill_ref}" if bill_ref else "—").alignment = center
+        ws.cell(row=row, column=4, value=cheque.customer.name)
+        ws.cell(row=row, column=5, value=cheque.bank_name)
+        ws.cell(row=row, column=6, value=cheque.branch or "")
+        c = ws.cell(row=row, column=7, value=float(cheque.amount))
         c.number_format = "#,##0.00"; c.alignment = right
-        ws.cell(row=row, column=7, value=cheque.received_date.strftime("%Y-%m-%d"))
-        ws.cell(row=row, column=8, value=cheque.maturity_date.strftime("%Y-%m-%d"))
-        ws.cell(row=row, column=9, value=cheque.get_status_display()).alignment = center
+        ws.cell(row=row, column=8, value=cheque.received_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=9, value=cheque.maturity_date.strftime("%Y-%m-%d"))
+        ws.cell(row=row, column=10, value=cheque.get_status_display()).alignment = center
         total += cheque.amount
         row += 1
 
     # Total
-    ws.cell(row=row, column=5, value="Total").font = Font(bold=True)
-    ws.cell(row=row, column=5).alignment = right
-    c = ws.cell(row=row, column=6, value=float(total))
+    ws.cell(row=row, column=6, value="Total").font = Font(bold=True)
+    ws.cell(row=row, column=6).alignment = right
+    c = ws.cell(row=row, column=7, value=float(total))
     c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
 
     ws.freeze_panes = f"A{header_row + 1}"
 
-    widths = {"A": 5, "B": 14, "C": 26, "D": 20, "E": 16, "F": 14, "G": 12, "H": 12, "I": 12}
+    widths = {"A": 5, "B": 14, "C": 10, "D": 26, "E": 20, "F": 16,
+              "G": 14, "H": 12, "I": 12, "J": 12}
     for letter, width in widths.items():
         ws.column_dimensions[letter].width = width
 
@@ -5285,6 +5295,31 @@ def cheque_list_excel(request):
     return response
 
 
+# How the cheque list may be ordered. Grouping is always by (received date,
+# customer); the sort only decides which order those groups come out in. Each
+# tuple is the ORM ordering that keeps same-(received_date, customer) rows
+# adjacent so a single linear pass can group them.
+CHEQUE_SORTS = {
+    "received_desc": ["-received_date", "customer__name", "maturity_date", "id"],
+    "received_asc": ["received_date", "customer__name", "maturity_date", "id"],
+    "customer": ["customer__name", "-received_date", "maturity_date", "id"],
+}
+CHEQUE_SORT_DEFAULT = "received_desc"
+
+
+def _cheque_bill_ref(cheque):
+    """The bill this cheque paid, however it got attached.
+
+    A cheque taken at bill-save time carries ``bill`` directly; one that
+    arrived later at settlement may only reach the bill through its payment.
+    Prefer the direct link, fall back to the payment's, and return ``None``
+    when the cheque isn't tied to a bill at all (a detached top-up)."""
+    if cheque.bill_id:
+        return cheque.bill_id
+    payment = cheque.payment
+    return payment.bill_id if payment and payment.bill_id else None
+
+
 def cheque_list(request):
     today = timezone.localdate()
     horizon = today + timedelta(days=CHEQUE_WARNING_DAYS)
@@ -5296,10 +5331,20 @@ def cheque_list(request):
     customer_id = request.GET.get("customer", "").strip()
     selected_customer = int(customer_id) if customer_id.isdigit() else None
 
+    sort = request.GET.get("sort", "").strip()
+    if sort not in CHEQUE_SORTS:
+        sort = CHEQUE_SORT_DEFAULT
+
+    # Scope defaults to the current month's *received* cheques. The month is
+    # matched on received_date (not maturity), which is what the grouping is
+    # keyed on too. `?month=all` opens it up to every month.
+    month_filter = get_month_filter(request)
+
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
-    cheques = Cheque.objects.select_related("customer")
+    cheques = Cheque.objects.select_related("customer", "bill", "payment")
+    cheques = month_filter.apply(cheques, field="received_date")
     if status:
         cheques = cheques.filter(status=status)
     if selected_customer:
@@ -5309,6 +5354,8 @@ def cheque_list(request):
     if to_date:
         cheques = cheques.filter(maturity_date__lte=to_date)
 
+    cheques = cheques.order_by(*CHEQUE_SORTS[sort])
+
     # Counted off the filtered set rather than the page: this banner warns the
     # operator what is waiting on them across the whole filter, and a count
     # that only saw page 1 would quietly under-report it.
@@ -5316,27 +5363,56 @@ def cheque_list(request):
         status=Cheque.Status.PENDING, maturity_date__lte=horizon
     ).count()
 
-    page_obj = _paginate(request, cheques)
-    for cheque in page_obj:
-        # Maturing on us and still not banked: the row the operator is meant
-        # to act on today. Anything already overdue counts too.
+    # Group by (received date, customer). The queryset ordering above keeps
+    # every such run contiguous, so one linear pass builds the groups. A group
+    # holds cheques with differing maturity dates side by side — each keeps its
+    # own — which is exactly the point: one customer's same-day drop-off reads
+    # as a single batch.
+    groups = []
+    current = None
+    for cheque in cheques:
         cheque.is_due_soon = (
             cheque.status == Cheque.Status.PENDING and cheque.maturity_date <= horizon
         )
+        cheque.bill_ref = _cheque_bill_ref(cheque)
+
+        key = (cheque.received_date, cheque.customer_id)
+        if current is None or current["key"] != key:
+            current = {
+                "key": key,
+                "received_date": cheque.received_date,
+                "customer": cheque.customer,
+                "cheques": [],
+                "total": Decimal("0.00"),
+                "due_count": 0,
+            }
+            groups.append(current)
+        current["cheques"].append(cheque)
+        current["total"] += cheque.amount
+        if cheque.is_due_soon:
+            current["due_count"] += 1
+
+    # Paginate whole groups, never a half-group split across a page boundary.
+    page_obj = _paginate(request, groups)
 
     return render(
         request,
         "core/cheque_list.html",
         {
             "page_obj": page_obj,
-            "cheques": page_obj.object_list,
+            "groups": page_obj.object_list,
             "customers": Customer.objects.filter(cheques__isnull=False).distinct(),
             "status": status,
             "selected_customer": selected_customer,
+            "sort": sort,
+            "month_filter": month_filter,
             "from_date": from_date,
             "to_date": to_date,
             "statuses": Cheque.Status.choices,
-            "is_filtered": bool(status or selected_customer or from_date or to_date),
+            "is_filtered": bool(
+                status or selected_customer or from_date or to_date
+                or not month_filter.is_all_time or sort != CHEQUE_SORT_DEFAULT
+            ),
             "due_count": due_count,
             "warning_days": CHEQUE_WARNING_DAYS,
             "today": today,
