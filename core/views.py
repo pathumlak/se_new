@@ -1498,6 +1498,102 @@ def _stock_ledger_rows(product):
     }
 
 
+def _ledger_period(request):
+    """Resolve the ledger's display/stat window from the query string.
+
+    Three shapes, in precedence order:
+      • an explicit date range — ``?from_date=`` / ``?to_date=`` (either bound
+        optional, so "from March onward" or "up to June" both work);
+      • a single month — ``?month=YYYY-MM`` (the default is the current month);
+      • all time — ``?month=all``.
+
+    `start` / `end` may each be None, meaning unbounded on that side. Also
+    returns a heading `label`, a `mode` string, a `token` for filenames, and
+    the raw `MonthFilter` so the month picker still round-trips.
+    """
+    month_filter = get_month_filter(request)
+    from_date = _parse_date(request.GET.get("from_date"))
+    to_date = _parse_date(request.GET.get("to_date"))
+
+    # A range beats the month picker the moment either bound is supplied.
+    if from_date or to_date:
+        start, end = from_date, to_date
+        if start and end and start > end:
+            start, end = end, start  # tolerate reversed inputs
+        if start and end:
+            label = f"{start:%d %b %Y} – {end:%d %b %Y}"
+            token = f"{start:%Y-%m-%d}_to_{end:%Y-%m-%d}"
+        elif start:
+            label = f"From {start:%d %b %Y}"
+            token = f"from_{start:%Y-%m-%d}"
+        else:
+            label = f"Up to {end:%d %b %Y}"
+            token = f"upto_{end:%Y-%m-%d}"
+        return {
+            "start": start, "end": end, "label": label, "mode": "range",
+            "is_all_time": False, "month_filter": month_filter, "token": token,
+            "from_date": start, "to_date": end,
+        }
+
+    if month_filter.is_all_time:
+        return {
+            "start": None, "end": None, "label": "All time", "mode": "all",
+            "is_all_time": True, "month_filter": month_filter, "token": "all",
+            "from_date": None, "to_date": None,
+        }
+
+    return {
+        "start": month_filter.start, "end": month_filter.end,
+        "label": month_filter.label, "mode": "month",
+        "is_all_time": False, "month_filter": month_filter,
+        "token": month_filter.param,
+        "from_date": None, "to_date": None,
+    }
+
+
+def _ledger_period_slice(rows, start, end):
+    """Rows within [start, end] plus period-scoped opening/produced/sold/closing.
+
+    `rows` is the full ledger (its first entry is the synthetic opening row),
+    each carrying a running balance already walked over the *whole* history.
+    Either bound may be None for open-ended.
+
+    The window's opening is the balance as it stood *just before* it — the last
+    row dated before `start` — so a month's figures read as that month's own
+    movement laid over the balance carried in from before it. Produced and sold
+    sum only the rows inside the window; closing is the balance the last such
+    row left behind (or the opening, when the window is empty). The invariant
+    opening + produced − sold == closing holds because every row moves the
+    balance by exactly +production or −sales.
+    """
+    prior_balance = None
+    in_period = []
+    for r in rows:
+        d = r["date"]
+        if start is not None and d < start:
+            prior_balance = r["balance"]
+            continue
+        if end is not None and d > end:
+            continue
+        in_period.append(r)
+
+    if prior_balance is not None:
+        opening = prior_balance
+    else:
+        opening = rows[0]["balance"] if rows else ZERO_QTY
+
+    produced = sum((r["production"] or ZERO_QTY for r in in_period), ZERO_QTY)
+    sold = sum((r["sales"] or ZERO_QTY for r in in_period), ZERO_QTY)
+    closing = in_period[-1]["balance"] if in_period else opening
+
+    return in_period, {
+        "opening": opening,
+        "total_produced": produced,
+        "total_sold": sold,
+        "closing_balance": closing,
+    }
+
+
 @require_POST
 @login_required
 def stock_adjust_create(request, pk):
@@ -1622,19 +1718,18 @@ def stock_ledger(request, pk):
     product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
 
     ledger = _stock_ledger_rows(product)
-    rows = ledger["rows"]
 
-    month_filter = get_month_filter(request)
-    if not month_filter.is_all_time:
-        rows = [
-            r for r in rows
-            if month_filter.start <= r["date"] <= month_filter.end
-        ]
+    # The window (a month, a custom date range, or all time) scopes both the
+    # rows shown *and* the opening/produced/sold/closing figures above them —
+    # so the cards read "this month's movement", not the whole history's.
+    period = _ledger_period(request)
+    rows, stats = _ledger_period_slice(ledger["rows"], period["start"], period["end"])
 
     page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
 
-    # If the ledger's closing figure disagrees with the shelf, say so — a
-    # mismatch means a stock move happened outside the app.
+    # If the ledger's all-time closing figure disagrees with the shelf, say so —
+    # a mismatch means a stock move happened outside the app. This check is
+    # deliberately period-independent: it is about the whole ledger vs reality.
     ledger_mismatch = ledger["closing_balance"] != product.qty
 
     return render(
@@ -1644,11 +1739,15 @@ def stock_ledger(request, pk):
             "product": product,
             "page_obj": page_obj,
             "rows": page_obj.object_list,
-            "month_filter": month_filter,
-            "opening_balance": ledger["opening"],
-            "total_produced": ledger["total_produced"],
-            "total_sold": ledger["total_sold"],
-            "closing_balance": ledger["closing_balance"],
+            "month_filter": period["month_filter"],
+            "period": period,
+            "from_date": period["from_date"],
+            "to_date": period["to_date"],
+            "opening_balance": stats["opening"],
+            "total_produced": stats["total_produced"],
+            "total_sold": stats["total_sold"],
+            "closing_balance": stats["closing_balance"],
+            "all_time_closing": ledger["closing_balance"],
             "current_stock": product.qty,
             "ledger_mismatch": ledger_mismatch,
             "low_stock_threshold": settings.LOW_STOCK_THRESHOLD,
@@ -1656,7 +1755,7 @@ def stock_ledger(request, pk):
     )
 
 
-def _write_stock_ledger_sheet(ws, product, month_filter):
+def _write_stock_ledger_sheet(ws, product, period):
     """Write one product's whole ledger onto worksheet `ws`.
 
     Extracted so the single-product export and the multi-product bulk export
@@ -1664,17 +1763,17 @@ def _write_stock_ledger_sheet(ws, product, month_filter):
     the moment either one grew a column, and a stock ledger that prints
     differently in the bulk file from the direct download is exactly the sort
     of thing that quietly loses a reader's trust.
+
+    `period` is the dict from `_ledger_period`: it scopes both the rows written
+    and the opening/produced/sold/closing summary, so the sheet matches the
+    on-screen figures for the same window.
     """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     ledger = _stock_ledger_rows(product)
-    rows = ledger["rows"]
-
-    if not month_filter.is_all_time:
-        rows = [
-            r for r in rows
-            if month_filter.start <= r["date"] <= month_filter.end
-        ]
+    rows, stats = _ledger_period_slice(
+        ledger["rows"], period["start"], period["end"]
+    )
 
     thin = Side(style="thin")
     border_all = Border(top=thin, bottom=thin, left=thin, right=thin)
@@ -1709,15 +1808,15 @@ def _write_stock_ledger_sheet(ws, product, month_filter):
     ws["A2"] = "Product:"; ws["B2"] = product.name; ws["B2"].font = bold
     ws["C2"] = "Size:"; ws["D2"] = product.size or "—"; ws["D2"].font = bold
     ws["E2"] = "Category:"; ws["F2"] = product.category.name; ws["F2"].font = bold
-    ws["G2"] = "Period:"; ws["H2"] = month_filter.label; ws["H2"].font = bold
+    ws["G2"] = "Period:"; ws["H2"] = period["label"]; ws["H2"].font = bold
 
     for cell_addr in ["A2", "C2", "E2", "G2"]:
         ws[cell_addr].font = Font(bold=True)
 
-    ws["A4"] = "Opening Balance"; ws["B4"] = float(ledger["opening"])
-    ws["C4"] = "Total Produced"; ws["D4"] = float(ledger["total_produced"])
-    ws["E4"] = "Total Sold"; ws["F4"] = float(ledger["total_sold"])
-    ws["G4"] = "Closing Balance"; ws["H4"] = float(ledger["closing_balance"])
+    ws["A4"] = "Opening Balance"; ws["B4"] = float(stats["opening"])
+    ws["C4"] = "Total Produced"; ws["D4"] = float(stats["total_produced"])
+    ws["E4"] = "Total Sold"; ws["F4"] = float(stats["total_sold"])
+    ws["G4"] = "Closing Balance"; ws["H4"] = float(stats["closing_balance"])
 
     ws["B4"].font = bold; ws["D4"].font = bold; ws["F4"].font = bold; ws["H4"].font = bold
     for cell_addr in ["A4", "C4", "E4", "G4"]:
@@ -1833,17 +1932,16 @@ def stock_ledger_excel(request, pk):
     from openpyxl import Workbook
 
     product = get_object_or_404(Product.objects.select_related("category"), pk=pk)
-    month_filter = get_month_filter(request)
+    period = _ledger_period(request)
 
     wb = Workbook()
     ws = wb.active
     ws.title = _sheet_title_for("Stock Ledger", set())
-    _write_stock_ledger_sheet(ws, product, month_filter)
+    _write_stock_ledger_sheet(ws, product, period)
 
     clean_name = product.name.replace(" ", "_").lower()
-    filename_param = month_filter.param if not month_filter.is_all_time else "all"
     return _xlsx_response(
-        wb, f"stock_ledger_{clean_name}_{filename_param}.xlsx"
+        wb, f"stock_ledger_{clean_name}_{period['token']}.xlsx"
     )
 
 
@@ -1901,7 +1999,7 @@ def stock_ledger_bulk_excel(request):
         messages.error(request, "None of the picked products exist.")
         return redirect("core:product_list")
 
-    month_filter = get_month_filter(request)
+    period = _ledger_period(request)
 
     wb = Workbook()
     # Workbook() ships with a blank default sheet; remove it so the first
@@ -1913,12 +2011,11 @@ def stock_ledger_bulk_excel(request):
     for product in products:
         title_base = f"{product.name} {product.size}".strip() or f"Product {product.pk}"
         ws = wb.create_sheet(title=_sheet_title_for(title_base, used_titles))
-        _write_stock_ledger_sheet(ws, product, month_filter)
+        _write_stock_ledger_sheet(ws, product, period)
 
     stamp = timezone.localdate().isoformat()
-    filename_param = month_filter.param if not month_filter.is_all_time else "all"
     return _xlsx_response(
-        wb, f"stock_ledgers_{len(products)}products_{filename_param}_{stamp}.xlsx"
+        wb, f"stock_ledgers_{len(products)}products_{period['token']}_{stamp}.xlsx"
     )
 
 

@@ -55,18 +55,27 @@
 {% endif %}
 
 <!-- Summary -->
+<div class="mb-2 flex items-center gap-2">
+  <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Figures for</span>
+  <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200">
+    {{ period.label }}
+  </span>
+</div>
 <div class="mb-5 grid gap-3 sm:grid-cols-4">
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Opening</p>
     <p class="mt-1 text-lg font-semibold text-slate-900">{{ opening_balance|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">Balance carried into the period</p>
   </div>
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total produced / received</p>
     <p class="mt-1 text-lg font-semibold text-emerald-700">{{ total_produced|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">In this period</p>
   </div>
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total sold</p>
     <p class="mt-1 text-lg font-semibold text-rose-700">{{ total_sold|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">In this period</p>
   </div>
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Closing</p>
@@ -76,27 +85,55 @@
               {% else %}text-slate-900{% endif %}">
       {{ closing_balance|floatformat:"-3" }}
     </p>
+    <p class="mt-0.5 text-[11px] text-slate-400">
+      {% if period.is_all_time %}Matches current shelf{% else %}Balance at period end{% endif %}
+    </p>
   </div>
 </div>
 
-<!-- Month filter -->
-<form method="get" class="no-print mb-4 flex items-center gap-2 text-sm">
-  <label for="month" class="text-slate-500">Month:</label>
-  <input type="month" id="month" name="month"
-         value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
-         class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
-                focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+<!-- Period filter: a single month, a custom date range, or all time. Providing
+     a From/To range overrides the month picker (the server gives it priority),
+     so leaving month blank while filling the dates does what you'd expect. -->
+<form method="get" class="no-print mb-4 flex flex-wrap items-end gap-2 text-sm">
+  <div>
+    <label for="month" class="mb-1 block text-xs font-medium text-slate-500">Month</label>
+    <input type="month" id="month" name="month"
+           value="{% if period.mode == 'month' %}{{ month_filter.param }}{% endif %}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <span class="pb-2 text-xs text-slate-400">or range</span>
+
+  <div>
+    <label for="from_date" class="mb-1 block text-xs font-medium text-slate-500">From</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1 block text-xs font-medium text-slate-500">To</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
   <button type="submit"
           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
     Apply
   </button>
+  <a href="{% url 'core:stock_ledger' product.pk %}"
+     class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+    This month
+  </a>
   <a href="?month=all"
      class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
     All time
   </a>
-  <span class="ml-2 text-xs text-slate-400">Showing: {{ month_filter.label }}</span>
-  
-  <a href="{% url 'core:stock_ledger_excel' product.pk %}{% if not month_filter.is_all_time %}?month={{ month_filter.param }}{% endif %}"
+  <span class="ml-1 text-xs text-slate-400">Showing: {{ period.label }}</span>
+
+  {# Excel link forwards exactly the window in view. #}
+  <a href="{% url 'core:stock_ledger_excel' product.pk %}{% if period.mode == 'month' %}?month={{ month_filter.param }}{% elif period.mode == 'all' %}?month=all{% elif period.mode == 'range' %}?{% if from_date %}from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if from_date and to_date %}&{% endif %}{% if to_date %}to_date={{ to_date|date:'Y-m-d' }}{% endif %}{% endif %}"
      class="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
     <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
