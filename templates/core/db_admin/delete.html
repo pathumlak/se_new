@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ singular }} · Database Console{% endblock %}
+{% block header %}Database Console{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-2xl">
+
+  <div class="mb-4">
+    <a href="{% url 'core:db_admin_table' model_name %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      Back to {{ model_name }}
+    </a>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <h2 class="text-lg font-semibold text-slate-900">Delete {{ singular }} #{{ pk }}</h2>
+    <p class="mt-1 truncate text-sm text-slate-500">{{ obj_label }}</p>
+
+    {% if blocked %}
+      <!-- Protected: cannot delete until the dependents are cleared first. -->
+      <div class="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p class="font-semibold">This row is in use and cannot be deleted yet.</p>
+        <p class="mt-1 text-amber-800">
+          Other records point at it with a protected link. Deleting it now would
+          break them, so the system is stopping you. Remove or reassign the rows
+          below <strong>first</strong>, then come back and delete this one.
+        </p>
+      </div>
+
+      <div class="mt-4">
+        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Clear these first ({{ protected|length }})
+        </p>
+        <ul class="divide-y divide-slate-100 rounded-lg border border-slate-200">
+          {% for p in protected %}
+            <li class="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div class="min-w-0">
+                <p class="truncate text-sm text-slate-800">{{ p.label }}</p>
+                <p class="text-xs text-slate-400">{{ p.model_label }}</p>
+              </div>
+              {% if p.linkable %}
+                <a href="{% url 'core:db_admin_row_delete' p.model_name p.pk %}"
+                   class="shrink-0 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">
+                  Handle this →
+                </a>
+              {% else %}
+                <span class="shrink-0 text-xs text-slate-400">not editable here</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+        <p class="mt-2 text-xs text-slate-500">
+          Work through them one by one (each may have its own dependents). Once this
+          list is empty, this page will let you delete.
+        </p>
+      </div>
+
+      <div class="mt-6 flex justify-end">
+        <a href="{% url 'core:db_admin_table' model_name %}"
+           class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Back to table
+        </a>
+      </div>
+
+    {% else %}
+      <!-- Free to delete. Show the full cascade so the blast radius is visible. -->
+      <div class="mt-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        This permanently deletes the row{% if cascade|length > 1 %} and everything below it{% endif %}. There is no undo.
+      </div>
+
+      {% if cascade|length > 1 %}
+        <div class="mt-4">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Will also delete ({{ cascade|length|add:"-1" }} linked row{{ cascade|length|add:"-1"|pluralize }})
+          </p>
+          <ul class="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+            {% for c in cascade %}
+              <li class="flex items-center gap-2 px-4 py-2 {% if c.is_self %}bg-slate-50{% endif %}">
+                {% if c.is_self %}
+                  <span class="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-rose-700">this</span>
+                {% else %}
+                  <span class="shrink-0 text-slate-300">└</span>
+                {% endif %}
+                <span class="min-w-0 truncate text-sm text-slate-700">{{ c.label }}</span>
+                <span class="ml-auto shrink-0 text-xs text-slate-400">{{ c.model_label }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <form method="post" class="mt-6 flex justify-end gap-2">
+        {% csrf_token %}
+        <a href="{% url 'core:db_admin_table' model_name %}"
+           class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</a>
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete permanently
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -399,4 +399,13 @@ urlpatterns = [
     path("machines/<int:pk>/delete/", views.machine_delete, name="machine_delete"),
     path("daily-run/", views.daily_run, name="daily_run"),
     path("daily-run/history/", views.daily_run_history, name="daily_run_history"),
+
+    # ---- Database console (super-admin only, password-gated). Raw CRUD on
+    # every application table; deletion is dependency-aware. See views.py.
+    path("db-console/", views.db_admin_unlock, name="db_admin_unlock"),
+    path("db-console/tables/", views.db_admin_index, name="db_admin_index"),
+    path("db-console/t/<str:model_name>/", views.db_admin_table, name="db_admin_table"),
+    path("db-console/t/<str:model_name>/new/", views.db_admin_row_create, name="db_admin_row_create"),
+    path("db-console/t/<str:model_name>/<str:pk>/edit/", views.db_admin_row_edit, name="db_admin_row_edit"),
+    path("db-console/t/<str:model_name>/<str:pk>/delete/", views.db_admin_row_delete, name="db_admin_row_delete"),
 ]

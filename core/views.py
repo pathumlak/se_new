@@ -1,3 +1,4 @@
+import hmac
 import json
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -9798,3 +9799,312 @@ def daily_run_history(request):
             "rows": page_obj.object_list,
         },
     )
+
+
+# ==========================================================================
+# Database console — super-admin only, behind a second password
+# ==========================================================================
+# A raw window on every application table: browse rows, create, edit, delete.
+# Two locks stand in front of it, because a slip here corrupts live books:
+#   1. @super_admin_required — a manager can't reach it at all.
+#   2. A session unlock keyed to a separate access password (settings
+#      DB_ADMIN_PASSWORD), so an unattended super-admin session can't wander
+#      in without re-authenticating to the console specifically.
+# Deletion never blindly cascades: it collects the dependency graph first and,
+# when a PROTECTed reference stands in the way, lists exactly what has to go
+# first instead of letting the database raise and 500 the page.
+
+from django.apps import apps as _django_apps
+from django.contrib.admin.utils import NestedObjects
+from django.forms import modelform_factory
+
+DB_ADMIN_SESSION_KEY = "db_console_unlocked"
+
+#: Reused on every generated field so the raw forms look like the rest of the app.
+_DB_INPUT_CLASS = (
+    "block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 "
+    "shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+)
+
+
+def _db_admin_password():
+    """The console's own access password. Overridable in settings; falls back
+    to the shipped default so a fresh deploy still has a known value to change."""
+    return getattr(settings, "DB_ADMIN_PASSWORD", "superaccess123456")
+
+
+def _db_admin_models():
+    """Every model in the `core` app, keyed by its lowercase name.
+
+    Only the application's own tables are exposed. Django's internal plumbing
+    (sessions, migrations, content types, permissions) is deliberately left
+    out: hand-editing those is how a running site gets bricked, and none of it
+    is business data anyone needs to touch here.
+    """
+    models = _django_apps.get_app_config("core").get_models()
+    return {
+        m._meta.model_name: m
+        for m in sorted(models, key=lambda m: str(m._meta.verbose_name_plural).lower())
+    }
+
+
+def _db_admin_unlocked(request):
+    return bool(request.session.get(DB_ADMIN_SESSION_KEY))
+
+
+def _db_admin_gate(request):
+    """Return a redirect response if the console may not be shown, else None.
+
+    Role is already enforced by the decorator; this is the second lock — the
+    per-session unlock. Kept as a plain guard call at the top of each view so
+    the unlock view itself can opt out of it.
+    """
+    if not _db_admin_unlocked(request):
+        return redirect("core:db_admin_unlock")
+    return None
+
+
+def _style_db_form(form):
+    """Give every generated widget the app's input styling, in place."""
+    for field in form.fields.values():
+        widget = field.widget
+        cls = widget.__class__.__name__
+        if cls in ("CheckboxInput", "CheckboxSelectMultiple", "RadioSelect", "FileInput", "ClearableFileInput"):
+            continue
+        existing = widget.attrs.get("class", "")
+        widget.attrs["class"] = f"{existing} {_DB_INPUT_CLASS}".strip()
+    return form
+
+
+@super_admin_required
+def db_admin_unlock(request):
+    """The console's front door: enter the access password to unlock it for
+    this session, or lock it back up."""
+    if request.method == "POST":
+        if request.POST.get("action") == "lock":
+            request.session.pop(DB_ADMIN_SESSION_KEY, None)
+            messages.success(request, "Database console locked.")
+            return redirect("core:profile")
+
+        # Constant-time compare so a wrong password can't be timed out char by char.
+        supplied = request.POST.get("password", "")
+        if hmac.compare_digest(supplied, _db_admin_password()):
+            request.session[DB_ADMIN_SESSION_KEY] = True
+            messages.success(request, "Database console unlocked for this session.")
+            return redirect("core:db_admin_index")
+        messages.error(request, "Wrong access password.")
+
+    return render(
+        request,
+        "core/db_admin/unlock.html",
+        {"unlocked": _db_admin_unlocked(request)},
+    )
+
+
+@super_admin_required
+def db_admin_index(request):
+    """The table directory: every application table with its row count."""
+    gate = _db_admin_gate(request)
+    if gate:
+        return gate
+
+    tables = []
+    for name, model in _db_admin_models().items():
+        tables.append({
+            "name": name,
+            "label": str(model._meta.verbose_name_plural).title(),
+            "count": model.objects.count(),
+            "field_count": len(model._meta.fields),
+        })
+    return render(request, "core/db_admin/index.html", {"tables": tables})
+
+
+@super_admin_required
+def db_admin_table(request, model_name):
+    """Row-by-row view of one table, newest first, every column shown."""
+    gate = _db_admin_gate(request)
+    if gate:
+        return gate
+
+    model = _db_admin_models().get(model_name)
+    if model is None:
+        messages.error(request, "No such table.")
+        return redirect("core:db_admin_index")
+
+    fields = list(model._meta.fields)
+    qs = model.objects.all().order_by("-pk")
+    page_obj = _paginate(request, qs, settings.PAGINATE_BY_REPORTS)
+
+    rows = []
+    for obj in page_obj.object_list:
+        cells = []
+        for f in fields:
+            # attname gives "customer_id" for an FK, so no extra query per cell.
+            value = getattr(obj, f.attname, None)
+            text = "" if value is None else str(value)
+            if len(text) > 60:
+                text = text[:57] + "…"
+            cells.append(text)
+        rows.append({"pk": obj.pk, "cells": cells, "label": str(obj)})
+
+    return render(request, "core/db_admin/table.html", {
+        "model_name": model_name,
+        "label": str(model._meta.verbose_name_plural).title(),
+        "singular": str(model._meta.verbose_name).title(),
+        "columns": [f.attname for f in fields],
+        "rows": rows,
+        "page_obj": page_obj,
+    })
+
+
+@super_admin_required
+def db_admin_row_create(request, model_name):
+    gate = _db_admin_gate(request)
+    if gate:
+        return gate
+
+    model = _db_admin_models().get(model_name)
+    if model is None:
+        messages.error(request, "No such table.")
+        return redirect("core:db_admin_index")
+
+    FormClass = modelform_factory(model, fields="__all__")
+    if request.method == "POST":
+        form = FormClass(request.POST)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    obj = form.save()
+                messages.success(request, f"Created {model._meta.verbose_name} #{obj.pk}.")
+                return redirect("core:db_admin_table", model_name=model_name)
+            except Exception as exc:  # noqa: BLE001 — surface any DB error, never 500
+                messages.error(request, f"Create failed: {exc}")
+        else:
+            messages.error(request, "Fix the highlighted fields.")
+    else:
+        form = FormClass()
+
+    _style_db_form(form)
+    return render(request, "core/db_admin/form.html", {
+        "model_name": model_name,
+        "singular": str(model._meta.verbose_name).title(),
+        "form": form,
+        "mode": "create",
+    })
+
+
+@super_admin_required
+def db_admin_row_edit(request, model_name, pk):
+    gate = _db_admin_gate(request)
+    if gate:
+        return gate
+
+    model = _db_admin_models().get(model_name)
+    if model is None:
+        messages.error(request, "No such table.")
+        return redirect("core:db_admin_index")
+
+    obj = get_object_or_404(model, pk=pk)
+    FormClass = modelform_factory(model, fields="__all__")
+    if request.method == "POST":
+        form = FormClass(request.POST, instance=obj)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    form.save()
+                messages.success(request, f"Saved {model._meta.verbose_name} #{pk}.")
+                return redirect("core:db_admin_table", model_name=model_name)
+            except Exception as exc:  # noqa: BLE001
+                messages.error(request, f"Save failed: {exc}")
+        else:
+            messages.error(request, "Fix the highlighted fields.")
+    else:
+        form = FormClass(instance=obj)
+
+    _style_db_form(form)
+    return render(request, "core/db_admin/form.html", {
+        "model_name": model_name,
+        "singular": str(model._meta.verbose_name).title(),
+        "obj_label": str(obj),
+        "pk": pk,
+        "form": form,
+        "mode": "edit",
+    })
+
+
+@super_admin_required
+def db_admin_row_delete(request, model_name, pk):
+    """Delete a row — but only after showing exactly what it drags with it.
+
+    NestedObjects walks the dependency graph. Anything held by a PROTECTed
+    foreign key lands in `collector.protected`: those rows block the delete,
+    and the page lists them (with a link each) so the operator can clear them
+    one at a time rather than the database raising a ProtectedError mid-request.
+    Everything in the CASCADE tree is shown too, so the blast radius is visible
+    before the button is pressed.
+    """
+    gate = _db_admin_gate(request)
+    if gate:
+        return gate
+
+    model = _db_admin_models().get(model_name)
+    if model is None:
+        messages.error(request, "No such table.")
+        return redirect("core:db_admin_index")
+
+    obj = get_object_or_404(model, pk=pk)
+    exposed = _db_admin_models()
+
+    collector = NestedObjects(using="default")
+    collector.collect([obj])
+
+    protected = []
+    for p in collector.protected:
+        meta = p._meta
+        protected.append({
+            "label": str(p),
+            "model_label": str(meta.verbose_name).title(),
+            "model_name": meta.model_name,
+            "pk": p.pk,
+            "linkable": meta.model_name in exposed,
+        })
+
+    # Flatten the nested cascade list into "what will be deleted", self first.
+    cascade = []
+
+    def _walk(items):
+        for item in items:
+            if isinstance(item, list):
+                _walk(item)
+            else:
+                meta = item._meta
+                cascade.append({
+                    "label": str(item),
+                    "model_label": str(meta.verbose_name).title(),
+                    "is_self": item.__class__ is model and item.pk == obj.pk,
+                })
+
+    _walk(collector.nested())
+
+    if request.method == "POST" and not protected:
+        try:
+            with transaction.atomic():
+                obj.delete()
+            extra = max(len(cascade) - 1, 0)
+            note = f" and {extra} related row(s)" if extra else ""
+            messages.success(request, f"Deleted {model._meta.verbose_name} #{pk}{note}.")
+            return redirect("core:db_admin_table", model_name=model_name)
+        except ProtectedError:
+            messages.error(request, "Blocked by protected references — clear the listed rows first.")
+        except Exception as exc:  # noqa: BLE001
+            messages.error(request, f"Delete failed: {exc}")
+
+    return render(request, "core/db_admin/delete.html", {
+        "model_name": model_name,
+        "singular": str(model._meta.verbose_name).title(),
+        "obj_label": str(obj),
+        "pk": pk,
+        "protected": protected,
+        "cascade": cascade,
+        "blocked": bool(protected),
+    })

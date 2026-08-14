@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Tables · Database Console{% endblock %}
+{% block header %}Database Console{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div>
+    <h2 class="text-xl font-semibold text-slate-900">All tables</h2>
+    <p class="mt-1 text-sm text-slate-500">{{ tables|length }} table{{ tables|length|pluralize }} · click one to browse and edit its rows.</p>
+  </div>
+  <form method="post" action="{% url 'core:db_admin_unlock' %}">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="lock">
+    <button type="submit"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+      </svg>
+      Lock
+    </button>
+  </form>
+</div>
+
+<div class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+  <strong>Danger zone.</strong> Changes here write directly to live data with no undo. Back up first.
+</div>
+
+<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+  {% for t in tables %}
+    <a href="{% url 'core:db_admin_table' t.name %}"
+       class="group rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-400 hover:shadow">
+      <div class="flex items-start justify-between">
+        <div class="min-w-0">
+          <p class="truncate text-sm font-semibold text-slate-900 group-hover:underline">{{ t.label }}</p>
+          <p class="mt-0.5 font-mono text-[11px] text-slate-400">{{ t.name }}</p>
+        </div>
+        <span class="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+          {{ t.count|intcomma }}
+        </span>
+      </div>
+      <p class="mt-3 text-xs text-slate-500">{{ t.field_count }} column{{ t.field_count|pluralize }}</p>
+    </a>
+  {% endfor %}
+</div>
+
+{% endblock %}

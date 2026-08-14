@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ label }} · Database Console{% endblock %}
+{% block header %}Database Console{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% url 'core:db_admin_index' %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    All tables
+  </a>
+</div>
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div>
+    <h2 class="text-xl font-semibold text-slate-900">{{ label }}</h2>
+    <p class="mt-1 font-mono text-xs text-slate-400">{{ model_name }} · {{ page_obj.paginator.count|intcomma }} row{{ page_obj.paginator.count|pluralize }}</p>
+  </div>
+  <a href="{% url 'core:db_admin_row_create' model_name %}"
+     class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New {{ singular }}
+  </a>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="sticky left-0 z-10 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+          {% for col in columns %}
+            <th class="whitespace-nowrap px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{{ col }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50">
+            <td class="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-2 hover:bg-slate-50">
+              <div class="flex gap-1">
+                <a href="{% url 'core:db_admin_row_edit' model_name row.pk %}"
+                   class="rounded-md px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Edit</a>
+                <a href="{% url 'core:db_admin_row_delete' model_name row.pk %}"
+                   class="rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">Delete</a>
+              </div>
+            </td>
+            {% for cell in row.cells %}
+              <td class="whitespace-nowrap px-3 py-2 text-slate-700">
+                {% if cell %}{{ cell }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{{ columns|length|add:1 }}" class="px-4 py-12 text-center text-sm text-slate-500">
+              This table has no rows. <a href="{% url 'core:db_admin_row_create' model_name %}" class="font-medium text-slate-900 hover:underline">Add the first one</a>.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

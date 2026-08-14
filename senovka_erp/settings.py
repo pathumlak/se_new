@@ -2,6 +2,7 @@
 Django settings for senovka_erp project.
 """
 
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -154,3 +155,11 @@ PAGINATE_BY_REPORTS = 50
 # dashboard alert. Zero and negative are handled separately (out of stock /
 # oversold). Adjust here rather than per template.
 LOW_STOCK_THRESHOLD = 1000
+
+
+# --- Database console -----------------------------------------------------
+# Second password guarding the raw database console (super-admin only, reached
+# from the profile page). This is NOT a login password — it's a per-session
+# unlock for a tool that can edit and delete any row in any table. Change it
+# here (ideally to a value read from an environment variable) before real use.
+DB_ADMIN_PASSWORD = os.environ.get("SENOVKA_DB_CONSOLE_PASSWORD", "superaccess123456")
