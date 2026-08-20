@@ -2305,19 +2305,20 @@ def _delete_blockers(customer):
     return f"{', '.join(phrases[:-1])} and {phrases[-1]}"
 
 
-@login_required
-def customer_list(request):
+def _customer_list_queryset(request):
+    """Return the customer-list queryset with identical screen/export filters."""
     query = request.GET.get("q", "").strip()
-
-    # Unrecognised filter values are dropped rather than 500ing or silently
-    # showing an unfiltered list that claims to be filtered.
     kind = request.GET.get("kind", "").strip()
     if kind not in {"customers", "suppliers"}:
         kind = ""
     status = request.GET.get("status", "").strip()
     if status not in {"active", "inactive"}:
         status = ""
-
+    balance_filter = request.GET.get("balance", "").strip()
+    if balance_filter not in {"customers_owe", "we_owe"}:
+        balance_filter = ""
+    sort = request.GET.get("sort", "name").strip()
+    sort_options = {"name": ("name", "pk")}
     customers = _customers()
     if query:
         customers = customers.filter(name__icontains=query)
@@ -2325,6 +2326,26 @@ def customer_list(request):
         customers = customers.filter(is_supplier=kind == "suppliers")
     if status:
         customers = customers.filter(is_active=status == "active")
+    if balance_filter == "customers_owe":
+        customers = customers.filter(balance__lt=0)
+    elif balance_filter == "we_owe":
+        customers = customers.filter(balance__gt=0)
+    sort_options.update({
+        "balance_high": (
+            "-owed", "name", "pk"
+        ) if balance_filter == "customers_owe" else ("-balance", "name", "pk"),
+        "balance_low": (
+            "owed", "name", "pk"
+        ) if balance_filter == "customers_owe" else ("balance", "name", "pk"),
+    })
+    if sort not in sort_options:
+        sort = "name"
+    return customers.order_by(*sort_options[sort]), query, kind, status, balance_filter, sort
+
+
+@login_required
+def customer_list(request):
+    customers, query, kind, status, balance_filter, sort = _customer_list_queryset(request)
 
     page_obj = _paginate(request, customers)
 
@@ -2413,7 +2434,9 @@ def customer_list(request):
             "query": query,
             "kind": kind,
             "status": status,
-            "is_filtered": bool(query or kind or status),
+            "is_filtered": bool(query or kind or status or balance_filter),
+            "balance_filter": balance_filter,
+            "sort": sort,
             "customer_stats": customer_stats,
             "supplier_stats": supplier_stats,
             "suggest_names": suggest_names,
@@ -2482,21 +2505,7 @@ def customer_list_excel(request):
     from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
     from django.utils import timezone
 
-    query = request.GET.get("q", "").strip()
-    kind = request.GET.get("kind", "").strip()
-    if kind not in {"customers", "suppliers"}:
-        kind = ""
-    status = request.GET.get("status", "").strip()
-    if status not in {"active", "inactive"}:
-        status = ""
-
-    customers = _customers()
-    if query:
-        customers = customers.filter(name__icontains=query)
-    if kind:
-        customers = customers.filter(is_supplier=kind == "suppliers")
-    if status:
-        customers = customers.filter(is_active=status == "active")
+    customers, query, kind, status, balance_filter, sort = _customer_list_queryset(request)
 
     # Aggregate stats over the exported set
     balance_totals = customers.aggregate(

@@ -6541,6 +6541,40 @@ class CustomerListExcelTests(UserFactoryMixin, TestCase):
         self.assertIn("attachment; filename=", response["Content-Disposition"])
         self.assertIn("suppliers_list_", response["Content-Disposition"])
 
+    def test_customer_debt_views_filter_and_sort_by_outstanding_balance(self):
+        Customer.objects.create(name="Customer C", balance=-1200)
+        response = self.client.get(
+            reverse("core:customer_list"),
+            {"balance": "customers_owe", "sort": "balance_high"},
+        )
+        self.assertEqual(
+            [customer.name for customer in response.context["customers"]],
+            ["Customer C", "Customer A"],
+        )
+        self.assertEqual(response.context["customer_stats"]["total_outstanding"], Decimal("1700"))
+        self.assertContains(response, "Customers owe us")
+        self.assertContains(response, "Export to Excel")
+
+        response = self.client.get(
+            reverse("core:customer_list"), {"balance": "we_owe"}
+        )
+        self.assertEqual(
+            [customer.name for customer in response.context["customers"]],
+            ["Supplier B"],
+        )
+        self.assertEqual(response.context["customer_stats"]["we_owe"], Decimal("300"))
+
+    def test_customer_debt_excel_export_uses_same_balance_filter(self):
+        response = self.client.get(
+            reverse("core:customer_list_excel"),
+            {"balance": "customers_owe"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
 
 
 class BillListExcelTests(UserFactoryMixin, TestCase):

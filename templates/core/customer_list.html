@@ -59,7 +59,8 @@
 <div class="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
 
   {# Card 1 — Total Outstanding (customers owe us) #}
-  <div class="relative overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-sm">
+    <a href="{% url 'core:customer_list' %}?balance=customers_owe"
+      class="relative block overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-sm transition hover:border-rose-300 hover:shadow-md">
     <div class="absolute inset-y-0 left-0 w-1 rounded-l-2xl bg-rose-500"></div>
     <div class="flex items-center gap-4 px-5 py-4">
       <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
@@ -79,10 +80,11 @@
         <p class="mt-0.5 text-xs text-slate-400">Customers owe us</p>
       </div>
     </div>
-  </div>
+  </a>
 
   {# Card 2 — We Owe (we owe customers) #}
-  <div class="relative overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-sm">
+    <a href="{% url 'core:customer_list' %}?balance=we_owe"
+      class="relative block overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-sm transition hover:border-emerald-300 hover:shadow-md">
     <div class="absolute inset-y-0 left-0 w-1 rounded-l-2xl bg-emerald-500"></div>
     <div class="flex items-center gap-4 px-5 py-4">
       <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
@@ -102,7 +104,7 @@
         <p class="mt-0.5 text-xs text-slate-400">We must pay customers</p>
       </div>
     </div>
-  </div>
+  </a>
 
 </div>
 {% endif %}
@@ -143,6 +145,14 @@
       <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>Inactive</option>
     </select>
 
+    <select name="sort"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="name" {% if sort == 'name' %}selected{% endif %}>Sort: Name</option>
+      <option value="balance_high" {% if sort == 'balance_high' %}selected{% endif %}>Sort: Balance high</option>
+      <option value="balance_low" {% if sort == 'balance_low' %}selected{% endif %}>Sort: Balance low</option>
+    </select>
+
     <div class="flex gap-2">
       <button type="submit"
               class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -158,12 +168,12 @@
   </form>
 
   <div class="flex gap-2 shrink-0">
-    <a href="{% url 'core:customer_list_excel' %}?q={{ query }}&kind={{ kind }}&status={{ status }}"
+    <a href="{% url 'core:customer_list_excel' %}?q={{ query|urlencode }}&kind={{ kind }}&status={{ status }}&balance={{ balance_filter }}&sort={{ sort }}"
        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
       </svg>
-      Download Excel
+      Export to Excel
     </a>
     <a href="{% url 'core:customer_create' %}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
