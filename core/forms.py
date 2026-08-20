@@ -1007,6 +1007,30 @@ class PaymentEditForm(forms.Form):
         return reason
 
 
+class OpeningBalanceEditForm(forms.Form):
+    opening_date = forms.DateField(
+        input_formats=["%Y-%m-%d"],
+        widget=forms.DateInput(attrs={"type": "date", "class": INPUT_CLASSES}),
+    )
+    amount = forms.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(
+            attrs={"step": "0.01", "class": INPUT_CLASSES}
+        ),
+    )
+    reason = forms.CharField(
+        max_length=500,
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES}),
+    )
+
+    def clean_reason(self):
+        reason = self.cleaned_data["reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Reason for Change is required.")
+        return reason
+
+
 class BillPaymentForm(forms.Form):
     """Record a follow-up payment against a bill that was left outstanding.
 

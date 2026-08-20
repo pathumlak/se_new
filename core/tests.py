@@ -26,6 +26,7 @@ from core.models import (
     Category,
     Cheque,
     Customer,
+    CustomerOpeningBalanceEditAudit,
     CustomerPrice,
     Payment,
     PaymentEditAudit,
@@ -1167,6 +1168,52 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 6, 4))
         self.assertEqual(self.customer.balance, before_balance)
         self.assertFalse(PaymentEditAudit.objects.exists())
+
+    def test_opening_balance_edit_recalculates_every_following_row_and_audits(self):
+        self.customer.opening_balance = Decimal("1000.00")
+        self.customer.opening_balance_date = date(2026, 6, 1)
+        self.customer.balance = Decimal("-1600.00")
+        self.customer.save(update_fields=["opening_balance", "opening_balance_date", "balance"])
+
+        response = self.client.post(
+            reverse("core:customer_opening_balance_edit", args=[self.customer.pk]),
+            {"opening_date": "2026-06-01", "amount": "1200.00", "reason": "Corrected brought-forward figure"},
+        )
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        rows = self.rows()
+        self.assertEqual(rows[0]["description"], "Opening Balance")
+        self.assertEqual(rows[0]["balance"], Decimal("1200.00"))
+        self.assertEqual([r["balance"] for r in rows], [
+            Decimal("1200.00"), Decimal("2200.00"), Decimal("1900.00"),
+            Decimal("2400.00"), Decimal("2200.00"), Decimal("1800.00"),
+        ])
+        self.assertEqual(self.response.context["closing_balance"], Decimal("1800.00"))
+
+        audit = CustomerOpeningBalanceEditAudit.objects.get(customer=self.customer)
+        self.assertEqual(audit.original_date, date(2026, 6, 1))
+        self.assertEqual(audit.original_amount, Decimal("1000.00"))
+        self.assertEqual(audit.new_date, date(2026, 6, 1))
+        self.assertEqual(audit.new_amount, Decimal("1200.00"))
+        self.assertEqual(audit.reason, "Corrected brought-forward figure")
+        self.assertEqual(audit.edited_by, self.user)
+
+    def test_invalid_opening_edit_leaves_ledger_unchanged(self):
+        self.customer.opening_balance = Decimal("1000.00")
+        self.customer.opening_balance_date = date(2026, 6, 1)
+        self.customer.balance = Decimal("-1600.00")
+        self.customer.save(update_fields=["opening_balance", "opening_balance_date", "balance"])
+        before = self.shape(self.rows())
+
+        response = self.client.post(
+            reverse("core:customer_opening_balance_edit", args=[self.customer.pk]),
+            {"opening_date": "not-a-date", "amount": "1200.00", "reason": ""},
+        )
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.opening_balance, Decimal("1000.00"))
+        self.assertEqual(self.customer.opening_balance_date, date(2026, 6, 1))
+        self.assertEqual(self.shape(self.rows()), before)
+        self.assertFalse(CustomerOpeningBalanceEditAudit.objects.exists())
 
     def test_closing_balance_is_zero_when_there_is_nothing_to_show(self):
         response = self.client.get(reverse("core:customer_ledger", args=[self.empty.pk]))

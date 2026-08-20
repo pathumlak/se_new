@@ -80,6 +80,10 @@ class Customer(models.Model):
     address = models.TextField(blank=True)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    opening_balance = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    opening_balance_date = models.DateField(null=True, blank=True)
     is_supplier = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
@@ -163,6 +167,30 @@ class CustomerBalanceAdjustment(models.Model):
         if self.adjustment_type == self.Type.CREDIT:
             return self.amount
         return -self.amount
+
+
+class CustomerOpeningBalanceEditAudit(models.Model):
+    """Immutable history for changes to a customer's carried-forward balance."""
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.PROTECT,
+        related_name="opening_balance_edit_audits",
+    )
+    original_date = models.DateField()
+    original_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    new_date = models.DateField()
+    new_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=500)
+    edited_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="opening_balance_edit_audits",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
 
 
 class CustomerPrice(models.Model):

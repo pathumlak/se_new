@@ -57,6 +57,7 @@ from .forms import (
     MaterialSupplierForm,
     MaterialWeighEntryForm,
     OrderHeaderForm,
+    OpeningBalanceEditForm,
     PettyCashExpenseForm,
     PettyCashReimbursementForm,
     ProductForm,
@@ -86,6 +87,7 @@ from .models import (
     Cheque,
     Customer,
     CustomerBalanceAdjustment,
+    CustomerOpeningBalanceEditAudit,
     CustomerPrice,
     DailyMachineRun,
     DailyOtherWork,
@@ -3017,14 +3019,21 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     movements = sum(
         ((e["sale"] or ZERO) - (e["credit"] or ZERO) for e in entries), ZERO
     )
-    opening = -customer.balance - movements
+    derived_opening = -customer.balance - movements
+    opening = (
+        customer.opening_balance
+        if customer.opening_balance is not None
+        else derived_opening
+    )
 
     # The opening line is dated to the first of the month the account was
     # opened: a customer created in August opens on 1 August, one carried over
     # from before go-live opens on the system-start date (the back-fill set
     # their created_at there). Falls back to the system-start date if
     # created_at is somehow unset.
-    if customer.created_at:
+    if customer.opening_balance_date:
+        opening_date = customer.opening_balance_date
+    elif customer.created_at:
         opened = timezone.localtime(customer.created_at).date()
         opening_date = opened.replace(day=1)
     else:
@@ -3041,9 +3050,12 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         "credit": -opening if opening < ZERO else None,
         "is_note": False,
         "is_opening": True,
+        "opening_editable": True,
     }
     transaction_dates = [e["date"] for e in entries]
-    if opening and (not transaction_dates or opening_date <= min(transaction_dates)):
+    show_opening = customer.opening_balance is not None or opening
+    legacy_opening_is_first = not transaction_dates or opening_date <= min(transaction_dates)
+    if show_opening and (customer.opening_balance is not None or legacy_opening_is_first):
         entries.append(opening_entry)
 
     if from_date:
@@ -3071,6 +3083,16 @@ def customer_ledger(request, pk):
     rows = _ledger_rows(customer, from_date, to_date)
     edit_payment = None
     edit_form = None
+    edit_opening = request.GET.get("edit_opening") == "1"
+    opening_form = None
+    if edit_opening:
+        opening_row = next((row for row in rows if row.get("is_opening")), None)
+        if opening_row:
+            opening_form = OpeningBalanceEditForm(initial={
+                "opening_date": opening_row["date"],
+                "amount": opening_row["sale"] or -opening_row["credit"] or ZERO,
+                "reason": "",
+            })
     edit_id = request.GET.get("edit_payment", "")
     if edit_id.isdigit():
         edit_payment = next(
@@ -3121,8 +3143,56 @@ def customer_ledger(request, pk):
             "current_balance": current_balance,
             "edit_payment": edit_payment,
             "edit_form": edit_form,
+            "edit_opening": edit_opening,
+            "opening_form": opening_form,
         },
     )
+
+
+@login_required
+@require_POST
+def customer_opening_balance_edit(request, pk):
+    """Atomically edit the carried-forward balance and preserve its history."""
+    customer = get_object_or_404(_customers(), pk=pk)
+    form = OpeningBalanceEditForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, f"Opening balance not saved: {form.errors.as_text()}")
+        return redirect("core:customer_ledger", pk=customer.pk)
+
+    data = form.cleaned_data
+    with transaction.atomic():
+        customer = Customer.objects.select_for_update().get(pk=customer.pk)
+        entries = _ledger_rows(customer)
+        opening_row = next((row for row in entries if row.get("is_opening")), None)
+        if opening_row is None:
+            messages.error(request, "This customer has no opening balance to edit.")
+            return redirect("core:customer_ledger", pk=customer.pk)
+
+        original_amount = opening_row["sale"] or -opening_row["credit"] or ZERO
+        original_date = opening_row["date"]
+        new_amount = data["amount"]
+        movement_total = sum(
+            ((row["sale"] or ZERO) - (row["credit"] or ZERO)
+             for row in entries if not row.get("is_opening")),
+            ZERO,
+        )
+        new_final_balance = new_amount + movement_total
+        customer.opening_balance = new_amount
+        customer.opening_balance_date = data["opening_date"]
+        customer.balance = -new_final_balance
+        customer.save(update_fields=["opening_balance", "opening_balance_date", "balance"])
+        CustomerOpeningBalanceEditAudit.objects.create(
+            customer=customer,
+            original_date=original_date,
+            original_amount=original_amount,
+            new_date=data["opening_date"],
+            new_amount=new_amount,
+            reason=data["reason"],
+            edited_by=request.user,
+        )
+
+    messages.success(request, "Opening balance updated and the ledger recalculated.")
+    return redirect("core:customer_ledger", pk=customer.pk)
 
 
 @login_required

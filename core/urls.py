@@ -108,6 +108,11 @@ urlpatterns = [
     path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
     path("customers/<int:pk>/ledger/", views.customer_ledger, name="customer_ledger"),
     path(
+        "customers/<int:pk>/ledger/opening/edit/",
+        views.customer_opening_balance_edit,
+        name="customer_opening_balance_edit",
+    ),
+    path(
         "customers/<int:pk>/ledger/payment/<int:payment_pk>/edit/",
         views.customer_payment_edit,
         name="customer_payment_edit",

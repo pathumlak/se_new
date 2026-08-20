@@ -180,7 +180,20 @@
         
         {% for row in rows %}
           <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %} {% if row.is_opening %}bg-slate-50 font-semibold{% endif %}">
-            {% if edit_payment and row.payment_pk == edit_payment.pk %}
+            {% if edit_opening and row.is_opening %}
+              <td colspan="6" class="px-5 py-3">
+                <form method="post" action="{% url 'core:customer_opening_balance_edit' customer.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
+                  {% csrf_token %}
+                  <label class="text-xs font-medium text-slate-600">Date{{ opening_form.opening_date }}</label>
+                  <label class="text-xs font-medium text-slate-600">Opening Amount{{ opening_form.amount }}</label>
+                  <label class="text-xs font-medium text-slate-600">Reason for Change{{ opening_form.reason }}</label>
+                  <span class="flex items-center gap-2">
+                    <button type="submit" class="rounded-md bg-slate-900 px-2.5 py-2 text-xs font-semibold text-white">Save</button>
+                    <a href="{% url 'core:customer_ledger' customer.pk %}" class="text-xs text-slate-500">Cancel</a>
+                  </span>
+                </form>
+              </td>
+            {% elif edit_payment and row.payment_pk == edit_payment.pk %}
               <td colspan="6" class="px-5 py-3">
                 <form method="post" action="{% url 'core:customer_payment_edit' customer.pk edit_payment.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
                   {% csrf_token %}
@@ -235,7 +248,9 @@
 
     
             <td class="no-print whitespace-nowrap px-5 py-3 text-right">
-              {% if row.payment_editable %}
+              {% if row.is_opening %}
+                <a href="?edit_opening=1{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
+              {% elif row.payment_editable %}
                 <a href="?edit_payment={{ row.payment_pk }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
               {% elif row.bill_pk and row.remaining > 0 %}
                 <a href="{% url 'core:bill_add_payment' row.bill_pk %}"
