@@ -3200,6 +3200,46 @@ class BillListTests(UserFactoryMixin, TestCase):
         self.assertEqual(len(self.rows()), 4)
         self.assertEqual(self.response.status_code, 200)
 
+    def test_list_orders_bill_numbers_numerically(self):
+        for number in range(8):
+            Bill.objects.create(
+                customer=self.nimal,
+                bill_date=date(2026, 7, 20 - number),
+                subtotal=Decimal("10.00"),
+                total_amount=Decimal("10.00"),
+                payment_type=Bill.PaymentType.PAY_LATER,
+                status=Bill.Status.UNPAID,
+            )
+
+        response = self.client.get(reverse("core:bill_list"))
+        self.assertEqual(
+            [bill.pk for bill in response.context["bills"]],
+            list(range(1, 13)),
+        )
+
+    def test_new_bill_reuses_lowest_available_number(self):
+        self.paid.delete()
+        replacement = Bill.objects.create(
+            customer=self.nimal,
+            bill_date=date(2026, 7, 21),
+            subtotal=Decimal("10.00"),
+            total_amount=Decimal("10.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+        self.assertEqual(replacement.bill_number, 1)
+
+        self.unpaid.delete()
+        replacement = Bill.objects.create(
+            customer=self.nimal,
+            bill_date=date(2026, 7, 22),
+            subtotal=Decimal("10.00"),
+            total_amount=Decimal("10.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+        self.assertEqual(replacement.bill_number, 2)
+
     def test_outstanding_is_what_the_bill_still_owes(self):
         rows = self.rows()
         self.assertEqual(rows[self.unpaid.pk].outstanding, Decimal("2000.00"))

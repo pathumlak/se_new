@@ -246,6 +246,7 @@ class Bill(models.Model):
         null=True,
         blank=True,
     )
+    bill_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     bill_date = models.DateField()
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -288,9 +289,14 @@ class Bill(models.Model):
     class Meta:
         ordering = ["-bill_date", "-id"]
 
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.bill_number is None:
+            self.bill_number = ReferenceCounter.next_bill_number()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         who = self.customer if self.customer_id else f"{self.walk_in_name} (walk-in)"
-        return f"Bill #{self.pk} · {who} · {self.total_amount}"
+        return f"Bill #{self.bill_number or self.pk} · {who} · {self.total_amount}"
 
     @property
     def remaining_balance(self):
@@ -1232,6 +1238,24 @@ class ReferenceCounter(models.Model):
             # only the database knows what it resolved to.
             counter.refresh_from_db(fields=["last_value"])
             return counter.last_value
+
+    @classmethod
+    def next_bill_number(cls):
+        """Claim the lowest unused bill number while serializing creators."""
+        with transaction.atomic():
+            counter, _ = cls.objects.select_for_update().get_or_create(
+                key="bill_number"
+            )
+            used = set(
+                Bill.objects.exclude(bill_number__isnull=True)
+                .values_list("bill_number", flat=True)
+            )
+            candidate = 1
+            while candidate in used:
+                candidate += 1
+            counter.last_value = max(counter.last_value, candidate)
+            counter.save(update_fields=["last_value"])
+            return candidate
 
 
 class Order(models.Model):

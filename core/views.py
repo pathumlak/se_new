@@ -107,6 +107,7 @@ from .models import (
     PettyCashReimbursement,
     Product,
     ProductionEntry,
+    ReferenceCounter,
     Rider,
     StockAdjustment,
     SupplierBill,
@@ -4241,11 +4242,12 @@ def bill_save(request):
         HeldBill.objects.filter(pk=int(held_id)).delete()
 
     who = bill.walk_in_name if bill.is_walk_in else bill.customer.name
-    messages.success(request, f"Bill #{bill.pk} for {who} was saved.")
+    messages.success(request, f"Bill #{bill.bill_number or bill.pk} for {who} was saved.")
     return JsonResponse(
         {
             "success": True,
             "bill_id": bill.pk,
+            "bill_number": bill.bill_number or bill.pk,
             "redirect": reverse("core:bill_detail", args=[bill.pk]),
         }
     )
@@ -5108,7 +5110,7 @@ def _filtered_bills(request):
         outstanding=Greatest(
             F("total_amount") - F("paid_amount"), Value(ZERO), output_field=MONEY
         )
-    )
+    ).order_by("pk")
 
     if from_date:
         bills = bills.filter(bill_date__gte=from_date)
@@ -5132,7 +5134,7 @@ def _filtered_bills(request):
         )
         digits = query.lstrip("#").strip()
         if digits.isdigit():
-            q_filter |= Q(pk=int(digits))
+            q_filter |= Q(bill_number=int(digits))
         bills = bills.filter(q_filter)
 
     return bills, from_date, to_date, selected_customer, payment_type, status, query

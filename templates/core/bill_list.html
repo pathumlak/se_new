@@ -132,7 +132,7 @@
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3">
               <a href="{% url 'core:bill_detail' bill.pk %}" class="font-medium text-slate-900 hover:underline">
-                #{{ bill.pk }}
+                #{{ bill.bill_number|default:bill.pk }}
               </a>
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
@@ -182,7 +182,7 @@
                 {% if is_super_admin %}
                   <button type="button"
                           data-delete-url="{% url 'core:bill_delete' bill.pk %}"
-                          data-bill="Bill #{{ bill.pk }}"
+                          data-bill="Bill #{{ bill.bill_number|default:bill.pk }}"
                           data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
                           data-total="{{ bill.total_amount|floatformat:2|intcomma }}"
                           data-reverses="{{ bill.reverses }}"
