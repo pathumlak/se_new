@@ -97,6 +97,13 @@
             {{ form.received_date }}
             {% for error in form.received_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
           </div>
+          <div>
+            <label for="{{ form.received_date_change_reason.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+              {{ form.received_date_change_reason.label }}
+            </label>
+            {{ form.received_date_change_reason }}
+            {% for error in form.received_date_change_reason.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
 
           <div>
             <label for="{{ form.maturity_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">

@@ -754,6 +754,13 @@ class ChequeForm(forms.ModelForm):
     the view works out by how much.
     """
 
+    received_date_change_reason = forms.CharField(
+        required=False,
+        max_length=500,
+        label="Reason for received-date change",
+        widget=forms.TextInput(attrs={"class": INPUT_CLASSES}),
+    )
+
     class Meta:
         model = Cheque
         fields = [
@@ -813,6 +820,17 @@ class ChequeForm(forms.ModelForm):
         if received and maturity and maturity < received:
             self.add_error(
                 "maturity_date", "Maturity date cannot be before the received date."
+            )
+
+        if (
+            received
+            and self.instance.pk
+            and received != self.instance.received_date
+            and not cleaned.get("received_date_change_reason", "").strip()
+        ):
+            self.add_error(
+                "received_date_change_reason",
+                "A reason is required when changing the received date.",
             )
 
         # A bounced cheque without a re-presentation date is a dead end: the

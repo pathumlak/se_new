@@ -85,6 +85,7 @@ from .models import (
     CashTransfer,
     Category,
     Cheque,
+    ChequeReceivedDateEditAudit,
     Customer,
     CustomerBalanceAdjustment,
     CustomerOpeningBalanceEditAudit,
@@ -2939,10 +2940,13 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         .select_related("bill")
     )
     for payment in payments:
+        cheque = payment.cheques.filter(
+            status__in=[Cheque.Status.PENDING, Cheque.Status.DEPOSITED]
+        ).order_by("pk").first()
         entries.append(
             {
                 # paid_at is a moment; the ledger reports days.
-                "date": timezone.localdate(payment.paid_at),
+                "date": cheque.received_date if cheque else timezone.localdate(payment.paid_at),
                 "kind": 2,
                 "pk": payment.pk,
                 "description": f"{payment.get_method_display()} received",
@@ -5406,12 +5410,27 @@ def cheque_delete(request, pk):
 @login_required
 def cheque_edit(request, pk):
     cheque = get_object_or_404(Cheque.objects.select_related("customer"), pk=pk)
-    was_status, was_amount = cheque.status, cheque.amount
+    was_status, was_amount, was_received_date = cheque.status, cheque.amount, cheque.received_date
 
     form = ChequeForm(request.POST or None, instance=cheque)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             cheque = form.save()
+            if cheque.received_date != was_received_date:
+                payment = Payment.objects.select_for_update().get(pk=cheque.payment_id)
+                payment.paid_at = payment.paid_at.replace(
+                    year=cheque.received_date.year,
+                    month=cheque.received_date.month,
+                    day=cheque.received_date.day,
+                )
+                payment.save(update_fields=["paid_at"])
+                ChequeReceivedDateEditAudit.objects.create(
+                    cheque=cheque,
+                    original_date=was_received_date,
+                    new_date=cheque.received_date,
+                    reason=form.cleaned_data["received_date_change_reason"].strip(),
+                    edited_by=request.user,
+                )
             delta = _move_balance_for_cheque(cheque, was_status, was_amount)
 
         messages.success(

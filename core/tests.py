@@ -25,6 +25,7 @@ from core.models import (
     CashTransfer,
     Category,
     Cheque,
+    ChequeReceivedDateEditAudit,
     Customer,
     CustomerOpeningBalanceEditAudit,
     CustomerPrice,
@@ -1168,6 +1169,51 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 6, 4))
         self.assertEqual(self.customer.balance, before_balance)
         self.assertFalse(PaymentEditAudit.objects.exists())
+
+    def test_cheque_received_date_edit_updates_linked_payment_and_ledger(self):
+        payment = Payment.objects.create(
+            bill=self.june1,
+            method=Payment.Method.CHEQUE,
+            amount=Decimal("50.00"),
+            paid_at=timezone.make_aware(datetime(2026, 8, 20, 9, 0)),
+        )
+        cheque = Cheque.objects.create(
+            payment=payment,
+            bill=self.june1,
+            customer=self.customer,
+            cheque_no="SYNC-1",
+            bank_name="BOC",
+            amount=Decimal("50.00"),
+            received_date=date(2026, 8, 20),
+            maturity_date=date(2026, 9, 20),
+        )
+        response = self.client.post(
+            reverse("core:cheque_edit", args=[cheque.pk]),
+            {
+                "cheque_no": "SYNC-1",
+                "bank_name": "BOC",
+                "branch": "",
+                "acc_no": "",
+                "amount": "50.00",
+                "received_date": "2026-07-25",
+                "maturity_date": "2026-09-20",
+                "status": Cheque.Status.PENDING,
+                "bounce_new_date": "",
+                "received_date_change_reason": "Corrected receipt date",
+            },
+        )
+        self.assertRedirects(response, reverse("core:cheque_list"))
+        payment.refresh_from_db()
+        cheque.refresh_from_db()
+        self.assertEqual(cheque.received_date, date(2026, 7, 25))
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 7, 25))
+        ledger = self.client.get(reverse("core:customer_ledger", args=[self.customer.pk]))
+        sync_rows = [row for row in ledger.context["rows"] if row.get("payment_pk") == payment.pk]
+        self.assertEqual(sync_rows[0]["date"], date(2026, 7, 25))
+        audit = ChequeReceivedDateEditAudit.objects.get(cheque=cheque)
+        self.assertEqual(audit.original_date, date(2026, 8, 20))
+        self.assertEqual(audit.new_date, date(2026, 7, 25))
+        self.assertEqual(audit.reason, "Corrected receipt date")
 
     def test_opening_balance_edit_recalculates_every_following_row_and_audits(self):
         self.customer.opening_balance = Decimal("1000.00")
@@ -3464,6 +3510,44 @@ class ChequeModuleTests(UserFactoryMixin, TestCase):
         self.cheque.refresh_from_db()
         self.assertEqual(self.cheque.bank_name, "HNB")
         self.assertEqual(self.balance(), Decimal("0.00"))
+
+    def test_received_date_edit_synchronizes_payment_and_customer_ledger(self):
+        response = self.edit(
+            received_date="2026-07-25",
+            maturity_date="2026-08-16",
+            received_date_change_reason="Corrected bank receipt date",
+        )
+        self.assertRedirects(response, reverse("core:cheque_list"))
+
+        self.cheque.refresh_from_db()
+        payment = self.cheque.payment
+        self.assertEqual(self.cheque.received_date, date(2026, 7, 25))
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 7, 25))
+
+        ledger = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
+        cheque_rows = [row for row in ledger.context["rows"] if row["description"] == "Cheque received"]
+        self.assertEqual(len(cheque_rows), 1)
+        self.assertEqual(cheque_rows[0]["date"], date(2026, 7, 25))
+
+        audit = ChequeReceivedDateEditAudit.objects.get(cheque=self.cheque)
+        self.assertEqual(audit.original_date, date(2026, 7, 16))
+        self.assertEqual(audit.new_date, date(2026, 7, 25))
+        self.assertEqual(audit.reason, "Corrected bank receipt date")
+        self.assertEqual(audit.edited_by, self.user)
+
+    def test_received_date_change_without_reason_is_atomic(self):
+        response = self.edit(received_date="2026-07-25")
+        self.assertFormError(
+            response.context["form"],
+            "received_date_change_reason",
+            "A reason is required when changing the received date.",
+        )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.received_date, date(2026, 7, 16))
+        self.assertEqual(
+            timezone.localtime(self.cheque.payment.paid_at).date(), date(2026, 7, 16)
+        )
+        self.assertFalse(ChequeReceivedDateEditAudit.objects.exists())
 
     def test_raising_the_amount_credits_the_difference(self):
         self.edit(amount="6500.00")

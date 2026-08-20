@@ -552,6 +552,28 @@ class Cheque(models.Model):
         return f"Cheque {self.cheque_no} · {self.bank_name} · {self.amount}"
 
 
+class ChequeReceivedDateEditAudit(models.Model):
+    """Immutable history for received-date corrections on a cheque."""
+
+    cheque = models.ForeignKey(
+        Cheque,
+        on_delete=models.PROTECT,
+        related_name="received_date_edit_audits",
+    )
+    original_date = models.DateField()
+    new_date = models.DateField()
+    reason = models.CharField(max_length=500)
+    edited_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="cheque_received_date_edit_audits",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
 class CashTransfer(models.Model):
     class Account(models.TextChoices):
         SENOVKA = "senovka", "Senovka"
