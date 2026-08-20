@@ -1023,6 +1023,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(
             self.shape(self.rows()),
             [
+                (date(2026, 6, 1), "Opening Balance", Decimal("0.00"), None, Decimal("0.00")),
                 (date(2026, 6, 1), "Sale", Decimal("1000.00"), None, Decimal("1000.00")),
                 (date(2026, 6, 2), "Purchase", None, Decimal("300.00"), Decimal("700.00")),
                 (date(2026, 6, 3), "Sale", Decimal("500.00"), None, Decimal("1200.00")),
@@ -1035,6 +1036,30 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         dates = [r["date"] for r in self.rows()]
         self.assertEqual(dates, sorted(dates))
 
+    def test_every_ledger_has_one_opening_row_before_legacy_activity(self):
+        legacy = Customer.objects.create(
+            name="Legacy Opening",
+            balance=Decimal("-50.00"),
+            opening_balance_date=date(2026, 8, 1),
+        )
+        Bill.objects.create(
+            customer=legacy,
+            bill_date=date(2026, 6, 1),
+            total_amount=Decimal("100.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+
+        rows = self.client.get(
+            reverse("core:customer_ledger", args=[legacy.pk])
+        ).context["rows"]
+
+        self.assertEqual([row["description"] for row in rows], ["Opening Balance", "Sale"])
+        self.assertTrue(rows[0]["is_opening"])
+        self.assertEqual(rows[0]["date"], date(2026, 6, 1))
+        self.assertEqual(rows[0]["balance"], Decimal("-50.00"))
+        self.assertEqual(rows[-1]["balance"], Decimal("50.00"))
+
     def test_a_sale_precedes_money_taken_the_same_day(self):
         """Both fall on 3 Jun; the sale has to land first or the balance dips
         below what was actually owed."""
@@ -1045,7 +1070,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         rows = self.rows()
         self.assertNotIn(Decimal("9999.00"), [r["sale"] for r in rows])
         self.assertNotIn(Decimal("9999.00"), [r["credit"] for r in rows])
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), 6)
 
     def test_another_customers_activity_is_excluded(self):
         self.assertNotIn(Decimal("7777.00"), [r["sale"] for r in self.rows()])
@@ -1140,6 +1165,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(
             [(r["date"], r["description"], r["balance"]) for r in rows],
             [
+                (date(2026, 6, 1), "Opening Balance", Decimal("0.00")),
                 (date(2026, 6, 1), "Sale", Decimal("1000.00")),
                 (date(2026, 6, 1), "Cheque received", Decimal("700.00")),
                 (date(2026, 6, 2), "Purchase", Decimal("400.00")),
@@ -1261,10 +1287,24 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(self.shape(self.rows()), before)
         self.assertFalse(CustomerOpeningBalanceEditAudit.objects.exists())
 
+    def test_zero_opening_balance_can_be_saved_and_audited(self):
+        response = self.client.post(
+            reverse("core:customer_opening_balance_edit", args=[self.customer.pk]),
+            {
+                "opening_date": "2026-06-01",
+                "amount": "0.00",
+                "reason": "Confirmed no brought-forward balance",
+            },
+        )
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        audit = CustomerOpeningBalanceEditAudit.objects.get(customer=self.customer)
+        self.assertEqual(audit.original_amount, Decimal("0.00"))
+        self.assertEqual(audit.new_amount, Decimal("0.00"))
+
     def test_closing_balance_is_zero_when_there_is_nothing_to_show(self):
         response = self.client.get(reverse("core:customer_ledger", args=[self.empty.pk]))
         self.assertEqual(response.context["closing_balance"], Decimal("0"))
-        self.assertContains(response, "No ledger activity yet.")
+        self.assertContains(response, "Balance carried forward")
 
     # ---- date range ----
     def test_from_date_keeps_only_later_rows(self):
@@ -1273,7 +1313,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
 
     def test_to_date_keeps_only_earlier_rows(self):
         rows = self.rows(to_date="2026-06-02")
-        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 1), date(2026, 6, 2)])
+        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 1), date(2026, 6, 1), date(2026, 6, 2)])
 
     def test_both_bounds_are_inclusive(self):
         rows = self.rows(from_date="2026-06-02", to_date="2026-06-03")
@@ -1290,7 +1330,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         for params in ({"from_date": "nonsense"}, {"to_date": "2026-02-31"}):
             with self.subTest(params=params):
                 rows = self.rows(**params)
-                self.assertEqual(len(rows), 5)
+                self.assertEqual(len(rows), 6)
                 self.assertFalse(self.response.context["is_filtered"])
 
     # ---- page ----
@@ -5893,9 +5933,9 @@ class LedgerPdfTests(UserFactoryMixin, TestCase):
         context = self.context()
         self.assertEqual(
             [r["balance"] for r in context["rows"]],
-            [Decimal("1000.00"), Decimal("1500.00"), Decimal("1300.00")],
+            [Decimal("-700.00"), Decimal("300.00"), Decimal("800.00"), Decimal("600.00")],
         )
-        self.assertEqual(context["closing_balance"], Decimal("1300.00"))
+        self.assertEqual(context["closing_balance"], Decimal("600.00"))
 
         page = self.client.get(
             reverse("core:customer_ledger", args=[self.nimal.pk])
@@ -5908,7 +5948,7 @@ class LedgerPdfTests(UserFactoryMixin, TestCase):
     def test_the_footer_states_the_closing_balance(self):
         html = render_to_string("core/ledger_pdf.html", self.context())
         self.assertIn("Closing Balance as of", html)
-        self.assertIn("1,300.00", html)
+        self.assertIn("600.00", html)
 
     def test_the_range_reaches_the_document(self):
         response = self.client.get(self.url(from_date="2026-06-03"))

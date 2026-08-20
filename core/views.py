@@ -3053,6 +3053,14 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     else:
         opening_date = SYSTEM_START_DATE
 
+    # The opening line is a required ledger boundary, even when its amount is
+    # zero. If a legacy opening date falls after recorded activity, move only
+    # the display date back to the first transaction so the opening remains
+    # the first chronological row without changing any historical data.
+    transaction_dates = [e["date"] for e in entries]
+    if transaction_dates:
+        opening_date = min(opening_date, min(transaction_dates))
+
     opening_entry = {
         # Given a kind that sorts ahead of any real transaction on its day, so
         # it is always the first line.
@@ -3060,17 +3068,13 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         "kind": -1,
         "pk": 0,
         "description": "Opening Balance",
-        "sale": opening if opening > ZERO else None,
+        "sale": opening if opening >= ZERO else None,
         "credit": -opening if opening < ZERO else None,
         "is_note": False,
         "is_opening": True,
         "opening_editable": True,
     }
-    transaction_dates = [e["date"] for e in entries]
-    show_opening = customer.opening_balance is not None or opening
-    legacy_opening_is_first = not transaction_dates or opening_date <= min(transaction_dates)
-    if show_opening and (customer.opening_balance is not None or legacy_opening_is_first):
-        entries.append(opening_entry)
+    entries.append(opening_entry)
 
     if from_date:
         entries = [e for e in entries if e["date"] >= from_date]
@@ -3104,7 +3108,11 @@ def customer_ledger(request, pk):
         if opening_row:
             opening_form = OpeningBalanceEditForm(initial={
                 "opening_date": opening_row["date"],
-                "amount": opening_row["sale"] or -opening_row["credit"] or ZERO,
+                "amount": (
+                    opening_row["sale"]
+                    if opening_row["sale"] is not None
+                    else -(opening_row["credit"] or ZERO)
+                ),
                 "reason": "",
             })
     edit_id = request.GET.get("edit_payment", "")
@@ -3182,7 +3190,11 @@ def customer_opening_balance_edit(request, pk):
             messages.error(request, "This customer has no opening balance to edit.")
             return redirect("core:customer_ledger", pk=customer.pk)
 
-        original_amount = opening_row["sale"] or -opening_row["credit"] or ZERO
+        original_amount = (
+            opening_row["sale"]
+            if opening_row["sale"] is not None
+            else -(opening_row["credit"] or ZERO)
+        )
         original_date = opening_row["date"]
         new_amount = data["amount"]
         movement_total = sum(
