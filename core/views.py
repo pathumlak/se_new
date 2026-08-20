@@ -64,6 +64,7 @@ from .forms import (
     ProductQuickForm,
     ProfileDetailsForm,
     ProfilePasswordForm,
+    PaymentEditForm,
     RiderForm,
     SetUserPasswordForm,
     StockAdjustmentForm,
@@ -98,6 +99,7 @@ from .models import (
     Order,
     OrderItem,
     Payment,
+    PaymentEditAudit,
     PettyCashEntry,
     PettyCashFund,
     PettyCashReimbursement,
@@ -2944,6 +2946,9 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": None,
                 "credit": payment.amount,
                 "is_note": False,
+                "payment_pk": payment.pk,
+                "payment_editable": payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE},
+                "sort_time": payment.paid_at,
             }
         )
 
@@ -2966,6 +2971,9 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": None,
                 "credit": payment.amount,
                 "is_note": False,
+                "payment_pk": payment.pk,
+                "payment_editable": payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE},
+                "sort_time": payment.paid_at,
             }
         )
 
@@ -3034,7 +3042,9 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         "is_note": False,
         "is_opening": True,
     }
-    entries.append(opening_entry)
+    transaction_dates = [e["date"] for e in entries]
+    if opening and (not transaction_dates or opening_date <= min(transaction_dates)):
+        entries.append(opening_entry)
 
     if from_date:
         entries = [e for e in entries if e["date"] >= from_date]
@@ -3042,7 +3052,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         entries = [e for e in entries if e["date"] <= to_date]
 
     # pk breaks the last tie, so two rows on one day never swap between loads.
-    entries.sort(key=lambda e: (e["date"], e["kind"], e["pk"]))
+    entries.sort(key=lambda e: (e["date"], e["kind"], e.get("sort_time") or "", e["pk"]))
 
     balance = ZERO
     for entry in entries:
@@ -3059,6 +3069,26 @@ def customer_ledger(request, pk):
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
     rows = _ledger_rows(customer, from_date, to_date)
+    edit_payment = None
+    edit_form = None
+    edit_id = request.GET.get("edit_payment", "")
+    if edit_id.isdigit():
+        edit_payment = next(
+            (payment for payment in Payment.objects.filter(
+                Q(bill__customer=customer) | Q(customer=customer),
+                pk=int(edit_id),
+                method__in=[Payment.Method.CASH, Payment.Method.CHEQUE],
+            ).exclude(
+                cheques__status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
+            )),
+            None,
+        )
+        if edit_payment:
+            edit_form = PaymentEditForm(initial={
+                "paid_date": timezone.localtime(edit_payment.paid_at).date(),
+                "amount": edit_payment.amount,
+                "reason": "",
+            })
 
     # _ledger_rows stays whole and the totals below are taken over all of it:
     # the running balance in each row is the sum of every row before it, and
@@ -3089,8 +3119,69 @@ def customer_ledger(request, pk):
             "closing_balance": rows[-1]["balance"] if rows else ZERO,
             # Positive = owes us (matches the ledger rows and the final total).
             "current_balance": current_balance,
+            "edit_payment": edit_payment,
+            "edit_form": edit_form,
         },
     )
+
+
+@login_required
+@require_POST
+def customer_payment_edit(request, pk, payment_pk):
+    """Edit one visible cash/cheque payment and rebuild the ledger on reload."""
+    customer = get_object_or_404(_customers(), pk=pk)
+    form = PaymentEditForm(request.POST)
+    payment = get_object_or_404(
+        Payment.objects.select_related("bill", "customer"), pk=payment_pk
+    )
+    payment_customer_id = payment.bill.customer_id if payment.bill_id else payment.customer_id
+    if payment_customer_id != customer.pk or payment.method not in {
+        Payment.Method.CASH, Payment.Method.CHEQUE
+    }:
+        messages.error(request, "Only this customer's cash or cheque payments can be edited.")
+        return redirect("core:customer_ledger", pk=customer.pk)
+    if payment.cheques.filter(status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]).exists():
+        messages.error(request, "A bounced or held cheque cannot be edited from the ledger.")
+        return redirect("core:customer_ledger", pk=customer.pk)
+    if not form.is_valid():
+        messages.error(request, f"Payment not saved: {form.errors.as_text()}")
+        return redirect("core:customer_ledger", pk=customer.pk)
+
+    data = form.cleaned_data
+    new_date, new_amount = data["paid_date"], data["amount"]
+    with transaction.atomic():
+        payment = Payment.objects.select_for_update().select_related("bill").get(pk=payment.pk)
+        original_date = timezone.localtime(payment.paid_at).date()
+        original_amount = payment.amount
+        delta = new_amount - original_amount
+        if delta:
+            Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + delta)
+            if payment.bill_id:
+                Bill.objects.filter(pk=payment.bill_id).update(
+                    paid_amount=F("paid_amount") + delta,
+                    balance_change=F("balance_change") + delta,
+                )
+            Payment.objects.filter(pk=payment.pk).update(amount=new_amount)
+            payment.amount = new_amount
+
+        payment.paid_at = payment.paid_at.replace(
+            year=new_date.year, month=new_date.month, day=new_date.day
+        )
+        payment.save(update_fields=["amount", "paid_at"])
+        payment.cheques.update(amount=new_amount, received_date=new_date)
+        CashTransfer.objects.filter(payment=payment).update(amount=new_amount)
+        PaymentEditAudit.objects.create(
+            payment=payment,
+            original_date=original_date,
+            original_amount=original_amount,
+            new_date=new_date,
+            new_amount=new_amount,
+            reason=data["reason"],
+            edited_by=request.user,
+        )
+
+    messages.success(request, "Payment updated and ledger balances recalculated.")
+    return redirect("core:customer_ledger", pk=customer.pk)
 
 
 @require_POST

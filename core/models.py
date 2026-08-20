@@ -448,6 +448,30 @@ class Payment(models.Model):
         return f"{self.get_method_display()} {self.amount} · {who}"
 
 
+class PaymentEditAudit(models.Model):
+    """Immutable history for a payment date or amount correction."""
+
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.PROTECT,
+        related_name="edit_audits",
+    )
+    original_date = models.DateField()
+    original_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    new_date = models.DateField()
+    new_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=500)
+    edited_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="payment_edit_audits",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
 class Cheque(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

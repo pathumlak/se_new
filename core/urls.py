@@ -107,6 +107,11 @@ urlpatterns = [
     path("customers/<int:pk>/delete/", views.customer_delete, name="customer_delete"),
     path("customers/<int:pk>/prices/", views.customer_prices, name="customer_prices"),
     path("customers/<int:pk>/ledger/", views.customer_ledger, name="customer_ledger"),
+    path(
+        "customers/<int:pk>/ledger/payment/<int:payment_pk>/edit/",
+        views.customer_payment_edit,
+        name="customer_payment_edit",
+    ),
     # Bulk export: multiple customers' ledgers into one workbook, one sheet
     # each. Fed by the checkbox column on the customer list.
     path(

@@ -28,6 +28,7 @@ from core.models import (
     Customer,
     CustomerPrice,
     Payment,
+    PaymentEditAudit,
     Product,
     ProductionEntry,
     SupplierBill,
@@ -1124,6 +1125,48 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(self.response.context["total_sale"], Decimal("1500.00"))
         self.assertEqual(self.response.context["total_credit"], Decimal("900.00"))
         self.assertEqual(self.response.context["closing_balance"], Decimal("600.00"))
+
+    def test_payment_edit_backdates_amount_and_rebuilds_following_balances(self):
+        payment = Payment.objects.get(amount=Decimal("400.00"))
+        response = self.client.post(
+            reverse("core:customer_payment_edit", args=[self.customer.pk, payment.pk]),
+            {"paid_date": "2026-06-01", "amount": "300.00", "reason": "Corrected cheque amount"},
+        )
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+
+        rows = self.rows()
+        self.assertEqual(
+            [(r["date"], r["description"], r["balance"]) for r in rows],
+            [
+                (date(2026, 6, 1), "Sale", Decimal("1000.00")),
+                (date(2026, 6, 1), "Cheque received", Decimal("700.00")),
+                (date(2026, 6, 2), "Purchase", Decimal("400.00")),
+                (date(2026, 6, 3), "Sale", Decimal("900.00")),
+                (date(2026, 6, 3), "Cash received", Decimal("700.00")),
+            ],
+        )
+        audit = PaymentEditAudit.objects.get(payment=payment)
+        self.assertEqual(audit.original_date, date(2026, 6, 4))
+        self.assertEqual(audit.original_amount, Decimal("400.00"))
+        self.assertEqual(audit.new_date, date(2026, 6, 1))
+        self.assertEqual(audit.new_amount, Decimal("300.00"))
+        self.assertEqual(audit.reason, "Corrected cheque amount")
+        self.assertEqual(audit.edited_by, self.user)
+
+    def test_invalid_payment_edit_is_atomic(self):
+        payment = Payment.objects.get(amount=Decimal("400.00"))
+        before_balance = self.customer.balance
+        response = self.client.post(
+            reverse("core:customer_payment_edit", args=[self.customer.pk, payment.pk]),
+            {"paid_date": "not-a-date", "amount": "-1", "reason": ""},
+        )
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        payment.refresh_from_db()
+        self.customer.refresh_from_db()
+        self.assertEqual(payment.amount, Decimal("400.00"))
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 6, 4))
+        self.assertEqual(self.customer.balance, before_balance)
+        self.assertFalse(PaymentEditAudit.objects.exists())
 
     def test_closing_balance_is_zero_when_there_is_nothing_to_show(self):
         response = self.client.get(reverse("core:customer_ledger", args=[self.empty.pk]))
