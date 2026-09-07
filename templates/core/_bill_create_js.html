@@ -76,6 +76,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const itemCount   = $('item-count');
     const subtotalEl  = $('subtotal-cell');
     const grandEl     = $('grand-total');
+    const roundOffRow = $('round-off-row');
+    const roundOffRawEl = $('round-off-raw');
+    const roundOffAmtEl = $('round-off-amount');
     const deliveryEl  = $('delivery-charge');
     const discountEl  = $('discount-amount');
     const reasonRow   = $('discount-reason-row');
@@ -726,11 +729,25 @@ spanning lines, it isn't stripped and renders onto the page as text.
       const missingReason = wantsReason && reasonEl.value.trim() === '';
 
       const goods = round2(subtotal + (badDelivery ? 0 : delivery));
-      const total = round2(goods - (badDiscount ? 0 : discount));
-      const overDiscounted = !badDiscount && discount > 0 && total < 0;
+      const rawTotal = round2(goods - (badDiscount ? 0 : discount));
+      const overDiscounted = !badDiscount && discount > 0 && rawTotal < 0;
 
-      currentTotal = total < 0 ? 0 : total;
+      // The bill is payable to the nearest whole rupee — matches
+      // _round_to_whole on the server, so what the biller sees here is what
+      // actually gets saved and what payment collection is measured against.
+      const clampedTotal = rawTotal < 0 ? 0 : rawTotal;
+      const total = Math.round(clampedTotal);
+      const roundOff = round2(total - clampedTotal);
+
+      currentTotal = total;
       grandEl.textContent = money(currentTotal);
+      if (roundOffRow) {
+        roundOffRow.classList.toggle('hidden', roundOff === 0);
+        if (roundOffRawEl) roundOffRawEl.textContent = money(clampedTotal);
+        if (roundOffAmtEl) {
+          roundOffAmtEl.textContent = (roundOff > 0 ? '+' : '') + money(roundOff);
+        }
+      }
 
       let adjustError = '';
       if (badDelivery) adjustError = 'Delivery must be a positive number.';
