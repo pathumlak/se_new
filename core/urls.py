@@ -202,6 +202,11 @@ urlpatterns = [
         name="cash_drawer_delete",
     ),
     path("supplier-bills/", views.supplier_bill_list, name="supplier_bill_list"),
+    path(
+        "supplier-bills/excel/",
+        views.supplier_bill_list_excel,
+        name="supplier_bill_list_excel",
+    ),
     # GET renders the form; POST saves it.
     path(
         "supplier-bills/create/",
@@ -222,6 +227,11 @@ urlpatterns = [
         "supplier-bills/<int:pk>/delete/",
         views.supplier_bill_delete,
         name="supplier_bill_delete",
+    ),
+    path(
+        "supplier-bills/<int:pk>/pay/",
+        views.supplier_bill_pay,
+        name="supplier_bill_pay",
     ),
     # Inline creation from the supplier bill form.
     path("api/supplier/create/", views.supplier_quick_create, name="supplier_quick_create"),
