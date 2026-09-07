@@ -523,7 +523,7 @@
 
         {% for row in rows %}
           <tr class="js-drawer-row"
-              data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
+              data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% elif row.entry.bill.walk_in_name %}{{ row.entry.bill.walk_in_name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
             <td class="whitespace-nowrap" style="color:#64748b">{{ row.entry.txn_date|date:"j M Y" }}</td>
 
             <td>
@@ -533,6 +533,8 @@
                 </a>
                 {% if row.entry.bill.customer_id %}
                   <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.customer.name }}</span>
+                {% elif row.entry.bill.walk_in_name %}
+                  <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.walk_in_name }}</span>
                 {% endif %}
                 {% if row.entry.reason %}
                   <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px">{{ row.entry.reason }}</span>
