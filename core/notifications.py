@@ -202,11 +202,57 @@ def _cheque_notifications(warning_days):
     return items
 
 
+def _delivered_order_notifications(reminder_days):
+    """One row per order that was marked Delivered at least `reminder_days`
+    days ago — a nudge to follow up with the customer.
+
+    Like the cheque feed, this is a plain "is it due yet" query against
+    live data rather than a one-shot alert that fires and is forgotten: an
+    order that crossed the threshold keeps appearing (subject to the usual
+    3-day dismiss) for as long as it stays Delivered, which is what makes
+    this safe to compute per-request with no scheduler or persisted
+    "reminder sent" flag anywhere.
+    """
+    from .models import Order
+
+    today = timezone.localdate()
+    cutoff = today - timedelta(days=reminder_days)
+
+    qs = (
+        Order.objects.filter(
+            status=Order.Status.DELIVERED,
+            delivered_at__isnull=False,
+            delivered_at__lte=cutoff,
+        )
+        .select_related("customer")
+        .order_by("delivered_at")
+    )
+
+    items = []
+    for order in qs:
+        days_since = (today - order.delivered_at).days
+        items.append(
+            {
+                "key": f"order_followup:{order.pk}:{order.delivered_at.isoformat()}",
+                "kind": "order_followup",
+                "level": "info",
+                "icon": "order",
+                "title": f"Follow up · {order.reference_no}",
+                "body": (
+                    f"{order.display_customer} · Delivered {days_since} days ago"
+                ),
+                "url": reverse("core:order_detail", args=[order.pk]),
+                "timestamp": _isoformat(_now()),
+            }
+        )
+    return items
+
+
 #: Order the levels are ranked by when sorting the panel.
 _LEVEL_RANK = {"danger": 0, "warning": 1, "info": 2}
 
 
-def build_notifications(session, low_threshold, warning_days):
+def build_notifications(session, low_threshold, warning_days, order_followup_days):
     """The whole feed for one request.
 
     Returns (visible, total_before_dismiss).  `visible` is the list the
@@ -219,6 +265,7 @@ def build_notifications(session, low_threshold, warning_days):
         _out_of_stock_notifications()
         + _low_stock_notifications(low_threshold)
         + _cheque_notifications(warning_days)
+        + _delivered_order_notifications(order_followup_days)
     )
 
     all_items.sort(key=lambda item: (_LEVEL_RANK.get(item["level"], 9), item["title"]))
