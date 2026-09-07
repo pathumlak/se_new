@@ -27,15 +27,17 @@ def notifications(request):
     if not (user and user.is_authenticated):
         return {"notifications": [], "notification_count": 0}
 
-    #: CHEQUE_WARNING_DAYS is defined in views.py; recomputing it here would
-    #: risk drift, but importing views at module import time creates a cycle
-    #: through decorators → models → views. Defer the import.
-    from .views import CHEQUE_WARNING_DAYS
+    #: CHEQUE_WARNING_DAYS and ORDER_FOLLOWUP_DAYS are defined in views.py;
+    #: recomputing them here would risk drift, but importing views at module
+    #: import time creates a cycle through decorators → models → views.
+    #: Defer the import.
+    from .views import CHEQUE_WARNING_DAYS, ORDER_FOLLOWUP_DAYS
 
     visible, _total = build_notifications(
         request.session,
         low_threshold=settings.LOW_STOCK_THRESHOLD,
         warning_days=CHEQUE_WARNING_DAYS,
+        order_followup_days=ORDER_FOLLOWUP_DAYS,
     )
     return {
         "notifications": visible,
