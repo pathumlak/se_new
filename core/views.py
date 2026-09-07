@@ -69,6 +69,7 @@ from .forms import (
     RiderForm,
     SetUserPasswordForm,
     StockAdjustmentForm,
+    SupplierBillPaymentForm,
     SupplierQuickForm,
     UserCreateForm,
     UserEditForm,
@@ -122,8 +123,27 @@ from .models import (
 #: A cheque is "maturing soon" this many days out.
 CHEQUE_WARNING_DAYS = 3
 
+#: How long after an order is marked Delivered before the topbar bell
+#: reminds someone to follow up with the customer.
+ORDER_FOLLOWUP_DAYS = 30
+
 MONEY = DecimalField(max_digits=12, decimal_places=2)
 ZERO = Decimal("0.00")
+
+#: Bank accounts offered when recording a cash payment on a bill — Direct
+#: Cash (the physical drawer, always available and not in this list — every
+#: page adds that option itself) plus whichever of Payment.Account is still
+#: open for new business. Dinusha is kept on Payment.Account itself so old
+#: payments, cheques and reports that reference it keep working; it's just no
+#: longer offered here, so a new payment can't be booked against it. Shared by
+#: every "pay this bill in cash" page (bill create/edit, a bill's follow-up
+#: payment, a customer settlement, a supplier bill payment) so removing an
+#: account is a one-line change instead of four.
+CASH_ACCOUNT_CHOICES = [
+    (value, label)
+    for value, label in Payment.Account.choices
+    if value != Payment.Account.DINUSHA
+]
 
 #: The day the system went live. Every customer's balance the moment they were
 #: created is treated as an opening balance carried in from before this date —
@@ -2940,17 +2960,18 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     payments = (
         Payment.objects.filter(bill__customer=customer)
         .exclude(bill__status=Bill.Status.CANCELLED)
-        # A cheque that bounced or is being held never became money, and the
-        # customer's balance has had it taken back off. Leaving the payment
-        # here would walk the running balance away from the account itself.
-        .exclude(
-            cheques__status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
-        )
+        # A held cheque never became money, and the customer's balance has
+        # had it taken back off. Leaving the payment here would walk the
+        # running balance away from the account itself. A bounced cheque
+        # stays in, though — see the "Returned Cheque" entries below, which
+        # reverse it right back out so the story reads as what happened
+        # (money in, then money taken back) rather than as if it never came.
+        .exclude(cheques__status=Cheque.Status.HELD)
         .select_related("bill")
     )
     for payment in payments:
         cheque = payment.cheques.filter(
-            status__in=[Cheque.Status.PENDING, Cheque.Status.DEPOSITED]
+            status__in=[Cheque.Status.PENDING, Cheque.Status.DEPOSITED, Cheque.Status.BOUNCED]
         ).order_by("pk").first()
         entries.append(
             {
@@ -2963,33 +2984,126 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "credit": payment.amount,
                 "is_note": False,
                 "payment_pk": payment.pk,
-                "payment_editable": payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE},
+                # A bounced or held cheque's payment can't be edited from the
+                # ledger (see customer_payment_edit) — don't offer a link that
+                # would only bounce back with an error.
+                "payment_editable": (
+                    payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE}
+                    and not payment.cheques.filter(
+                        status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
+                    ).exists()
+                ),
                 "sort_time": payment.paid_at,
             }
         )
 
     # Detached payments — money booked against the customer without a bill
-    # behind it (opening-balance settlement, top-up sitting as credit). See
-    # _allocate_settlement's spillover.
+    # behind it. On a regular customer's ledger this is money WE received
+    # (opening-balance settlement, top-up sitting as credit — see
+    # _allocate_settlement's spillover). On a supplier's ledger the very same
+    # shape of row (Payment.bill is null, Payment.customer set) is money WE
+    # paid OUT — the spillover from _allocate_supplier_bill_payment when a
+    # payment outran the bill it was made against. A Customer row is either a
+    # sales customer or a supplier, never both, so is_supplier alone is
+    # enough to tell the two apart.
     direct_payments = (
         Payment.objects.filter(bill__isnull=True, customer=customer)
-        .exclude(
-            cheques__status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
-        )
+        .exclude(cheques__status=Cheque.Status.HELD)
     )
     for payment in direct_payments:
+        if customer.is_supplier:
+            entries.append(
+                {
+                    "date": timezone.localdate(payment.paid_at),
+                    "kind": 2,
+                    "pk": payment.pk,
+                    "description": (
+                        f"Supplier Bill Payment - {payment.get_method_display()} "
+                        "(credit against account)"
+                    ),
+                    "sale": payment.amount,
+                    "credit": None,
+                    "is_note": False,
+                    "sort_time": payment.paid_at,
+                }
+            )
+        else:
+            entries.append(
+                {
+                    "date": timezone.localdate(payment.paid_at),
+                    "kind": 2,
+                    "pk": payment.pk,
+                    "description": f"{payment.get_method_display()} received (against balance)",
+                    "sale": None,
+                    "credit": payment.amount,
+                    "is_note": False,
+                    "payment_pk": payment.pk,
+                    "payment_editable": (
+                        payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE}
+                        and not payment.cheques.filter(
+                            status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]
+                        ).exists()
+                    ),
+                    "sort_time": payment.paid_at,
+                }
+            )
+
+    # Supplier Bill Payments — money paid OUT against a specific supplier
+    # bill. The mirror of the `payments` block above: a payment there brings
+    # money in (credit, balance falls); a payment here sends money out
+    # (sale, balance rises — see _allocate_supplier_bill_payment for the sign
+    # reasoning). Cancelled bills are excluded, matching every other section
+    # here.
+    supplier_payments = (
+        Payment.objects.filter(supplier_bill__supplier=customer)
+        .exclude(supplier_bill__status=SupplierBill.Status.CANCELLED)
+        .select_related("supplier_bill")
+    )
+    for payment in supplier_payments:
         entries.append(
             {
                 "date": timezone.localdate(payment.paid_at),
                 "kind": 2,
                 "pk": payment.pk,
-                "description": f"{payment.get_method_display()} received (against balance)",
-                "sale": None,
-                "credit": payment.amount,
+                "description": (
+                    f"Supplier Bill Payment - {payment.get_method_display()} "
+                    f"(Bill #{payment.supplier_bill_id})"
+                ),
+                "sale": payment.amount,
+                "credit": None,
                 "is_note": False,
-                "payment_pk": payment.pk,
-                "payment_editable": payment.method in {Payment.Method.CASH, Payment.Method.CHEQUE},
                 "sort_time": payment.paid_at,
+            }
+        )
+
+    # Returned (bounced) cheques — one line per cheque currently bounced,
+    # reversing the credit its "... received" line above still carries. Kept
+    # as its own entry, dated the day it was marked bounced, rather than
+    # folded silently into the original line: the ledger should read as what
+    # happened (money came in, then went back out) not as if it never came.
+    #
+    # Excludes a cheque against a cancelled bill's payment, mirroring the
+    # `payments` query above — a cancelled sale's money never counted either.
+    returned_cheques = customer.cheques.filter(status=Cheque.Status.BOUNCED).exclude(
+        payment__bill__status=Bill.Status.CANCELLED
+    )
+    for cheque in returned_cheques:
+        entries.append(
+            {
+                # bounced_at is set the moment a cheque lands on Bounced (see
+                # _move_balance_for_cheque). A cheque bounced before that field
+                # existed has none — fall back to its maturity date, the
+                # closest date on record to when it would have come back.
+                "date": cheque.bounced_at or cheque.maturity_date,
+                "kind": 3,  # after same-day payments, so it reads as the reversal it is
+                "pk": cheque.pk,
+                "description": f"Returned Cheque - {cheque.cheque_no} ({cheque.bank_name})",
+                "sale": cheque.amount,
+                "credit": None,
+                "is_note": False,
+                # Flags the on-screen row for a "Returned" badge, same idea as
+                # the Opening Balance row's — see customer_ledger.html.
+                "is_returned_cheque": True,
             }
         )
 
@@ -3237,7 +3351,7 @@ def customer_payment_edit(request, pk, payment_pk):
         messages.error(request, "Only this customer's cash or cheque payments can be edited.")
         return redirect("core:customer_ledger", pk=customer.pk)
     if payment.cheques.filter(status__in=[Cheque.Status.BOUNCED, Cheque.Status.HELD]).exists():
-        messages.error(request, "A bounced or held cheque cannot be edited from the ledger.")
+        messages.error(request, "A returned or held cheque cannot be edited from the ledger.")
         return redirect("core:customer_ledger", pk=customer.pk)
     if not form.is_valid():
         messages.error(request, f"Payment not saved: {form.errors.as_text()}")
@@ -3389,7 +3503,7 @@ def _bill_form_context(request, customers):
             for value, label in Bill.PaymentType.choices
             if value != Bill.PaymentType.PARTIAL
         ],
-        "account_choices": Payment.Account.choices,
+        "account_choices": CASH_ACCOUNT_CHOICES,
     }
 
 
@@ -3545,6 +3659,16 @@ def _optional_decimal(raw, label):
     if raw is None or str(raw).strip() == "":
         return ZERO
     return _decimal(raw, label, 2)
+
+
+def _round_to_whole(amount):
+    """Round a money amount to the nearest whole number, half up.
+
+    500.50 -> 501, 25.75 -> 26, 100.49 -> 100, 250.00 -> 250. Quantized back
+    to two decimal places afterwards so it keeps the same shape as every
+    other money field (Decimal("501.00"), not Decimal("501")).
+    """
+    return amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(Decimal("0.01"))
 
 
 def _read_cheque(raw):
@@ -4101,6 +4225,17 @@ def _write_bill(bill, user, payload):
             f"including delivery, discounted by {discount_amount:.2f}."
         )
 
+    # The bill is payable to the nearest whole rupee — a customer is never
+    # asked to find the 50 cents. raw_total keeps the exact pre-rounding
+    # figure around purely so the bill can show its working; round_off is
+    # just the two subtracted (positive when it rounded up, negative when it
+    # rounded down). Every payment, balance, and credit-limit check below
+    # this point is measured against the rounded `total`, since that's what
+    # actually gets collected.
+    raw_total = total
+    total = _round_to_whole(total)
+    round_off = total - raw_total
+
     # Everything downstream prices against `total`, not the subtotal: the
     # payment collects what the bill actually comes to, and the credit limit
     # measures the debt it actually leaves.
@@ -4153,6 +4288,8 @@ def _write_bill(bill, user, payload):
     bill.discount_percent = discount_percent
     bill.discount_reason = discount_reason
     bill.total_amount = total
+    bill.raw_total_amount = raw_total
+    bill.round_off_amount = round_off
     bill.paid_amount = paid
     bill.balance_change = balance_change
     bill.credit_applied = credit_applied
@@ -4489,7 +4626,7 @@ def bill_add_payment(request, pk):
         {
             "bill": bill,
             "form": form,
-            "account_choices": Payment.Account.choices,
+            "account_choices": CASH_ACCOUNT_CHOICES,
         },
     )
 
@@ -4692,7 +4829,7 @@ def customer_settle(request, pk):
             "form": form,
             "outstanding_bills": outstanding,
             "total_owed": total_owed,
-            "account_choices": Payment.Account.choices,
+            "account_choices": CASH_ACCOUNT_CHOICES,
         },
     )
 
@@ -5235,7 +5372,10 @@ def bill_list_excel(request):
 
     row = 2
     for bill in bills:
-        customer_name = bill.walk_in_name if bill.is_walk_in else (bill.customer.name if bill.customer else "")
+        customer_name = (
+            bill.customer.name if bill.customer
+            else (bill.walk_in_name or "Walk-in Customer")
+        )
         total_amount = bill.total_amount
         paid_amount = bill.paid_amount
         outstanding = bill.outstanding
@@ -5279,6 +5419,12 @@ def bill_list_excel(request):
 # A cheque is money we are counting on but do not have. Pending and deposited
 # both mean we still expect it, so the customer keeps the credit. Held and
 # bounced mean we don't, so the debt comes back.
+#
+# The very same statuses drive an issued cheque (one we wrote to pay a
+# supplier) too, just in the opposite direction on the balance: pending and
+# deposited both mean the supplier still has our cheque and can expect the
+# money, so it counts as paid; held and bounced mean it doesn't, so the debt
+# to them comes back.
 
 #: Statuses where the cheque's amount is still credited to the customer.
 CREDITED_CHEQUE_STATUSES = {Cheque.Status.PENDING, Cheque.Status.DEPOSITED}
@@ -5287,6 +5433,39 @@ CREDITED_CHEQUE_STATUSES = {Cheque.Status.PENDING, Cheque.Status.DEPOSITED}
 def _cheque_credit(status, amount):
     """What a cheque in this state contributes to its customer's balance."""
     return amount if status in CREDITED_CHEQUE_STATUSES else ZERO
+
+
+def _cheque_balance_effect(cheque, status, amount):
+    """Signed contribution one cheque state makes to Customer.balance.
+
+    A received cheque raises the balance while it's good (the customer owes
+    less). An issued cheque is the mirror image: while it's good it counts
+    as money already paid out, which *lowers* the supplier's balance (what
+    we owe them), so the same credited states contribute the negative of
+    the amount instead.
+    """
+    magnitude = _cheque_credit(status, amount)
+    return -magnitude if cheque.is_issued else magnitude
+
+
+def _sync_supplier_bill_for_cheque(cheque, delta):
+    """Keep a supplier bill's paid_amount and status in step with one of its
+    issued cheques changing status.
+
+    `delta` is the balance move `_move_balance_for_cheque` / `cheque_delete`
+    just applied to Customer.balance. paid_amount moves the opposite way:
+    the balance rising (we owe them again) means less has actually been
+    paid, and the balance falling (freshly counted as paid) means more has.
+    A detached issued cheque (no supplier_bill — the overpayment spillover)
+    has no bill to keep in step, so this is a no-op for those.
+    """
+    if not (cheque.is_issued and cheque.supplier_bill_id):
+        return
+    SupplierBill.objects.filter(pk=cheque.supplier_bill_id).update(
+        paid_amount=F("paid_amount") - delta
+    )
+    bill = SupplierBill.objects.get(pk=cheque.supplier_bill_id)
+    _refresh_supplier_bill_status(bill)
 
 
 def _move_balance_for_cheque(cheque, was_status, was_amount):
@@ -5300,10 +5479,21 @@ def _move_balance_for_cheque(cheque, was_status, was_amount):
         bounced  -> pending     re-presented, credit goes back on
         amount 100 -> 150       while credited, 50 more is owed to us
 
+    Runs the same on an issued cheque (one that pays a supplier bill), just
+    signed the other way by _cheque_balance_effect — and there it also keeps
+    the bill's paid_amount and status in step, since that side counts a
+    cheque as paid the moment it's issued rather than waiting for it to clear.
+
     Returns the signed move, for the message.
+
+    Also keeps `bounced_at` in step with the status: stamped with today the
+    moment a cheque lands on Bounced, cleared the moment it moves off again.
+    That date is what the ledger's "Returned Cheque" line is dated on — see
+    _ledger_rows — so a cheque that bounces more than once (re-presented,
+    bounces again) always carries the date of its *current* bounce.
     """
-    delta = _cheque_credit(cheque.status, cheque.amount) - _cheque_credit(
-        was_status, was_amount
+    delta = _cheque_balance_effect(cheque, cheque.status, cheque.amount) - _cheque_balance_effect(
+        cheque, was_status, was_amount
     )
     if delta:
         # F() so a balance moved elsewhere in the meantime is adjusted rather
@@ -5311,6 +5501,15 @@ def _move_balance_for_cheque(cheque, was_status, was_amount):
         Customer.objects.filter(pk=cheque.customer_id).update(
             balance=F("balance") + delta
         )
+        _sync_supplier_bill_for_cheque(cheque, delta)
+
+    if cheque.status == Cheque.Status.BOUNCED and was_status != Cheque.Status.BOUNCED:
+        cheque.bounced_at = timezone.localdate()
+        cheque.save(update_fields=["bounced_at"])
+    elif cheque.status != Cheque.Status.BOUNCED and was_status == Cheque.Status.BOUNCED:
+        cheque.bounced_at = None
+        cheque.save(update_fields=["bounced_at"])
+
     return delta
 
 
@@ -5319,6 +5518,16 @@ def _cheque_balance_note(cheque, delta):
     if not delta:
         return ""
     cheque.customer.refresh_from_db()
+    if cheque.is_issued:
+        if delta > 0:
+            return (
+                f" We owe {cheque.customer.name} {delta:.2f} again — "
+                f"balance is now {cheque.customer.balance:.2f}."
+            )
+        return (
+            f" {abs(delta):.2f} now counted as paid to {cheque.customer.name} — "
+            f"balance is now {cheque.customer.balance:.2f}."
+        )
     if delta < 0:
         return (
             f" {cheque.customer.name} owes {abs(delta):.2f} again — "
@@ -5398,19 +5607,21 @@ def cheque_delete(request, pk):
         messages.error(
             request,
             f"Cheque {cheque.cheque_no} has been deposited, so it can't be deleted. "
-            f"The money is in the bank — mark it bounced if it came back.",
+            f"The money is in the bank — mark it returned if it came back.",
         )
         return redirect("core:cheque_list")
 
     number = cheque.cheque_no
     customer = cheque.customer
+    was_issued = cheque.is_issued
 
     with transaction.atomic():
         # Only a credited cheque has anything to take back; a held or bounced
         # one was already reversed when it got that status.
-        delta = -_cheque_credit(cheque.status, cheque.amount)
+        delta = -_cheque_balance_effect(cheque, cheque.status, cheque.amount)
         if delta:
             Customer.objects.filter(pk=customer.pk).update(balance=F("balance") + delta)
+            _sync_supplier_bill_for_cheque(cheque, delta)
 
         # The cheque hangs off the payment by CASCADE, so removing the payment
         # removes both — the payment only ever existed to carry this cheque.
@@ -5418,12 +5629,18 @@ def cheque_delete(request, pk):
         payment.delete()
 
     customer.refresh_from_db()
-    note = (
-        f" {customer.name} owes {abs(delta):.2f} again — "
-        f"balance is now {customer.balance:.2f}."
-        if delta
-        else ""
-    )
+    if not delta:
+        note = ""
+    elif was_issued:
+        note = (
+            f" We owe {customer.name} {abs(delta):.2f} again — "
+            f"balance is now {customer.balance:.2f}."
+        )
+    else:
+        note = (
+            f" {customer.name} owes {abs(delta):.2f} again — "
+            f"balance is now {customer.balance:.2f}."
+        )
     messages.success(request, f"Cheque {number} was deleted." + note)
     return redirect("core:cheque_list")
 
@@ -5489,7 +5706,7 @@ def cheque_list_excel(request):
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
-    cheques = Cheque.objects.select_related("customer", "bill", "payment")
+    cheques = Cheque.objects.select_related("customer", "bill", "supplier_bill", "payment")
     cheques = month_filter.apply(cheques, field="received_date")
     if status:
         cheques = cheques.filter(status=status)
@@ -5551,7 +5768,7 @@ def cheque_list_excel(request):
     row = header_row + 1
     total = Decimal("0.00")
     for i, cheque in enumerate(cheques, start=1):
-        bill_ref = _cheque_bill_ref(cheque)
+        bill_ref = _cheque_bill_ref(cheque) or _cheque_supplier_bill_ref(cheque)
         ws.cell(row=row, column=1, value=i).alignment = center
         ws.cell(row=row, column=2, value=cheque.cheque_no)
         ws.cell(row=row, column=3,
@@ -5609,7 +5826,7 @@ CHEQUE_SORT_DEFAULT = "received_desc"
 
 
 def _cheque_bill_ref(cheque):
-    """The bill this cheque paid, however it got attached.
+    """The sales bill this cheque paid, however it got attached.
 
     A cheque taken at bill-save time carries ``bill`` directly; one that
     arrived later at settlement may only reach the bill through its payment.
@@ -5619,6 +5836,19 @@ def _cheque_bill_ref(cheque):
         return cheque.bill_id
     payment = cheque.payment
     return payment.bill_id if payment and payment.bill_id else None
+
+
+def _cheque_supplier_bill_ref(cheque):
+    """The supplier bill this issued cheque paid, mirroring _cheque_bill_ref.
+
+    Same two ways in: written straight onto the cheque when it was raised
+    against a specific bill, or (for a spillover cheque with no bill of its
+    own) not at all — same ``None`` result a detached top-up on the sales
+    side gets."""
+    if cheque.supplier_bill_id:
+        return cheque.supplier_bill_id
+    payment = cheque.payment
+    return payment.supplier_bill_id if payment and payment.supplier_bill_id else None
 
 
 def cheque_list(request):
@@ -5644,7 +5874,7 @@ def cheque_list(request):
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
-    cheques = Cheque.objects.select_related("customer", "bill", "payment")
+    cheques = Cheque.objects.select_related("customer", "bill", "supplier_bill", "payment")
     cheques = month_filter.apply(cheques, field="received_date")
     if status:
         cheques = cheques.filter(status=status)
@@ -5676,6 +5906,7 @@ def cheque_list(request):
             cheque.status == Cheque.Status.PENDING and cheque.maturity_date <= horizon
         )
         cheque.bill_ref = _cheque_bill_ref(cheque)
+        cheque.supplier_bill_ref = _cheque_supplier_bill_ref(cheque)
 
         key = (cheque.received_date, cheque.customer_id)
         if current is None or current["key"] != key:
@@ -6243,7 +6474,19 @@ def _reverse_supplier_bill(bill):
     Guarded, because received stock may already have been sold on. Taking it
     back out regardless would leave a product holding a negative quantity, and
     that product then vanishes from every sales screen.
+
+    Also guarded against a bill that already has payments recorded against
+    it — editing or deleting the purchase underneath money that has already
+    gone out the door would leave those Payment/Cheque/CashDrawer rows
+    pointing at a bill whose total no longer matches what they were paid
+    against. The operator has to undo the payments first (there's no
+    payment-reversal flow yet, same as the sales side has none either).
     """
+    if bill.paid_amount > ZERO:
+        raise SupplierBillError(
+            f"{bill.paid_amount:.2f} has already been paid against this bill — "
+            "it can't be edited or deleted until that's sorted out first."
+        )
     for item in bill.items.all():
         moved = Product.objects.filter(
             pk=item.product_id, qty__gte=item.qty
@@ -6269,14 +6512,25 @@ def _write_supplier_bill(bill, payload):
         raise SupplierBillError("Choose a supplier.")
 
     items = _read_supplier_lines(payload)
-    total = sum((item["line_total"] for item in items), ZERO)
+    raw_total = sum((item["line_total"] for item in items), ZERO)
+
+    # Same whole-rupee rounding as a sales bill — see _round_to_whole. The
+    # rounded figure is what we owe the supplier and what moves their
+    # balance; raw_total/round_off are kept only so the bill can display the
+    # pre-rounding math.
+    total = _round_to_whole(raw_total)
+    round_off = total - raw_total
 
     # 1. header. An edit keeps the date the goods actually arrived.
     bill.supplier = supplier
     if bill.pk is None:
         bill.bill_date = timezone.localdate()
     bill.total_amount = total
-    # Paying suppliers isn't built yet, so nothing has been paid on it.
+    bill.raw_total_amount = raw_total
+    bill.round_off_amount = round_off
+    # A fresh write — new or edited — starts with nothing paid on it.
+    # _reverse_supplier_bill refuses to run at all once a payment exists, so
+    # this only ever runs from a paid_amount of zero.
     bill.paid_amount = ZERO
     bill.status = SupplierBill.Status.UNPAID
     bill.notes = str(payload.get("notes") or "").strip()
@@ -6318,6 +6572,173 @@ def _supplier_bill_payload(request):
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _refresh_supplier_bill_status(bill):
+    """Set `bill.status` from what has now been paid — the money-out mirror
+    of _refresh_bill_status. No settled_amount on this side, so paid_amount
+    against total_amount is the whole comparison.
+    """
+    if bill.status == SupplierBill.Status.CANCELLED:
+        return
+    if bill.paid_amount >= bill.total_amount:
+        new_status = SupplierBill.Status.PAID
+    elif bill.paid_amount > ZERO:
+        new_status = SupplierBill.Status.PARTIAL
+    else:
+        new_status = SupplierBill.Status.UNPAID
+    if new_status != bill.status:
+        SupplierBill.objects.filter(pk=bill.pk).update(status=new_status)
+        bill.status = new_status
+
+
+def _record_supplier_payments(bill, supplier, parts, when=None):
+    """Payment rows for money paid OUT to a supplier — the mirror of
+    _record_payments.
+
+    `bill` is the SupplierBill being paid, or None for a detached payment
+    against the supplier's account with no specific bill behind it (an
+    overpayment's spillover, mirroring how a detached customer settlement
+    works).
+
+    Cash paid from the physical till draws the drawer down (CashDrawer OUT) —
+    same shape as a sales-side cash entry, just the other direction. Cash
+    paid straight out of a bank account never touches the till at all, so it
+    gets a CashTransfer row for the record and no CashDrawer entry — unlike
+    the sales side's paired IN+TRANSFER, there's no physical cash here to
+    net back out.
+    """
+    now = timezone.now()
+    if when is None:
+        when = bill.bill_date if bill is not None else timezone.localdate()
+
+    if bill is not None:
+        source_label = f"Supplier Bill #{bill.pk}"
+    else:
+        who = supplier.name if supplier is not None else "supplier settlement"
+        source_label = f"Supplier settlement · {who}"
+
+    if parts["cash"] > ZERO:
+        payment = Payment.objects.create(
+            supplier_bill=bill,
+            customer=supplier if bill is None else None,
+            method=Payment.Method.CASH,
+            amount=parts["cash"],
+            account=parts["cash_account"],
+            paid_at=now,
+        )
+        if parts["cash_account"]:
+            CashTransfer.objects.create(
+                payment=payment,
+                to_account=parts["cash_account"],
+                amount=parts["cash"],
+                transferred_at=now,
+            )
+        else:
+            CashDrawer.objects.create(
+                txn_date=when,
+                txn_type=CashDrawer.TxnType.OUT,
+                amount=parts["cash"],
+                reason=f"{source_label} cash",
+                supplier_bill=bill,
+            )
+
+    for cheque in parts["cheques"]:
+        payment = Payment.objects.create(
+            supplier_bill=bill,
+            customer=supplier if bill is None else None,
+            method=Payment.Method.CHEQUE,
+            amount=cheque["amount"],
+            paid_at=now,
+        )
+        Cheque.objects.create(
+            payment=payment,
+            supplier_bill=bill,
+            customer=supplier,
+            cheque_no=cheque["cheque_no"],
+            bank_name=cheque["bank_name"],
+            branch=cheque["branch"],
+            acc_no=cheque["acc_no"],
+            amount=cheque["amount"],
+            received_date=cheque["received_date"],
+            maturity_date=cheque["maturity_date"],
+        )
+
+
+def _allocate_supplier_bill_payment(bill, cash, cash_account, cheques, when=None):
+    """Apply one lump payment to a single supplier bill, spilling any excess
+    into a detached credit against the supplier.
+
+    The single-bill counterpart of _allocate_settlement: there is exactly
+    one bill in play here (the one the operator opened Make Payment from),
+    so there is no FIFO fan-out across bills. Order of operations:
+
+      1. Cash, up to the bill's remaining balance.
+      2. Cheques, each attached whole to the bill while it still owes
+         anything.
+      3. Spillover — whatever is left over once the bill is fully covered
+         (extra cash, or a whole cheque that arrived after the bill was
+         already settled) lands as a detached payment against the
+         supplier's account, same as an overpayment does on the customer
+         side.
+      4. Customer.balance (the supplier's account) falls by the whole lump —
+         opposite sign to the sales side, because a positive balance here is
+         what we owe them.
+
+    Must run inside a transaction — a half-applied payment would leave
+    Payment rows the bill's paid_amount never counted.
+    """
+    remaining = bill.remaining_balance
+    cash_left = cash
+    bill_cash = ZERO
+    bill_cheques = []
+    spillover_cheques = []
+
+    # --- cash, up to what the bill still owes ---
+    if cash_left > ZERO and remaining > ZERO:
+        bill_cash = min(cash_left, remaining)
+        remaining -= bill_cash
+        cash_left -= bill_cash
+
+    # --- cheques, each whole, while the bill still owes ---
+    for cheque in cheques:
+        if remaining > ZERO:
+            bill_cheques.append(cheque)
+            remaining -= cheque["amount"]
+        else:
+            spillover_cheques.append(cheque)
+
+    bill_total = bill_cash + sum((c["amount"] for c in bill_cheques), ZERO)
+    if bill_total > ZERO:
+        parts = {"cash": bill_cash, "cash_account": cash_account, "cheques": bill_cheques}
+        _record_supplier_payments(bill, bill.supplier, parts, when=when)
+        SupplierBill.objects.filter(pk=bill.pk).update(
+            paid_amount=F("paid_amount") + bill_total
+        )
+
+    # --- spillover into a detached payment against the supplier ---
+    if cash_left > ZERO or spillover_cheques:
+        parts = {
+            "cash": cash_left,
+            "cash_account": cash_account,
+            "cheques": spillover_cheques,
+        }
+        _record_supplier_payments(None, bill.supplier, parts, when=when)
+
+    cheque_total = sum((c["amount"] for c in cheques), ZERO)
+    total_paid = cash + cheque_total
+
+    # The supplier's balance falls by the whole lump — opposite direction to
+    # a customer settlement, since a positive balance here is what we owe
+    # them, not what they owe us.
+    Customer.objects.filter(pk=bill.supplier_id).update(
+        balance=F("balance") - total_paid
+    )
+
+    bill.refresh_from_db()
+    _refresh_supplier_bill_status(bill)
+
+    return {"bill_paid": bill_total, "total_paid": total_paid}
 
 
 @require_POST
@@ -6463,6 +6884,76 @@ def supplier_bill_delete(request, pk):
 
 
 @login_required
+def supplier_bill_pay(request, pk):
+    """Pay a supplier bill — the money-out mirror of customer_settle.
+
+    Same Cash / Cheque / Mixed form, same _allocate_* plumbing, just scoped
+    to one bill instead of fanned out across a customer's whole account:
+    Make Payment always starts from a specific bill, so there is exactly one
+    bill to apply the payment to first, with any excess spilling onto the
+    supplier's account as credit exactly like an overpaid settlement does.
+
+    Refused for:
+      - cancelled or draft bills: nothing to pay against yet, or ever.
+      - bills already fully paid.
+    """
+    bill = get_object_or_404(
+        SupplierBill.objects.select_related("supplier"), pk=pk
+    )
+
+    if bill.status == SupplierBill.Status.CANCELLED:
+        messages.error(request, "Cancelled bills can't take a payment.")
+        return redirect("core:supplier_bill_detail", pk=pk)
+    if bill.status == SupplierBill.Status.DRAFT:
+        messages.error(request, "Finish the bill before paying it.")
+        return redirect("core:supplier_bill_detail", pk=pk)
+    if bill.remaining_balance <= ZERO:
+        messages.info(request, f"Supplier bill #{bill.pk} is already fully paid.")
+        return redirect("core:supplier_bill_detail", pk=pk)
+
+    form = SupplierBillPaymentForm(request.POST or None, customer=bill.supplier)
+
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        cash = data["_cash_amount"]
+        account = data.get("cash_account") or ""
+        cheques = form.parsed_cheques
+        total_paid = data["_total_paid"]
+        remaining_before = bill.remaining_balance
+
+        with transaction.atomic():
+            _allocate_supplier_bill_payment(bill, cash, account, cheques)
+
+        excess = total_paid - remaining_before
+        if excess > ZERO:
+            messages.success(
+                request,
+                f"Paid off Supplier Bill #{bill.pk} ({remaining_before:,.2f}). "
+                f"{excess:,.2f} kept as credit on {bill.supplier.name}'s account.",
+            )
+        else:
+            messages.success(
+                request,
+                f"Recorded {total_paid:,.2f} against Supplier Bill #{bill.pk}. "
+                f"Remaining: {bill.remaining_balance:,.2f}.",
+            )
+        return redirect("core:supplier_bill_detail", pk=bill.pk)
+
+    if request.method == "POST":
+        messages.error(request, f"Payment not saved: {form.first_error()}")
+
+    return render(
+        request,
+        "core/supplier_bill_pay.html",
+        {
+            "bill": bill,
+            "form": form,
+            "account_choices": CASH_ACCOUNT_CHOICES,
+        },
+    )
+
+
+@login_required
 def supplier_bill_detail(request, pk):
     bill = get_object_or_404(
         SupplierBill.objects.select_related("supplier").annotate(
@@ -6477,8 +6968,11 @@ def supplier_bill_detail(request, pk):
     )
 
 
-@login_required
-def supplier_bill_list(request):
+def _filtered_supplier_bills(request):
+    """The supplier-bill queryset plus the filter values behind it — shared
+    by the list page and its Excel export so the download always matches
+    whatever the operator is looking at, the same way _filtered_bills does
+    for sales bills."""
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
@@ -6505,6 +6999,12 @@ def supplier_bill_list(request):
     if status:
         bills = bills.filter(status=status)
 
+    return bills, from_date, to_date, selected_supplier, status
+
+
+@login_required
+def supplier_bill_list(request):
+    bills, from_date, to_date, selected_supplier, status = _filtered_supplier_bills(request)
     page_obj = _paginate(request, bills)
 
     return render(
@@ -6524,6 +7024,81 @@ def supplier_bill_list(request):
             ),
         },
     )
+
+
+@login_required
+def supplier_bill_list_excel(request):
+    """Download the currently filtered supplier bills as an .xlsx — the
+    supplier-side mirror of bill_list_excel."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    bills, _, _, _, _ = _filtered_supplier_bills(request)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Supplier Bills"
+
+    headers = [
+        "Bill No",
+        "Date",
+        "Supplier Name",
+        "Status",
+        "Total Amount",
+        "Paid Amount",
+        "Remaining Balance",
+    ]
+
+    header_font = Font(bold=True)
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.font = header_font
+
+    total_amount_sum = Decimal("0.00")
+    paid_amount_sum = Decimal("0.00")
+    remaining_sum = Decimal("0.00")
+
+    row = 2
+    for bill in bills:
+        total_amount = bill.total_amount
+        paid_amount = bill.paid_amount
+        remaining = bill.remaining_balance
+
+        total_amount_sum += total_amount
+        paid_amount_sum += paid_amount
+        remaining_sum += remaining
+
+        ws.cell(row=row, column=1, value=f"#{bill.pk:04d}")
+        ws.cell(row=row, column=2, value=bill.bill_date.strftime("%Y-%m-%d") if bill.bill_date else "")
+        ws.cell(row=row, column=3, value=bill.supplier.name)
+        ws.cell(row=row, column=4, value=bill.get_status_display())
+        ws.cell(row=row, column=5, value=float(total_amount))
+        ws.cell(row=row, column=6, value=float(paid_amount))
+        ws.cell(row=row, column=7, value=float(remaining))
+        row += 1
+
+    # Totals row
+    ws.cell(row=row, column=4, value="Totals:")
+    ws.cell(row=row, column=4).font = header_font
+
+    total_cell = ws.cell(row=row, column=5, value=float(total_amount_sum))
+    total_cell.font = header_font
+
+    paid_cell = ws.cell(row=row, column=6, value=float(paid_amount_sum))
+    paid_cell.font = header_font
+
+    remaining_cell = ws.cell(row=row, column=7, value=float(remaining_sum))
+    remaining_cell.font = header_font
+
+    for col_letter, width in {"A": 12, "B": 12, "C": 26, "D": 16, "E": 16, "F": 16, "G": 18}.items():
+        ws.column_dimensions[col_letter].width = width
+
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = 'attachment; filename="supplier_bills.xlsx"'
+    wb.save(response)
+    return response
 
 
 # ------------------------------------------------------------- production
@@ -8851,7 +9426,15 @@ def order_set_status(request, pk, status):
         return redirect("core:order_detail", pk=pk)
     with transaction.atomic():
         order.status = status
-        order.save(update_fields=["status"])
+        update_fields = ["status"]
+        # Stamp the delivery date once, the first time this order becomes
+        # Delivered. Re-running the transition (or moving away and back)
+        # must not slide the date forward — the reminder counts from the
+        # real delivery day, not from whichever save happens to touch it.
+        if status == Order.Status.DELIVERED and order.delivered_at is None:
+            order.delivered_at = timezone.localdate()
+            update_fields.append("delivered_at")
+        order.save(update_fields=update_fields)
     messages.success(request, f"Quotation marked as {order.get_status_display()}.")
     return redirect("core:order_detail", pk=pk)
 
@@ -9614,8 +10197,9 @@ def order_production_check_data(request):
     Takes the set of order ids the operator has ticked and answers one
     question per product: can the shelf cover everything those orders ask
     for? Nothing outside the selection is considered — an unticked order
-    contributes zero. Cancelled orders are dropped even if selected, since a
-    cancelled quotation isn't owed any stock.
+    contributes zero. Cancelled and delivered orders are dropped even if
+    selected, since a cancelled quotation and an order that has already
+    shipped are both not owed any (more) stock.
 
     Request body: JSON ``{"order_ids": [1, 2, ...]}``. An empty selection is
     a valid request and returns empty result sets so the front-end can show
@@ -9655,7 +10239,7 @@ def order_production_check_data(request):
     # orders" tile reflects real, countable orders rather than ticked ids.
     valid_ids = list(
         Order.objects.filter(pk__in=order_ids)
-        .exclude(status=Order.Status.CANCELLED)
+        .exclude(status__in=[Order.Status.CANCELLED, Order.Status.DELIVERED])
         .values_list("pk", flat=True)
     )
 
