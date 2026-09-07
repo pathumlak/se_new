@@ -26,6 +26,8 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const emptyBody  = $('line-empty');
     const totalCell  = $('running-total');
     const saveTotal  = $('save-total');
+    const roundOffRow   = $('round-off-row');
+    const roundOffTotal = $('round-off-total');
     const countEl    = $('line-count');
     const nounEl     = $('line-noun');
     const saveBtn    = $('save-bill');
@@ -129,8 +131,18 @@ spanning lines, it isn't stripped and renders onto the page as text.
         }
       });
 
+      // The supplier is owed to the nearest whole rupee — matches
+      // _round_to_whole on the server, so the "Save" button shows exactly
+      // what will land on the bill and move their balance.
+      const payable = Math.round(total);
+      const roundOff = round2(payable - total);
+
       totalCell.textContent = money(total);
-      saveTotal.textContent = money(total);
+      saveTotal.textContent = money(payable);
+      if (roundOffRow) {
+        roundOffRow.classList.toggle('hidden', roundOff === 0);
+        if (roundOffTotal) roundOffTotal.textContent = money(payable);
+      }
       countEl.textContent = lines.length;
       nounEl.textContent = lines.length === 1 ? 'line' : 'lines';
       emptyBody.classList.toggle('hidden', lines.length > 0);
