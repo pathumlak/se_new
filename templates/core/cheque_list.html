@@ -152,6 +152,9 @@
                 <span class="text-slate-300">·</span>
                 <a href="{% url 'core:customer_detail' group.customer.pk %}"
                    class="text-sm font-semibold text-slate-800 hover:underline">{{ group.customer.name }}</a>
+                {% if group.customer.is_supplier %}
+                  <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Issued</span>
+                {% endif %}
                 <span class="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
                   {{ group.cheques|length }} cheque{{ group.cheques|length|pluralize }}
                 </span>
@@ -175,6 +178,9 @@
                 {% if cheque.bill_ref %}
                   <a href="{% url 'core:bill_detail' cheque.bill_ref %}"
                      class="font-medium text-slate-700 hover:underline">#{{ cheque.bill_ref }}</a>
+                {% elif cheque.supplier_bill_ref %}
+                  <a href="{% url 'core:supplier_bill_detail' cheque.supplier_bill_ref %}"
+                     class="font-medium text-slate-700 hover:underline">#{{ cheque.supplier_bill_ref }}</a>
                 {% else %}
                   <span class="text-slate-300">—</span>
                 {% endif %}
@@ -199,7 +205,7 @@
                 {% elif cheque.status == 'deposited' %}
                   <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Deposited</span>
                 {% elif cheque.status == 'bounced' %}
-                  <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Bounced</span>
+                  <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Returned</span>
                 {% else %}
                   <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Held</span>
                 {% endif %}
@@ -235,8 +241,9 @@
                             data-amount="{{ cheque.amount|floatformat:2|intcomma }}"
                             {# Pending and deposited are the states still credited to the customer. #}
                             data-credited="{% if cheque.status == 'pending' or cheque.status == 'deposited' %}yes{% else %}no{% endif %}"
+                            data-issued="{% if cheque.is_issued %}yes{% else %}no{% endif %}"
                             class="js-bounce rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
-                      Bounced
+                      Returned
                     </button>
                   {% endif %}
 
@@ -253,6 +260,7 @@
                             data-customer="{{ cheque.customer.name }}"
                             data-amount="{{ cheque.amount|floatformat:2|intcomma }}"
                             data-credited="{% if cheque.status == 'pending' %}yes{% else %}no{% endif %}"
+                            data-issued="{% if cheque.is_issued %}yes{% else %}no{% endif %}"
                             class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
                       Delete
                     </button>
@@ -309,7 +317,7 @@
 
         <p class="mt-2 text-xs text-slate-500">
           The payment that recorded this cheque goes with it. For a cheque that
-          came back, mark it bounced instead — that keeps the history.
+          came back, mark it returned instead — that keeps the history.
         </p>
       </div>
     </div>
@@ -331,7 +339,7 @@
 </div>
 {% endif %}
 
-<!-- ====================== Bounce modal ====================== -->
+<!-- ====================== Returned-cheque modal ====================== -->
 <div id="bounce-modal"
      class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
      role="dialog" aria-modal="true" aria-labelledby="bounce-modal-title">
@@ -347,7 +355,7 @@
         </span>
         <div class="min-w-0 flex-1">
           <h3 id="bounce-modal-title" class="text-base font-semibold text-slate-900">
-            Mark cheque <span id="bounce-modal-cheque"></span> bounced
+            Mark cheque <span id="bounce-modal-cheque"></span> as Returned
           </h3>
           <p class="mt-1 text-sm text-slate-600">
             <span id="bounce-modal-customer" class="font-semibold text-slate-900"></span>
@@ -376,7 +384,7 @@
         </button>
         <button type="submit"
                 class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
-          Mark bounced
+          Mark Returned
         </button>
       </div>
     </form>
@@ -410,7 +418,13 @@
       // A cheque still credited to the customer gives the debt back when it
       // bounces; one already held or bounced was never counted, so nothing
       // moves. Say which, rather than let the balance shift unannounced.
-      if (btn.dataset.credited === 'yes') {
+      // An issued cheque (paying a supplier) runs the other way: bouncing it
+      // means WE owe THEM again, not the reverse.
+      if (btn.dataset.credited === 'yes' && btn.dataset.issued === 'yes') {
+        effectEl.textContent = 'We will owe ' + btn.dataset.customer + ' ' + btn.dataset.amount +
+          ' again — it comes back off what was recorded as paid.';
+        effectEl.classList.remove('hidden');
+      } else if (btn.dataset.credited === 'yes') {
         effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
           ' again — the payment is taken back off their balance.';
         effectEl.classList.remove('hidden');
@@ -462,8 +476,13 @@
       amountEl.textContent = btn.dataset.amount;
 
       // Only a pending cheque is still credited, so only that one moves the
-      // balance on the way out.
-      if (btn.dataset.credited === 'yes') {
+      // balance on the way out. An issued cheque runs the other way — see
+      // the bounce modal above for the same split.
+      if (btn.dataset.credited === 'yes' && btn.dataset.issued === 'yes') {
+        effectEl.textContent = 'We will owe ' + btn.dataset.customer + ' ' + btn.dataset.amount +
+          ' again — it comes back off what was recorded as paid.';
+        effectEl.classList.remove('hidden');
+      } else if (btn.dataset.credited === 'yes') {
         effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
           ' again — the payment is taken back off their balance.';
         effectEl.classList.remove('hidden');
