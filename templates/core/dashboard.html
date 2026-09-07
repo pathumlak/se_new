@@ -430,7 +430,9 @@
             {% for bill in recent_bills %}
               <tr style="border-bottom:1px solid #f8fafc; cursor:pointer" onclick="window.location='{% url 'core:bill_detail' bill.pk %}'">
                 <td class="whitespace-nowrap px-5 py-3 text-[12px] text-slate-500">{{ bill.bill_date|date:"d M Y" }}</td>
-                <td class="px-5 py-3 text-[13px] font-semibold text-slate-800">{{ bill.customer.name|default:"Walk-in" }}</td>
+                <td class="px-5 py-3 text-[13px] font-semibold text-slate-800">
+                  {% if bill.customer %}{{ bill.customer.name }}{% else %}{{ bill.walk_in_name|default:"Walk-in Customer" }}{% endif %}
+                </td>
                 <td class="whitespace-nowrap px-5 py-3 text-right text-[13px] font-bold text-slate-900">Rs {{ bill.total_amount|floatformat:2|intcomma }}</td>
                 <td class="whitespace-nowrap px-5 py-3"><span class="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{{ bill.get_payment_type_display }}</span></td>
                 <td class="whitespace-nowrap px-5 py-3">
