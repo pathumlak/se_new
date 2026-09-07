@@ -113,6 +113,18 @@ spanning lines, it isn't stripped and renders onto the page as text.
           </td>
           <td></td>
         </tr>
+        <!-- Payable total is the running total rounded to the nearest whole
+             rupee — see _round_to_whole on the server. Hidden whenever the
+             sum already lands on a whole number. -->
+        <tr id="round-off-row" class="hidden">
+          <td colspan="3" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">
+            Rounded to payable total
+          </td>
+          <td id="round-off-total" class="whitespace-nowrap px-4 py-2 text-right text-sm font-semibold text-slate-900">
+            0.00
+          </td>
+          <td></td>
+        </tr>
       </tfoot>
     </table>
   </div>
