@@ -101,11 +101,11 @@
         {% for order in orders %}
           <tr class="transition-colors hover:bg-slate-50" data-order-row="{{ order.pk }}">
             <td class="px-4 py-3">
-              {% if order.status != 'cancelled' %}
+              {% if order.status != 'cancelled' and order.status != 'delivered' %}
                 <input type="checkbox" value="{{ order.pk }}" aria-label="Select order {{ order.reference_no }}"
                        class="js-order-check h-4 w-4 cursor-pointer rounded border-slate-300 text-slate-900 focus:ring-slate-900">
               {% else %}
-                <span class="text-slate-300" title="Cancelled orders can't be production-checked">—</span>
+                <span class="text-slate-300" title="{% if order.status == 'delivered' %}Delivered orders can't be production-checked{% else %}Cancelled orders can't be production-checked{% endif %}">—</span>
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
@@ -116,7 +116,9 @@
             <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ order.item_count }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">{{ order.total_amount|floatformat:2|intcomma }}</td>
             <td class="whitespace-nowrap px-4 py-3">
-              {% if order.status == 'confirmed' %}
+              {% if order.status == 'delivered' %}
+                <span class="rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 ring-1 ring-inset ring-sky-200">Delivered</span>
+              {% elif order.status == 'confirmed' %}
                 <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Confirmed</span>
               {% elif order.status == 'sent' %}
                 <span class="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">Sent</span>
