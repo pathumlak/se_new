@@ -799,6 +799,13 @@ class ChequeForm(forms.ModelForm):
             "bounce_new_date": "The date the customer agreed to re-present it.",
             "amount": "Changing this moves the customer's balance by the difference.",
         }
+        labels = {
+            # The field is still named bounce_new_date (renaming it needs a
+            # migration), but "Bounce new date" — Django's auto-generated
+            # label from that name — is user-facing, so it's spelled out here
+            # to match the "Returned" terminology used everywhere else.
+            "bounce_new_date": "New Expected Date",
+        }
 
     def clean_cheque_no(self):
         return self.cleaned_data["cheque_no"].strip()
@@ -833,13 +840,13 @@ class ChequeForm(forms.ModelForm):
                 "A reason is required when changing the received date.",
             )
 
-        # A bounced cheque without a re-presentation date is a dead end: the
+        # A returned cheque without a re-presentation date is a dead end: the
         # cheque list has nothing to chase it by.
         if cleaned.get("status") == Cheque.Status.BOUNCED and not cleaned.get(
             "bounce_new_date"
         ):
             self.add_error(
-                "bounce_new_date", "A bounced cheque needs a new expected date."
+                "bounce_new_date", "A returned cheque needs a new expected date."
             )
 
         return cleaned
@@ -1332,6 +1339,18 @@ class CustomerSettlementForm(forms.Form):
         for messages in self.errors.values():
             return messages[0] if messages else "Could not save."
         return "Could not save."
+
+
+class SupplierBillPaymentForm(CustomerSettlementForm):
+    """Pay a supplier bill — the money-out mirror of CustomerSettlementForm.
+
+    Same Cash / Cheque / Mixed shape, same validation, same overpayment
+    allowance (the excess lands as credit against the supplier, exactly like
+    a customer settlement does). Nothing about the parent's `clean()` is
+    specific to money coming in, so this is a plain subclass; the view is
+    what tells the two apart by which allocator it calls afterwards.
+    """
+    pass
 
 
 class PettyCashExpenseForm(forms.ModelForm):
