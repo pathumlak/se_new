@@ -19,6 +19,20 @@
 
     <h2 class="mt-2 text-xl font-semibold text-slate-900">Supplier Bill #{{ bill.pk }}</h2>
     <p class="mt-1 text-sm text-slate-500">{{ bill.bill_date|date:"j M Y" }}</p>
+
+    <div class="mt-2">
+      {% if bill.status == 'paid' %}
+        <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Paid</span>
+      {% elif bill.status == 'partial' %}
+        <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Partially Paid</span>
+      {% elif bill.status == 'unpaid' %}
+        <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Unpaid</span>
+      {% elif bill.status == 'cancelled' %}
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Cancelled</span>
+      {% else %}
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">{{ bill.get_status_display }}</span>
+      {% endif %}
+    </div>
   </div>
 
   <div class="flex shrink-0 flex-wrap gap-2">
@@ -26,6 +40,12 @@
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Supplier Ledger
     </a>
+    {% if bill.status != 'cancelled' and bill.status != 'draft' and bill.remaining_balance > 0 %}
+      <a href="{% url 'core:supplier_bill_pay' bill.pk %}"
+         class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+        Make Payment
+      </a>
+    {% endif %}
     <a href="{% url 'core:supplier_bill_edit' bill.pk %}"
        class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       Edit
@@ -77,12 +97,40 @@
             {% endfor %}
           </tbody>
           <tfoot class="border-t-2 border-slate-200 bg-slate-50">
+            {% if bill.round_off_amount %}
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Amount before rounding</td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-slate-900">
+                  {{ bill.raw_total_amount|floatformat:2|intcomma }}
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Rounding adjustment</td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium {% if bill.round_off_amount > 0 %}text-slate-900{% else %}text-rose-600{% endif %}">
+                  {% if bill.round_off_amount > 0 %}+{% endif %}{{ bill.round_off_amount|floatformat:2|intcomma }}
+                </td>
+              </tr>
+            {% endif %}
             <tr>
               <td colspan="4" class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</td>
               <td class="whitespace-nowrap px-4 py-3 text-right text-base font-semibold text-slate-900">
                 {{ bill.total_amount|floatformat:2|intcomma }}
               </td>
             </tr>
+            {% if bill.status != 'cancelled' and bill.status != 'draft' %}
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Paid Amount</td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-medium text-emerald-700">
+                  {{ bill.paid_amount|floatformat:2|intcomma }}
+                </td>
+              </tr>
+              <tr>
+                <td colspan="4" class="px-4 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Remaining Balance</td>
+                <td class="whitespace-nowrap px-4 py-2 text-right text-sm font-semibold {% if bill.remaining_balance > 0 %}text-rose-600{% else %}text-slate-400{% endif %}">
+                  {{ bill.remaining_balance|floatformat:2|intcomma }}
+                </td>
+              </tr>
+            {% endif %}
           </tfoot>
         </table>
       </div>
