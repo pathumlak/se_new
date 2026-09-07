@@ -259,7 +259,19 @@ class Bill(models.Model):
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_reason = models.CharField(max_length=255, blank=True)
+    # total_amount is always the rounded, payable figure — every payment,
+    # balance change and credit-limit check is measured against it. raw_total
+    # and round_off keep the pre-rounding math around purely for display (the
+    # bill can show "500.50, rounded +0.50 = 501"); nothing downstream ever
+    # reads them. Both are null on bills written before rounding existed, so
+    # the "was this rounded?" check is just "is round_off_amount set".
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    raw_total_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    round_off_amount = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True
+    )
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     # Written off rather than collected — see BillSettlement, which is the only
     # thing that should ever move this.
@@ -460,6 +472,17 @@ class Payment(models.Model):
         null=True,
         blank=True,
     )
+    # A payment we make TO a supplier against one of their bills — the mirror
+    # of `bill`, on the money-out side. Exactly one of `bill` / `supplier_bill`
+    # is ever set on a bill-attached payment; both null means a detached
+    # settlement against `customer` (unchanged from before this field).
+    supplier_bill = models.ForeignKey(
+        "SupplierBill",
+        on_delete=models.CASCADE,
+        related_name="payments",
+        null=True,
+        blank=True,
+    )
     customer = models.ForeignKey(
         Customer,
         on_delete=models.PROTECT,
@@ -476,8 +499,11 @@ class Payment(models.Model):
         ordering = ["-paid_at", "-id"]
 
     def __str__(self):
-        who = f"Bill #{self.bill_id}" if self.bill_id else (
-            f"customer #{self.customer_id}" if self.customer_id else "detached"
+        who = (
+            f"Bill #{self.bill_id}" if self.bill_id
+            else f"Supplier Bill #{self.supplier_bill_id}" if self.supplier_bill_id
+            else f"customer #{self.customer_id}" if self.customer_id
+            else "detached"
         )
         return f"{self.get_method_display()} {self.amount} · {who}"
 
@@ -510,7 +536,12 @@ class Cheque(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         DEPOSITED = "deposited", "Deposited"
-        BOUNCED = "bounced", "Bounced"
+        # The stored value and the constant name stay "bounced" — renaming
+        # either would need a data migration and touch every status filter
+        # in the codebase. Only the human-facing label changes, so
+        # get_status_display() (badges, exports, messages) reads "Returned"
+        # everywhere without a schema change.
+        BOUNCED = "bounced", "Returned"
         HELD = "held", "Held"
 
     payment = models.ForeignKey(
@@ -522,6 +553,18 @@ class Cheque(models.Model):
     # itself, which is also what lets one bill carry several cheques.
     bill = models.ForeignKey(
         Bill,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="cheques",
+    )
+    # A cheque WE write to pay a supplier bill — the money-out mirror of
+    # `bill`. `customer` below still points at who the cheque is with (the
+    # supplier here, same as it's the buyer for an incoming cheque), so the
+    # existing "every cheque against this account" queries keep working
+    # unchanged; this just says which side of the ledger it belongs to.
+    supplier_bill = models.ForeignKey(
+        "SupplierBill",
         on_delete=models.CASCADE,
         null=True,
         blank=True,
@@ -544,12 +587,34 @@ class Cheque(models.Model):
     )
     # Re-presentation date agreed with the customer after a bounce.
     bounce_new_date = models.DateField(null=True, blank=True)
+    # The date this cheque was marked Bounced/Returned — set the moment the
+    # status moves onto Bounced, cleared the moment it moves off it again
+    # (re-presented, or corrected). Drives the date of the "Returned Cheque"
+    # line _ledger_rows writes for it; see _move_balance_for_cheque. Left
+    # unset on a cheque that bounced before this field existed, in which
+    # case the ledger falls back to the maturity date.
+    bounced_at = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["maturity_date", "-id"]
 
     def __str__(self):
         return f"Cheque {self.cheque_no} · {self.bank_name} · {self.amount}"
+
+    @property
+    def is_issued(self):
+        """True for a cheque we wrote to pay a supplier; False for one we
+        received from a customer. Every other field means the same thing
+        either way — this just says which direction the money moves.
+
+        Keyed off `customer.is_supplier` rather than `supplier_bill_id`: a
+        cheque attached to a specific bill has that FK set, but a detached
+        one (the overpayment spillover — see _record_supplier_payments) is
+        still an issued cheque even with no bill behind it. `customer` is
+        always set either way, so it's the one field that tells the two
+        apart in every case.
+        """
+        return bool(self.customer_id) and self.customer.is_supplier
 
 
 class ChequeReceivedDateEditAudit(models.Model):
@@ -612,6 +677,15 @@ class CashDrawer(models.Model):
         blank=True,
         related_name="cash_drawer_entries",
     )
+    # Paying a supplier bill in cash draws the drawer down (txn_type OUT) —
+    # this is that entry's link back to the bill, same idea as `bill` above.
+    supplier_bill = models.ForeignKey(
+        "SupplierBill",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_drawer_entries",
+    )
 
     edit_reason = models.CharField(max_length=500, blank=True)
     edited_at = models.DateTimeField(null=True, blank=True)
@@ -644,7 +718,15 @@ class SupplierBill(models.Model):
         related_name="supplier_bills",
     )
     bill_date = models.DateField()
+    # See Bill.total_amount / raw_total_amount / round_off_amount for what
+    # each of these three means — same convention on both models.
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    raw_total_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    round_off_amount = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True
+    )
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.UNPAID
@@ -656,6 +738,13 @@ class SupplierBill(models.Model):
 
     def __str__(self):
         return f"Supplier Bill #{self.pk} · {self.supplier} · {self.total_amount}"
+
+    @property
+    def remaining_balance(self):
+        """What we still owe on this bill. Mirrors Bill.remaining_balance —
+        there's no settled_amount on the supplier side, so it's just the
+        total less what's been paid."""
+        return self.total_amount - self.paid_amount
 
 
 class SupplierBillItem(models.Model):
@@ -1295,6 +1384,7 @@ class Order(models.Model):
         DRAFT = "draft", "Draft"
         SENT = "sent", "Sent"
         CONFIRMED = "confirmed", "Confirmed"
+        DELIVERED = "delivered", "Delivered"
         CANCELLED = "cancelled", "Cancelled"
 
     # Null for a walk-in quotation, where customer_name is the only record of
@@ -1320,6 +1410,11 @@ class Order(models.Model):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.DRAFT
     )
+    #: Set once, the day the order first moves to DELIVERED (see
+    #: order_set_status) — never touched again by later status changes, so it
+    #: stays the true delivery date even if the order is later re-opened.
+    #: This is what the one-month reminder notification counts from.
+    delivered_at = models.DateField(null=True, blank=True)
     created_by = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
