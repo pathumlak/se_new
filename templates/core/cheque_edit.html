@@ -121,7 +121,7 @@
             </label>
             {{ form.status }}
             <p class="mt-1.5 text-xs text-slate-400">
-              Pending and deposited count as received; held and bounced don't.
+              Pending and deposited count as received; held and returned don't.
             </p>
             {% for error in form.status.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
           </div>
