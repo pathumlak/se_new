@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -1364,6 +1365,56 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertContains(
             self.client.get(reverse("core:customer_detail", args=[self.customer.pk])), url
         )
+
+    def test_customer_settlement_uses_receipt_date_for_ledger_and_drawer(self):
+        customer = Customer.objects.create(
+            name="August Settlement",
+            balance=Decimal("-300.00"),
+        )
+        first_bill = Bill.objects.create(
+            customer=customer,
+            bill_date=date(2026, 7, 1),
+            total_amount=Decimal("100.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+            balance_change=Decimal("-100.00"),
+        )
+        second_bill = Bill.objects.create(
+            customer=customer,
+            bill_date=date(2026, 7, 1),
+            total_amount=Decimal("200.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+            balance_change=Decimal("-200.00"),
+        )
+
+        settlement_time = timezone.make_aware(datetime(2026, 8, 2, 10, 30))
+        with patch("core.views.timezone.now", return_value=settlement_time):
+            response = self.client.post(
+                reverse("core:customer_settle", args=[customer.pk]),
+                {
+                    "method": "cash",
+                    "cash_amount": "300.00",
+                    "cash_account": "",
+                    "cheques_json": "",
+                },
+            )
+
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[customer.pk]))
+        first_bill.refresh_from_db()
+        second_bill.refresh_from_db()
+        self.assertEqual(first_bill.bill_date, date(2026, 7, 1))
+        self.assertEqual(second_bill.bill_date, date(2026, 7, 1))
+        self.assertEqual(
+            list(CashDrawer.objects.order_by("txn_date", "id").values_list("txn_date", "amount")),
+            [(date(2026, 8, 2), Decimal("100.00")), (date(2026, 8, 2), Decimal("200.00"))],
+        )
+
+        rows = self.client.get(
+            reverse("core:customer_ledger", args=[customer.pk])
+        ).context["rows"]
+        payment_rows = [row for row in rows if row.get("payment_pk")]
+        self.assertEqual([row["date"] for row in payment_rows], [date(2026, 8, 2), date(2026, 8, 2)])
 
 
 class CustomerPricePageTests(UserFactoryMixin, TestCase):

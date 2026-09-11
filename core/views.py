@@ -4674,7 +4674,7 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None)
         if take <= ZERO:
             continue
         parts = {"cash": take, "cash_account": cash_account, "cheques": []}
-        _record_payments(bill, customer, parts)
+        _record_payments(bill, customer, parts, when=when)
         Bill.objects.filter(pk=bill.pk).update(
             paid_amount=F("paid_amount") + take,
             balance_change=F("balance_change") + take,
@@ -4699,7 +4699,7 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None)
             continue
 
         parts = {"cash": ZERO, "cash_account": "", "cheques": [cheque]}
-        _record_payments(target, customer, parts)
+        _record_payments(target, customer, parts, when=when)
         Bill.objects.filter(pk=target.pk).update(
             paid_amount=F("paid_amount") + cheque["amount"],
             balance_change=F("balance_change") + cheque["amount"],
@@ -4770,7 +4770,14 @@ def customer_settle(request, pk):
         # the customer, chipping away at an opening balance or piling up
         # as credit if the account is already square).
         with transaction.atomic():
-            _allocate_settlement(customer, cash, account, cheques, request.user)
+            _allocate_settlement(
+                customer,
+                cash,
+                account,
+                cheques,
+                request.user,
+                when=timezone.localdate(),
+            )
 
         if outstanding:
             excess = total_paid - total_owed
