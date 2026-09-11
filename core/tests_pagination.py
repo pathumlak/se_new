@@ -85,7 +85,7 @@ class PaginationTests(TestCase):
                 self.assertEqual(r.context["page_obj"].paginator.per_page, 50, url)
 
     def test_bill_list_pages_and_counts(self):
-        r = self.client.get(reverse("core:bill_list"))
+        r = self.client.get(reverse("core:bill_list"), {"month": "all"})
         page = r.context["page_obj"]
         self.assertEqual(page.paginator.count, 60)
         self.assertEqual(page.paginator.num_pages, 3)
@@ -93,7 +93,9 @@ class PaginationTests(TestCase):
         self.assertContains(r, "Showing")
         self.assertContains(r, "to <span")
 
-        r2 = self.client.get(reverse("core:bill_list"), {"page": 3})
+        r2 = self.client.get(
+            reverse("core:bill_list"), {"month": "all", "page": 3}
+        )
         self.assertEqual(len(r2.context["bills"]), 10)
         self.assertEqual(r2.context["page_obj"].start_index(), 51)
         self.assertEqual(r2.context["page_obj"].end_index(), 60)
@@ -102,7 +104,12 @@ class PaginationTests(TestCase):
         """The pager must carry the filters, not drop them."""
         r = self.client.get(
             reverse("core:bill_list"),
-            {"from_date": "2026-01-01", "to_date": "2026-12-31", "status": "unpaid"},
+            {
+                "month": "all",
+                "from_date": "2026-01-01",
+                "to_date": "2026-12-31",
+                "status": "unpaid",
+            },
         )
         html = r.content.decode()
         # The next-page link keeps every filter alongside page=2.
@@ -113,7 +120,10 @@ class PaginationTests(TestCase):
 
     def test_page_param_is_not_duplicated(self):
         """?page=2 -> next must be page=3, not page=2&page=3."""
-        r = self.client.get(reverse("core:bill_list"), {"page": 2, "status": "unpaid"})
+        r = self.client.get(
+            reverse("core:bill_list"),
+            {"month": "all", "page": 2, "status": "unpaid"},
+        )
         html = r.content.decode()
         self.assertNotIn("page=2&amp;page=3", html)
         self.assertIn("page=3", html)
@@ -125,11 +135,26 @@ class PaginationTests(TestCase):
                 self.assertEqual(r.status_code, 200)
 
     def test_ellipsis_and_current_page(self):
-        r = self.client.get(reverse("core:bill_list"), {"page": 2})
+        r = self.client.get(
+            reverse("core:bill_list"), {"month": "all", "page": 2}
+        )
         html = r.content.decode()
         self.assertIn('aria-current="page"', html)
         self.assertIn("Previous", html)
         self.assertIn("Next", html)
+
+    def test_bill_month_filter_and_newest_first_order(self):
+        january = self.client.get(
+            reverse("core:bill_list"), {"month": "2026-01"}
+        )
+        self.assertEqual(january.context["page_obj"].paginator.count, 31)
+        self.assertEqual(january.context["bills"][0].bill_date, date(2026, 1, 31))
+
+        all_months = self.client.get(
+            reverse("core:bill_list"), {"month": "all"}
+        )
+        self.assertEqual(all_months.context["page_obj"].paginator.count, 60)
+        self.assertEqual(all_months.context["bills"][0].bill_date, date(2026, 3, 1))
 
     def test_cash_drawer_running_balance_continues_across_pages(self):
         """Page 2's running column must carry page 1's rows, not restart."""
@@ -163,10 +188,14 @@ class PaginationTests(TestCase):
         for name, key, expected in cases:
             with self.subTest(name=name):
                 seen = []
-                r = self.client.get(reverse(name))
+                params = {"month": "all"} if name == "core:bill_list" else None
+                r = self.client.get(reverse(name), params)
                 pages = r.context["page_obj"].paginator.num_pages
                 for n in range(1, pages + 1):
-                    resp = self.client.get(reverse(name), {"page": n})
+                    page_params = {"page": n}
+                    if params:
+                        page_params.update(params)
+                    resp = self.client.get(reverse(name), page_params)
                     seen += [obj.pk for obj in resp.context[key]]
                 self.assertEqual(len(seen), expected, f"{name}: row count")
                 self.assertEqual(
