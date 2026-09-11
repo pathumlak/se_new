@@ -262,7 +262,7 @@
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill No</th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
-            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Subtotal</th>
+            <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Final Amount</th>
             <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Payment Type</th>
             <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Paid</th>
             <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
@@ -281,7 +281,7 @@
               <td class="whitespace-nowrap px-4 py-3 text-slate-900">
                 {% if bill.customer %}{{ bill.customer.name }}{% else %}{{ bill.walk_in_name|default:"Walk-in Customer" }}{% endif %}
               </td>
-              <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ bill.subtotal|floatformat:2|intcomma }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
               <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.get_payment_type_display }}</td>
               <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
               <td class="whitespace-nowrap px-4 py-3 text-right font-medium

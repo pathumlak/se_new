@@ -195,7 +195,7 @@
 <table>
   <thead>
     <tr>
-      <th>Date</th><th>Bill No</th><th>Customer</th><th class="r">Subtotal</th>
+      <th>Date</th><th>Bill No</th><th>Customer</th><th class="r">Final Amount</th>
       <th>Payment Type</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th>
     </tr>
   </thead>
@@ -205,7 +205,7 @@
         <td>{{ bill.bill_date|date:"j M Y" }}</td>
         <td>#{{ bill.pk }}</td>
         <td>{% if bill.customer %}{{ bill.customer.name }}{% else %}{{ bill.walk_in_name|default:"Walk-in Customer" }}{% endif %}</td>
-        <td class="r">{{ bill.subtotal|floatformat:2|intcomma }}</td>
+        <td class="r">{{ bill.total_amount|floatformat:2|intcomma }}</td>
         <td>{{ bill.get_payment_type_display }}</td>
         <td class="r">{{ bill.paid_amount|floatformat:2|intcomma }}</td>
         <td class="r {% if bill.outstanding > 0 %}red{% else %}grey{% endif %}">
