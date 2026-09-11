@@ -5251,6 +5251,7 @@ def held_bill_delete(request, pk):
 
 
 def _filtered_bills(request):
+    month_filter = get_month_filter(request)
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
@@ -5272,7 +5273,10 @@ def _filtered_bills(request):
         outstanding=Greatest(
             F("total_amount") - F("paid_amount"), Value(ZERO), output_field=MONEY
         )
-    ).order_by("pk")
+    )
+    bills = month_filter.apply(bills, field="bill_date").order_by(
+        "-bill_date", "-bill_number", "-pk"
+    )
 
     if from_date:
         bills = bills.filter(bill_date__gte=from_date)
@@ -5299,12 +5303,30 @@ def _filtered_bills(request):
             q_filter |= Q(bill_number=int(digits))
         bills = bills.filter(q_filter)
 
-    return bills, from_date, to_date, selected_customer, payment_type, status, query
+    return (
+        bills,
+        from_date,
+        to_date,
+        selected_customer,
+        payment_type,
+        status,
+        query,
+        month_filter,
+    )
 
 
 @login_required
 def bill_list(request):
-    bills, from_date, to_date, selected_customer, payment_type, status, query = _filtered_bills(request)
+    (
+        bills,
+        from_date,
+        to_date,
+        selected_customer,
+        payment_type,
+        status,
+        query,
+        month_filter,
+    ) = _filtered_bills(request)
 
     # Paginate before the per-row work below: _reversal_summary queries per
     # bill, so priced over the whole filtered set it would cost a page's worth
@@ -5328,10 +5350,17 @@ def bill_list(request):
             "payment_type": payment_type,
             "status": status,
             "query": query,
+            "month_filter": month_filter,
             "payment_types": Bill.PaymentType.choices,
             "statuses": Bill.Status.choices,
             "is_filtered": bool(
-                from_date or to_date or selected_customer or payment_type or status or query
+                from_date
+                or to_date
+                or selected_customer
+                or payment_type
+                or status
+                or query
+                or not month_filter.is_all_time
             ),
         },
     )
@@ -5341,10 +5370,7 @@ def bill_list(request):
 def bill_list_excel(request):
     from openpyxl import Workbook
     from openpyxl.styles import Font
-    bills, _, _, _, _, _, _ = _filtered_bills(request)
-    # Re-order the queryset for excel output if needed, though they should be in default order
-    # Let's ensure it's ordered properly
-    bills = bills.order_by("-bill_date", "-pk")
+    bills, _, _, _, _, _, _, _ = _filtered_bills(request)
 
     wb = Workbook()
     ws = wb.active
