@@ -458,7 +458,6 @@ class Payment(models.Model):
 
     class Account(models.TextChoices):
         SENOVKA = "senovka", "Senovka"
-        DINUSHA = "dinusha", "Dinusha"
 
     # Nullable so a settlement can arrive without a bill behind it — a
     # payment against an opening balance, or a top-up that sits as customer
@@ -642,7 +641,6 @@ class ChequeReceivedDateEditAudit(models.Model):
 class CashTransfer(models.Model):
     class Account(models.TextChoices):
         SENOVKA = "senovka", "Senovka"
-        DINUSHA = "dinusha", "Dinusha"
 
     payment = models.ForeignKey(
         Payment,

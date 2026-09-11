@@ -130,19 +130,10 @@ ORDER_FOLLOWUP_DAYS = 30
 MONEY = DecimalField(max_digits=12, decimal_places=2)
 ZERO = Decimal("0.00")
 
-#: Bank accounts offered when recording a cash payment on a bill — Direct
-#: Cash (the physical drawer, always available and not in this list — every
-#: page adds that option itself) plus whichever of Payment.Account is still
-#: open for new business. Dinusha is kept on Payment.Account itself so old
-#: payments, cheques and reports that reference it keep working; it's just no
-#: longer offered here, so a new payment can't be booked against it. Shared by
-#: every "pay this bill in cash" page (bill create/edit, a bill's follow-up
-#: payment, a customer settlement, a supplier bill payment) so removing an
-#: account is a one-line change instead of four.
+#: Bank accounts offered when recording a cash payment on a bill. Physical
+#: cash is represented by the blank option; Senovka is the only bank account.
 CASH_ACCOUNT_CHOICES = [
-    (value, label)
-    for value, label in Payment.Account.choices
-    if value != Payment.Account.DINUSHA
+    (value, label) for value, label in Payment.Account.choices
 ]
 
 #: The day the system went live. Every customer's balance the moment they were
@@ -6119,9 +6110,6 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
             # Scoped to the viewed month so the account tiles reset each month.
             "senovka_banked": _account_banked(
                 CashTransfer.Account.SENOVKA, month_filter
-            ),
-            "dinusha_banked": _account_banked(
-                CashTransfer.Account.DINUSHA, month_filter
             ),
             "page_obj": page_obj,
             "rows": page_obj.object_list,

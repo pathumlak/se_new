@@ -485,7 +485,7 @@ class CashDrawerOutForm(forms.ModelForm):
     KIND_CHOICES = [
         ("withdrawal", "Owner Withdrawal"),
         ("senovka", "Transfer to Senovka Account"),
-        ("dinusha", "Transfer to Dinusha Account"),
+        
     ]
 
     kind = forms.ChoiceField(
