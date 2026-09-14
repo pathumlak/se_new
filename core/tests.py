@@ -6428,9 +6428,27 @@ class SalesReportTests(UserFactoryMixin, TestCase):
         self.client.force_login(self.make_manager())
 
     def report(self, **params):
+        params.setdefault("month", "all")
         response = self.client.get(reverse("core:sales_report"), params)
         self.response = response
         return response.context
+
+    def test_report_defaults_to_current_month_and_can_reset_to_all_months(self):
+        july_bill = Bill.objects.create(
+            customer=self.nimal, bill_date=date(2026, 7, 1),
+            subtotal=Decimal("700.00"), total_amount=Decimal("700.00"),
+            payment_type=Bill.PaymentType.PAY_LATER, status=Bill.Status.UNPAID,
+        )
+        with patch("core.utils.timezone.localdate", return_value=date(2026, 6, 15)):
+            current = self.client.get(reverse("core:sales_report"))
+
+        self.assertEqual(current.context["month_filter"].param, "2026-06")
+        self.assertNotIn(july_bill.pk, [bill.pk for bill in current.context["bills"]])
+
+        all_months = self.client.get(
+            reverse("core:sales_report"), {"month": "all"}
+        )
+        self.assertIn(july_bill.pk, [bill.pk for bill in all_months.context["bills"]])
 
     # ---- summary ----
     def test_the_cards_add_up(self):

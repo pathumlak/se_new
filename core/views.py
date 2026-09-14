@@ -7483,6 +7483,7 @@ def _sales_report_context(request):
     """Everything both the page and the PDF report, from one set of filters."""
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
+    month_filter = get_month_filter(request)
 
     customer_id = request.GET.get("customer_id", "").strip()
     selected_customer = int(customer_id) if customer_id.isdigit() else None
@@ -7500,6 +7501,8 @@ def _sales_report_context(request):
         bills = bills.filter(bill_date__gte=from_date)
     if to_date:
         bills = bills.filter(bill_date__lte=to_date)
+    if not from_date and not to_date:
+        bills = month_filter.apply(bills, field="bill_date")
     if selected_customer:
         bills = bills.filter(customer_id=selected_customer)
     if payment_type:
@@ -7564,12 +7567,14 @@ def _sales_report_context(request):
         "total_outstanding": total_outstanding,
         "from_date": from_date,
         "to_date": to_date,
+        "month_filter": month_filter,
         "selected_customer": selected_customer,
         "payment_type": payment_type,
         "customers": Customer.objects.filter(is_walk_in_account=False),
         "payment_types": Bill.PaymentType.choices,
         "is_filtered": bool(
             from_date or to_date or selected_customer or payment_type
+            or not month_filter.is_all_time
         ),
         "generated_at": timezone.localtime(),
     }
