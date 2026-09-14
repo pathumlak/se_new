@@ -6144,8 +6144,8 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
 
 @login_required
 def cash_drawer_excel(request):
-    """Download the cash drawer log as an .xlsx, honouring the from/to date
-    filters.
+    """Download the cash drawer log as an .xlsx, honouring the same date
+    filters as the drawer page.
 
     Same running-balance / totals arithmetic as the page, so the sheet reads
     as a printable copy of what is on screen — including the opening balance
@@ -6158,19 +6158,27 @@ def cash_drawer_excel(request):
 
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
+    month_filter = get_month_filter(request)
 
     entries = CashDrawer.objects.select_related("bill", "bill__customer")
     if from_date:
         entries = entries.filter(txn_date__gte=from_date)
     if to_date:
         entries = entries.filter(txn_date__lte=to_date)
+    if not from_date and not to_date:
+        entries = month_filter.apply(entries, field="txn_date")
     entries = entries.order_by("txn_date", "id")
 
-    opening = (
-        _cash_drawer_balance(CashDrawer.objects.filter(txn_date__lt=from_date))
-        if from_date
-        else ZERO
-    )
+    if from_date:
+        opening = _cash_drawer_balance(
+            CashDrawer.objects.filter(txn_date__lt=from_date)
+        )
+    elif not month_filter.is_all_time:
+        opening = _cash_drawer_balance(
+            CashDrawer.objects.filter(txn_date__lt=month_filter.start)
+        )
+    else:
+        opening = ZERO
 
     wb = Workbook()
     ws = wb.active

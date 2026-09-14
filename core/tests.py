@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +16,7 @@ from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
+from openpyxl import load_workbook
 
 from core import views
 from core.models import (
@@ -4687,6 +4688,26 @@ class CashDrawerPageTests(UserFactoryMixin, TestCase):
                 (date(2026, 6, 9), False, Decimal("3000.00")),
             ],
         )
+
+    def test_excel_export_respects_selected_month(self):
+        CashDrawer.objects.create(
+            txn_date=date(2026, 7, 10), txn_type=CashDrawer.TxnType.IN,
+            amount=Decimal("700.00"), reason="July transaction",
+        )
+        CashDrawer.objects.create(
+            txn_date=date(2026, 8, 10), txn_type=CashDrawer.TxnType.IN,
+            amount=Decimal("800.00"), reason="August transaction",
+        )
+
+        response = self.client.get(
+            reverse("core:cash_drawer_excel"), {"month": "2026-07"}
+        )
+        workbook = load_workbook(BytesIO(response.content), read_only=True)
+        rows = list(workbook.active.iter_rows(min_row=5, values_only=True))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("July transaction", [row[1] for row in rows])
+        self.assertNotIn("August transaction", [row[1] for row in rows])
 
     def test_the_last_running_balance_is_the_drawer_balance(self):
         ctx = self.page()
