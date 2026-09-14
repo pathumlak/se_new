@@ -123,7 +123,9 @@
       <th>Rider</th>
       <th>From</th>
       <th>To</th>
-      <th class="r">KM</th>
+      <th class="r">Start KM</th>
+      <th class="r">End KM</th>
+      <th class="r">Distance (KM)</th>
       <th>Purpose</th>
       <th>Added by</th>
     </tr>
@@ -136,18 +138,20 @@
         <td>{{ trip.rider.name }}</td>
         <td>{{ trip.from_location }}</td>
         <td>{{ trip.to_location }}</td>
+        <td class="r">{{ trip.start_km|floatformat:2|intcomma }}</td>
+        <td class="r">{{ trip.end_km|floatformat:2|intcomma }}</td>
         <td class="r">{{ trip.km|floatformat:2|intcomma }}</td>
         <td>{% if trip.purpose %}{{ trip.purpose }}{% else %}—{% endif %}</td>
         <td>{{ trip.added_by.username }}</td>
       </tr>
     {% empty %}
-      <tr><td colspan="8" class="empty">No trips this period.</td></tr>
+      <tr><td colspan="10" class="empty">No trips this period.</td></tr>
     {% endfor %}
   </tbody>
   {% if trips %}
     <tfoot>
       <tr>
-        <td colspan="5" class="r">Total</td>
+        <td colspan="7" class="r">Total</td>
         <td class="r">{{ total_km|floatformat:2|intcomma }}</td>
         <td colspan="2"></td>
       </tr>

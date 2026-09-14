@@ -1277,7 +1277,7 @@ class Rider(models.Model):
 
 
 class VehicleTrip(models.Model):
-    """One journey. `km` is this trip alone, not an odometer reading.
+    """One journey with odometer readings and a stored calculated distance.
 
     Storing the leg rather than the odometer is what makes a trip editable and
     deletable on its own: odometer readings only mean anything in sequence, so
@@ -1298,6 +1298,8 @@ class VehicleTrip(models.Model):
     trip_date = models.DateField()
     from_location = models.CharField(max_length=255)
     to_location = models.CharField(max_length=255)
+    start_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    end_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
     km = models.DecimalField(max_digits=10, decimal_places=2)
     purpose = models.CharField(max_length=500, blank=True)
     added_by = models.ForeignKey(
@@ -1309,6 +1311,10 @@ class VehicleTrip(models.Model):
 
     class Meta:
         ordering = ["-trip_date", "-id"]
+
+    def save(self, *args, **kwargs):
+        self.km = self.end_km - self.start_km
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.vehicle} · {self.km}km on {self.trip_date}"

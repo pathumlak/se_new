@@ -8855,8 +8855,8 @@ def material_purchase_weigh_delete(request, pk):
 
 # =========================================================== vehicle tracker
 # Vehicles, riders, and a log of trips between them. No stock and no money —
-# a trip is a leg with its own km reading (not an odometer), so month totals
-# are a sum of legs. See models Vehicle / Rider / VehicleTrip.
+# a trip stores start/end odometer readings and a calculated distance, so
+# month totals are a sum of legs. See models Vehicle / Rider / VehicleTrip.
 
 
 def _month_km_for(qs, month_filter, group_field, name_field):

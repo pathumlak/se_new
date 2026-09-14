@@ -1705,7 +1705,7 @@ class VehicleTripForm(forms.ModelForm):
 
     class Meta:
         model = VehicleTrip
-        fields = ["trip_date", "vehicle", "rider", "from_location", "to_location", "km", "purpose"]
+        fields = ["trip_date", "vehicle", "rider", "from_location", "to_location", "start_km", "end_km", "purpose"]
         widgets = {
             "trip_date": forms.DateInput(
                 format="%Y-%m-%d",
@@ -1715,7 +1715,8 @@ class VehicleTripForm(forms.ModelForm):
             "rider": forms.Select(attrs={"class": SELECT_CLASSES}),
             "from_location": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Yard"}),
             "to_location": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Kandy"}),
-            "km": forms.NumberInput(attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0.01", "placeholder": "0.00"}),
+            "start_km": forms.NumberInput(attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}),
+            "end_km": forms.NumberInput(attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0", "placeholder": "0.00"}),
             "purpose": forms.TextInput(attrs={"class": INPUT_CLASSES, "placeholder": "e.g. Delivery to customer"}),
         }
 
@@ -1738,11 +1739,15 @@ class VehicleTripForm(forms.ModelForm):
         self.fields["vehicle"].queryset = vehicles
         self.fields["rider"].queryset = riders
 
-    def clean_km(self):
-        km = self.cleaned_data.get("km") or Decimal("0")
-        if km <= 0:
-            raise forms.ValidationError("KM must be above 0.")
-        return km
+    def clean(self):
+        cleaned = super().clean()
+        start_km = cleaned.get("start_km")
+        end_km = cleaned.get("end_km")
+        if start_km is not None and end_km is not None:
+            if end_km <= start_km:
+                raise forms.ValidationError("End KM must be greater than Start KM.")
+            cleaned["km"] = end_km - start_km
+        return cleaned
 
     def clean_from_location(self):
         return (self.cleaned_data.get("from_location") or "").strip()

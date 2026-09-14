@@ -111,7 +111,9 @@
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Rider</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">From</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">To</th>
-          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">KM</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Start KM</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">End KM</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Distance (KM)</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Purpose</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Added By</th>
           <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
@@ -125,6 +127,8 @@
             <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ trip.rider.name }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-700">{{ trip.from_location }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-700">{{ trip.to_location }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-700">{{ trip.start_km|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-700">{{ trip.end_km|floatformat:2|intcomma }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">{{ trip.km|floatformat:2|intcomma }}</td>
             <td class="px-4 py-3 text-slate-600">
               {% if trip.purpose %}{{ trip.purpose }}{% else %}<span class="text-slate-300">—</span>{% endif %}
@@ -139,7 +143,8 @@
                       data-rider="{{ trip.rider_id }}"
                       data-from="{{ trip.from_location }}"
                       data-to="{{ trip.to_location }}"
-                      data-km="{{ trip.km|stringformat:'.2f' }}"
+                      data-start-km="{{ trip.start_km|stringformat:'.2f' }}"
+                      data-end-km="{{ trip.end_km|stringformat:'.2f' }}"
                       data-purpose="{{ trip.purpose }}">
                 Edit
               </button>
@@ -152,7 +157,7 @@
             </td>
           </tr>
         {% empty %}
-          <tr><td colspan="9" class="px-4 py-12 text-center text-sm text-slate-500">
+          <tr><td colspan="11" class="px-4 py-12 text-center text-sm text-slate-500">
             {% if is_filtered %}No trips match these filters.{% else %}No trips logged.{% endif %}
           </td></tr>
         {% endfor %}
@@ -238,8 +243,16 @@
           <input type="date" id="t-date" name="trip_date" required class="{{ form.trip_date.field.widget.attrs.class }}">
         </div>
         <div>
-          <label for="t-km" class="mb-1 block text-xs font-medium text-slate-600">KM</label>
-          <input type="number" step="0.01" min="0.01" id="t-km" name="km" required class="{{ form.km.field.widget.attrs.class }}">
+          <label for="t-start-km" class="mb-1 block text-xs font-medium text-slate-600">Start KM</label>
+          <input type="number" step="0.01" min="0" id="t-start-km" name="start_km" required class="{{ form.start_km.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="t-end-km" class="mb-1 block text-xs font-medium text-slate-600">End KM</label>
+          <input type="number" step="0.01" min="0" id="t-end-km" name="end_km" required class="{{ form.end_km.field.widget.attrs.class }}">
+        </div>
+        <div>
+          <label for="t-distance" class="mb-1 block text-xs font-medium text-slate-600">Distance (KM)</label>
+          <input type="text" id="t-distance" readonly value="0.00" class="{{ form.start_km.field.widget.attrs.class }} bg-slate-50">
         </div>
         <div>
           <label for="t-vehicle" class="mb-1 block text-xs font-medium text-slate-600">Vehicle</label>
@@ -308,7 +321,9 @@
     const form    = document.getElementById('trip-form');
     const title   = document.getElementById('trip-title');
     const dateEl  = document.getElementById('t-date');
-    const kmEl    = document.getElementById('t-km');
+    const startKmEl = document.getElementById('t-start-km');
+    const endKmEl   = document.getElementById('t-end-km');
+    const distanceEl = document.getElementById('t-distance');
     const vEl     = document.getElementById('t-vehicle');
     const rEl     = document.getElementById('t-rider');
     const fromEl  = document.getElementById('t-from');
@@ -317,6 +332,15 @@
 
     function open(m){m.classList.remove('hidden');m.classList.add('flex');}
     function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+    function updateDistance() {
+      const start = parseFloat(startKmEl.value);
+      const end = parseFloat(endKmEl.value);
+      distanceEl.value = Number.isFinite(start) && Number.isFinite(end) && end >= start
+        ? (end - start).toFixed(2)
+        : '0.00';
+    }
+    startKmEl.addEventListener('input', updateDistance);
+    endKmEl.addEventListener('input', updateDistance);
 
     document.querySelectorAll('.js-close').forEach(function (b) {
       b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
@@ -332,12 +356,12 @@
       title.textContent = 'Add Trip';
       form.action = CREATE;
       dateEl.value = TODAY;
-      kmEl.value = '';
+      startKmEl.value = ''; endKmEl.value = ''; updateDistance();
       if (vEl.options.length) vEl.selectedIndex = 0;
       if (rEl.options.length) rEl.selectedIndex = 0;
       fromEl.value = ''; toEl.value = ''; purpEl.value = '';
       open(modal);
-      setTimeout(function () { kmEl.focus(); }, 30);
+      setTimeout(function () { startKmEl.focus(); }, 30);
     });
 
     document.querySelectorAll('.js-edit').forEach(function (btn) {
@@ -345,14 +369,16 @@
         title.textContent = 'Edit Trip';
         form.action = btn.dataset.action;
         dateEl.value = btn.dataset.date;
-        kmEl.value = btn.dataset.km;
+        startKmEl.value = btn.dataset.startKm;
+        endKmEl.value = btn.dataset.endKm;
+        updateDistance();
         vEl.value = btn.dataset.vehicle;
         rEl.value = btn.dataset.rider;
         fromEl.value = btn.dataset.from;
         toEl.value = btn.dataset.to;
         purpEl.value = btn.dataset.purpose;
         open(modal);
-        setTimeout(function () { kmEl.focus(); kmEl.select(); }, 30);
+        setTimeout(function () { startKmEl.focus(); startKmEl.select(); }, 30);
       });
     });
 
