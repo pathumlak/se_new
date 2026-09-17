@@ -1743,7 +1743,9 @@ def stock_ledger(request, pk):
     period = _ledger_period(request)
     rows, stats = _ledger_period_slice(ledger["rows"], period["start"], period["end"])
 
-    page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
+    # Keep the running balances and period stats chronological, but present
+    # the newest movement first for the operator scanning the ledger.
+    page_obj = _paginate(request, list(reversed(rows)), settings.PAGINATE_BY_REPORTS)
 
     # If the ledger's all-time closing figure disagrees with the shelf, say so —
     # a mismatch means a stock move happened outside the app. This check is
@@ -3197,13 +3199,44 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     return entries
 
 
+def _customer_ledger_period_slice(rows, start, end):
+    """Return a customer ledger window and its display totals.
+
+    `rows` already carries balances calculated across the complete history.
+    Filtering here therefore changes only what is shown; it never rebuilds or
+    mutates the stored transaction values or their running balances.
+    """
+    prior_balance = None
+    in_period = []
+    for row in rows:
+        if start is not None and row["date"] < start:
+            prior_balance = row["balance"]
+            continue
+        if end is not None and row["date"] > end:
+            continue
+        in_period.append(row)
+
+    opening = prior_balance if prior_balance is not None else (rows[0]["balance"] if rows else ZERO)
+    closing = in_period[-1]["balance"] if in_period else opening
+    return in_period, {
+        "opening": opening,
+        "total_sale": sum((row["sale"] or ZERO for row in in_period), ZERO),
+        "total_credit": sum((row["credit"] or ZERO for row in in_period), ZERO),
+        "closing_balance": closing,
+    }
+
+
 @login_required
 def customer_ledger(request, pk):
     customer = get_object_or_404(_customers(), pk=pk)
 
-    from_date = _parse_date(request.GET.get("from_date"))
-    to_date = _parse_date(request.GET.get("to_date"))
-    rows = _ledger_rows(customer, from_date, to_date)
+    period = _ledger_period(request)
+    all_rows = _ledger_rows(customer)
+    rows, stats = _customer_ledger_period_slice(
+        all_rows, period["start"], period["end"]
+    )
+    from_date = period["from_date"]
+    to_date = period["to_date"]
     edit_payment = None
     edit_form = None
     edit_opening = request.GET.get("edit_opening") == "1"
@@ -3245,7 +3278,9 @@ def customer_ledger(request, pk):
     #
     # The PDF calls _ledger_rows itself and never sees this — a printed ledger
     # is the whole account, not page 1 of it.
-    page_obj = _paginate(request, rows, settings.PAGINATE_BY_REPORTS)
+    page_obj = _paginate(
+        request, list(reversed(rows)), settings.PAGINATE_BY_REPORTS
+    )
 
     # Top-card current balance in the ledger's own convention (positive = owes
     # us), so the number the reader sees at the top is the same number the
@@ -3262,10 +3297,12 @@ def customer_ledger(request, pk):
             "rows": page_obj.object_list,
             "from_date": from_date,
             "to_date": to_date,
-            "is_filtered": bool(from_date or to_date),
-            "total_sale": sum((r["sale"] or ZERO for r in rows), ZERO),
-            "total_credit": sum((r["credit"] or ZERO for r in rows), ZERO),
-            "closing_balance": rows[-1]["balance"] if rows else ZERO,
+            "month_filter": period["month_filter"],
+            "period": period,
+            "is_filtered": not period["is_all_time"],
+            "total_sale": stats["total_sale"],
+            "total_credit": stats["total_credit"],
+            "closing_balance": stats["closing_balance"],
             # Positive = owes us (matches the ledger rows and the final total).
             "current_balance": current_balance,
             "edit_payment": edit_payment,

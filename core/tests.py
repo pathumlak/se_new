@@ -1008,6 +1008,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.client.force_login(self.user)
 
     def rows(self, **params):
+        params.setdefault("month", "all")
         response = self.client.get(
             reverse("core:customer_ledger", args=[self.customer.pk]), params
         )
@@ -1025,18 +1026,18 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(
             self.shape(self.rows()),
             [
-                (date(2026, 6, 1), "Opening Balance", Decimal("0.00"), None, Decimal("0.00")),
-                (date(2026, 6, 1), "Sale", Decimal("1000.00"), None, Decimal("1000.00")),
-                (date(2026, 6, 2), "Purchase", None, Decimal("300.00"), Decimal("700.00")),
-                (date(2026, 6, 3), "Sale", Decimal("500.00"), None, Decimal("1200.00")),
-                (date(2026, 6, 3), "Cash received", None, Decimal("200.00"), Decimal("1000.00")),
                 (date(2026, 6, 4), "Cheque received", None, Decimal("400.00"), Decimal("600.00")),
+                (date(2026, 6, 3), "Cash received", None, Decimal("200.00"), Decimal("1000.00")),
+                (date(2026, 6, 3), "Sale", Decimal("500.00"), None, Decimal("1200.00")),
+                (date(2026, 6, 2), "Purchase", None, Decimal("300.00"), Decimal("700.00")),
+                (date(2026, 6, 1), "Sale", Decimal("1000.00"), None, Decimal("1000.00")),
+                (date(2026, 6, 1), "Opening Balance", Decimal("0.00"), None, Decimal("0.00")),
             ],
         )
 
-    def test_rows_are_sorted_by_date_ascending(self):
+    def test_rows_are_sorted_by_date_descending(self):
         dates = [r["date"] for r in self.rows()]
-        self.assertEqual(dates, sorted(dates))
+        self.assertEqual(dates, sorted(dates, reverse=True))
 
     def test_every_ledger_has_one_opening_row_before_legacy_activity(self):
         legacy = Customer.objects.create(
@@ -1053,20 +1054,21 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         )
 
         rows = self.client.get(
-            reverse("core:customer_ledger", args=[legacy.pk])
+            reverse("core:customer_ledger", args=[legacy.pk]),
+            {"month": "all"},
         ).context["rows"]
 
-        self.assertEqual([row["description"] for row in rows], ["Opening Balance", "Sale"])
-        self.assertTrue(rows[0]["is_opening"])
-        self.assertEqual(rows[0]["date"], date(2026, 6, 1))
-        self.assertEqual(rows[0]["balance"], Decimal("-50.00"))
-        self.assertEqual(rows[-1]["balance"], Decimal("50.00"))
+        self.assertEqual([row["description"] for row in rows], ["Sale", "Opening Balance"])
+        self.assertTrue(rows[-1]["is_opening"])
+        self.assertEqual(rows[-1]["date"], date(2026, 6, 1))
+        self.assertEqual(rows[-1]["balance"], Decimal("-50.00"))
+        self.assertEqual(rows[0]["balance"], Decimal("50.00"))
 
     def test_a_sale_precedes_money_taken_the_same_day(self):
         """Both fall on 3 Jun; the sale has to land first or the balance dips
         below what was actually owed."""
         june3 = [r for r in self.rows() if r["date"] == date(2026, 6, 3)]
-        self.assertEqual([r["description"] for r in june3], ["Sale", "Cash received"])
+        self.assertEqual([r["description"] for r in june3], ["Cash received", "Sale"])
 
     def test_cancelled_bills_and_their_payments_are_excluded(self):
         rows = self.rows()
@@ -1130,7 +1132,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
             notes="  PVC granules  ",
         )
         rows = self.rows()
-        self.assertEqual(rows[-1]["description"], "Purchase - PVC granules")
+        self.assertEqual(rows[0]["description"], "Purchase - PVC granules")
 
     def test_purchase_without_notes_has_no_dangling_dash(self):
         descriptions = [r["description"] for r in self.rows()]
@@ -1146,7 +1148,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
             amount=Decimal("25.00"),
             paid_at=timezone.make_aware(datetime(2026, 6, 6, 9, 0)),
         )
-        self.assertEqual(self.rows()[-1]["description"], "Transfer received")
+        self.assertEqual(self.rows()[0]["description"], "Transfer received")
 
     # ---- totals ----
     def test_totals_and_closing_balance(self):
@@ -1167,12 +1169,12 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(
             [(r["date"], r["description"], r["balance"]) for r in rows],
             [
-                (date(2026, 6, 1), "Opening Balance", Decimal("0.00")),
-                (date(2026, 6, 1), "Sale", Decimal("1000.00")),
-                (date(2026, 6, 1), "Cheque received", Decimal("700.00")),
-                (date(2026, 6, 2), "Purchase", Decimal("400.00")),
-                (date(2026, 6, 3), "Sale", Decimal("900.00")),
                 (date(2026, 6, 3), "Cash received", Decimal("700.00")),
+                (date(2026, 6, 3), "Sale", Decimal("900.00")),
+                (date(2026, 6, 2), "Purchase", Decimal("400.00")),
+                (date(2026, 6, 1), "Cheque received", Decimal("700.00")),
+                (date(2026, 6, 1), "Sale", Decimal("1000.00")),
+                (date(2026, 6, 1), "Opening Balance", Decimal("0.00")),
             ],
         )
         audit = PaymentEditAudit.objects.get(payment=payment)
@@ -1235,7 +1237,10 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         cheque.refresh_from_db()
         self.assertEqual(cheque.received_date, date(2026, 7, 25))
         self.assertEqual(timezone.localtime(payment.paid_at).date(), date(2026, 7, 25))
-        ledger = self.client.get(reverse("core:customer_ledger", args=[self.customer.pk]))
+        ledger = self.client.get(
+            reverse("core:customer_ledger", args=[self.customer.pk]),
+            {"month": "all"},
+        )
         sync_rows = [row for row in ledger.context["rows"] if row.get("payment_pk") == payment.pk]
         self.assertEqual(sync_rows[0]["date"], date(2026, 7, 25))
         audit = ChequeReceivedDateEditAudit.objects.get(cheque=cheque)
@@ -1255,11 +1260,11 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         )
         self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
         rows = self.rows()
-        self.assertEqual(rows[0]["description"], "Opening Balance")
-        self.assertEqual(rows[0]["balance"], Decimal("1200.00"))
+        self.assertEqual(rows[-1]["description"], "Opening Balance")
+        self.assertEqual(rows[-1]["balance"], Decimal("1200.00"))
         self.assertEqual([r["balance"] for r in rows], [
-            Decimal("1200.00"), Decimal("2200.00"), Decimal("1900.00"),
-            Decimal("2400.00"), Decimal("2200.00"), Decimal("1800.00"),
+            Decimal("1800.00"), Decimal("2200.00"), Decimal("2400.00"),
+            Decimal("1900.00"), Decimal("2200.00"), Decimal("1200.00"),
         ])
         self.assertEqual(self.response.context["closing_balance"], Decimal("1800.00"))
 
@@ -1304,29 +1309,30 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertEqual(audit.new_amount, Decimal("0.00"))
 
     def test_closing_balance_is_zero_when_there_is_nothing_to_show(self):
-        response = self.client.get(reverse("core:customer_ledger", args=[self.empty.pk]))
+        response = self.client.get(
+            reverse("core:customer_ledger", args=[self.empty.pk]), {"month": "all"}
+        )
         self.assertEqual(response.context["closing_balance"], Decimal("0"))
         self.assertContains(response, "Balance carried forward")
 
     # ---- date range ----
     def test_from_date_keeps_only_later_rows(self):
         rows = self.rows(from_date="2026-06-03")
-        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 3), date(2026, 6, 3), date(2026, 6, 4)])
+        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 4), date(2026, 6, 3), date(2026, 6, 3)])
 
     def test_to_date_keeps_only_earlier_rows(self):
         rows = self.rows(to_date="2026-06-02")
-        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 1), date(2026, 6, 1), date(2026, 6, 2)])
+        self.assertEqual([r["date"] for r in rows], [date(2026, 6, 2), date(2026, 6, 1), date(2026, 6, 1)])
 
     def test_both_bounds_are_inclusive(self):
         rows = self.rows(from_date="2026-06-02", to_date="2026-06-03")
         self.assertEqual(len(rows), 3)
 
-    def test_filtered_balance_restarts_at_zero(self):
-        """Per spec the run always starts at 0, so a part-range view is not a
-        statement of the whole account. The page says so out loud."""
+    def test_filtered_balance_carries_in_prior_activity(self):
+        """A date window keeps the already-calculated historical balances."""
         rows = self.rows(from_date="2026-06-03")
-        self.assertEqual(rows[0]["balance"], Decimal("500.00"))  # not 1200
-        self.assertContains(self.response, "Running balance starts at 0")
+        self.assertEqual(rows[0]["balance"], Decimal("600.00"))
+        self.assertContains(self.response, "Running balance includes activity before")
 
     def test_unparsable_dates_are_ignored_not_500s(self):
         for params in ({"from_date": "nonsense"}, {"to_date": "2026-02-31"}):
@@ -1343,6 +1349,53 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertContains(self.response, "10,000.00")  # credit limit
         self.assertContains(self.response, "9,400.00")   # available: 10000 - 600 owed
         self.assertEqual(self.response.context["customer"].available_credit, Decimal("9400.00"))
+
+    def test_default_customer_ledger_is_current_month_and_newest_first(self):
+        today = timezone.localdate()
+        previous_month_end = today.replace(day=1) - timedelta(days=1)
+        Bill.objects.create(
+            customer=self.customer,
+            bill_date=previous_month_end,
+            total_amount=Decimal("25.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+        Bill.objects.create(
+            customer=self.customer,
+            bill_date=today,
+            total_amount=Decimal("50.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+
+        response = self.client.get(
+            reverse("core:customer_ledger", args=[self.customer.pk])
+        )
+        rows = response.context["rows"]
+
+        self.assertEqual(response.context["period"]["mode"], "month")
+        self.assertEqual(response.context["month_filter"].param, today.strftime("%Y-%m"))
+        self.assertTrue(rows)
+        self.assertTrue(all(row["date"].month == today.month for row in rows))
+        self.assertEqual(rows[0]["date"], today)
+
+    def test_customer_ledger_all_time_includes_previous_month(self):
+        previous_month_end = timezone.localdate().replace(day=1) - timedelta(days=1)
+        Bill.objects.create(
+            customer=self.customer,
+            bill_date=previous_month_end,
+            total_amount=Decimal("25.00"),
+            payment_type=Bill.PaymentType.PAY_LATER,
+            status=Bill.Status.UNPAID,
+        )
+
+        response = self.client.get(
+            reverse("core:customer_ledger", args=[self.customer.pk]),
+            {"month": "all"},
+        )
+
+        self.assertTrue(response.context["period"]["is_all_time"])
+        self.assertIn(previous_month_end, [row["date"] for row in response.context["rows"]])
 
     def test_page_offers_a_pdf_export(self):
         self.rows()
@@ -1412,7 +1465,8 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         )
 
         rows = self.client.get(
-            reverse("core:customer_ledger", args=[customer.pk])
+            reverse("core:customer_ledger", args=[customer.pk]),
+            {"month": "all"},
         ).context["rows"]
         payment_rows = [row for row in rows if row.get("payment_pk")]
         self.assertEqual([row["date"] for row in payment_rows], [date(2026, 8, 2), date(2026, 8, 2)])
@@ -7502,6 +7556,41 @@ class StockLedgerTests(UserFactoryMixin, TestCase):
         )
         self.assertIn("attachment; filename=", response["Content-Disposition"])
         self.assertIn("stock_ledger_elbow_", response["Content-Disposition"])
+
+    def test_default_stock_ledger_is_current_month_and_newest_first(self):
+        today = timezone.localdate()
+        previous_month_end = today.replace(day=1) - timedelta(days=1)
+        ProductionEntry.objects.create(
+            product=self.product,
+            production_date=previous_month_end,
+            qty_produced=Decimal("10.000"),
+            reason="Older batch",
+        )
+        ProductionEntry.objects.create(
+            product=self.product,
+            production_date=today,
+            qty_produced=Decimal("20.000"),
+            reason="Current batch",
+        )
+
+        response = self.client.get(
+            reverse("core:stock_ledger", args=[self.product.pk])
+        )
+        rows = response.context["rows"]
+
+        self.assertEqual(response.context["period"]["mode"], "month")
+        self.assertEqual(response.context["month_filter"].param, today.strftime("%Y-%m"))
+        self.assertEqual([row["date"] for row in rows], [today])
+
+        all_time = self.client.get(
+            reverse("core:stock_ledger", args=[self.product.pk]),
+            {"month": "all"},
+        )
+        self.assertTrue(all_time.context["period"]["is_all_time"])
+        self.assertEqual(
+            [row["date"] for row in all_time.context["rows"]],
+            [today, previous_month_end, previous_month_end],
+        )
 
 
 class CustomerListExcelTests(UserFactoryMixin, TestCase):

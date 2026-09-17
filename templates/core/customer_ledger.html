@@ -37,7 +37,11 @@
   <p style="font-size:12px;">
     {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% endif %}
     ·
-    {% if from_date or to_date %}
+    {% if period.mode == 'month' %}
+      {{ month_filter.label }}
+    {% elif period.mode == 'all' %}
+      All activity
+    {% elif from_date or to_date %}
       {% if from_date %}{{ from_date|date:"j M Y" }}{% else %}Start{% endif %}
       –
       {% if to_date %}{{ to_date|date:"j M Y" }}{% else %}Today{% endif %}
@@ -124,8 +128,16 @@
   </div>
 </div>
 
-<!-- Date range -->
-<form method="get" class="no-print mb-5 flex flex-col gap-2 sm:flex-row sm:items-end">
+<!-- Period filter -->
+<form method="get" class="no-print mb-5 flex flex-wrap items-end gap-2">
+  <div>
+    <label for="month" class="mb-1.5 block text-xs font-medium text-slate-600">Month</label>
+    <input type="month" id="month" name="month"
+           value="{% if period.mode == 'month' %}{{ month_filter.param }}{% endif %}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <span class="pb-2 text-xs text-slate-400">or range</span>
   <div>
     <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">From</label>
     <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
@@ -143,20 +155,22 @@
             class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Apply
     </button>
-    {% if is_filtered %}
-      <a href="{% url 'core:customer_ledger' customer.pk %}"
-         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
-        Clear
-      </a>
-    {% endif %}
+    <a href="{% url 'core:customer_ledger' customer.pk %}"
+       class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+      This month
+    </a>
+    <a href="?month=all"
+       class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+      All time
+    </a>
   </div>
+  <span class="ml-1 pb-2 text-xs text-slate-400">Showing: {{ period.label }}</span>
 </form>
 
-{% if from_date %}
-  {# The running balance restarts at 0 on the first row shown, so a part-range view is not a statement of what is owed overall. #}
+{% if period.mode == 'range' and from_date %}
+  {# The rows retain the balance carried in from before the selected range. #}
   <p class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-    Running balance starts at 0 on the first row below. Activity before
-    {{ from_date|date:"j M Y" }} is not carried in.
+    Running balance includes activity before {{ from_date|date:"j M Y" }}.
   </p>
 {% endif %}
 
@@ -276,10 +290,10 @@
           <tr>
             <td colspan="6" class="px-5 py-12 text-center">
               {% if is_filtered %}
-                <p class="text-sm text-slate-500">No ledger activity in this date range.</p>
-                <a href="{% url 'core:customer_ledger' customer.pk %}"
+                <p class="text-sm text-slate-500">No ledger activity in this period.</p>
+                <a href="?month=all"
                    class="no-print mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
-                  Clear dates
+                  View all time
                 </a>
               {% else %}
                 <p class="text-sm text-slate-500">No ledger activity yet.</p>
