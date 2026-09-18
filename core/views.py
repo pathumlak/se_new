@@ -103,6 +103,7 @@ from .models import (
     MaterialWeighEntry,
     Order,
     OrderItem,
+    OversaleRecord,
     Payment,
     PaymentEditAudit,
     PettyCashEntry,
@@ -1354,6 +1355,17 @@ def _stock_events(product):
         .exclude(bill__status=Bill.Status.CANCELLED)
         .select_related("bill__customer")
     )
+
+    # New-style oversale: how much of each bill's sale of this product went
+    # past the shelf, for the "Oversold N" flag on its sale row. Purely a
+    # display annotation — it does not change "sales" or the balance walk,
+    # which already goes negative on its own from the sale's full qty.
+    oversale_qty_by_bill = {}
+    for rec in OversaleRecord.objects.filter(product=product):
+        oversale_qty_by_bill[rec.bill_id] = (
+            oversale_qty_by_bill.get(rec.bill_id, ZERO_QTY) + rec.qty
+        )
+
     for item in bill_items:
         bill = item.bill
         if bill.is_walk_in:
@@ -1381,6 +1393,7 @@ def _stock_events(product):
                 # Explicit pk so the template can link straight to the bill
                 # without parsing the formatted "#0001" back apart.
                 "bill_pk": bill.pk,
+                "oversale_qty": oversale_qty_by_bill.get(bill.pk),
             }
         )
 
@@ -1558,6 +1571,9 @@ def _stock_ledger_rows(product):
                     "adj_target": e.get("adj_target"),
                     "adj_date": e.get("adj_date"),
                     "adj_reason": e.get("adj_reason"),
+                    # How much of this sale had no stock behind it — display
+                    # only, never part of the balance/total math above.
+                    "oversale_qty": e.get("oversale_qty"),
                 }
             )
 
@@ -1657,11 +1673,16 @@ def _ledger_period_slice(rows, start, end):
     produced = sum((r["production"] or ZERO_QTY for r in in_period), ZERO_QTY)
     sold = sum((r["sales"] or ZERO_QTY for r in in_period), ZERO_QTY)
     closing = in_period[-1]["balance"] if in_period else opening
+    # Reporting only — oversale_qty never fed into `produced`/`sold`/`closing`
+    # above, so this is purely "how much of that selling had no stock behind
+    # it", not a component of the stock math.
+    oversold = sum((r.get("oversale_qty") or ZERO_QTY for r in in_period), ZERO_QTY)
 
     return in_period, {
         "opening": opening,
         "total_produced": produced,
         "total_sold": sold,
+        "total_oversold": oversold,
         "closing_balance": closing,
     }
 
@@ -1820,6 +1841,7 @@ def stock_ledger(request, pk):
             "opening_balance": stats["opening"],
             "total_produced": stats["total_produced"],
             "total_sold": stats["total_sold"],
+            "total_oversold": stats["total_oversold"],
             "closing_balance": stats["closing_balance"],
             "all_time_closing": ledger["closing_balance"],
             "current_stock": product.qty,
@@ -4112,10 +4134,17 @@ def _reverse_bill(bill):
     delete is this followed by dropping the header. Must run inside a
     transaction — half a reversal is worse than none.
     """
-    # Auto-created Oversale production rows: reverse the stock they added and
-    # delete them, so a bill that oversold leaves no phantom production
-    # behind on its way out. Done before the normal stock restore so both
-    # movements are undone in the same order they were applied.
+    # OversaleRecord rows: pure audit trail, never touched Product.qty (see
+    # _write_bill), so nothing to undo here beyond deleting this bill's own.
+    OversaleRecord.objects.filter(bill=bill).delete()
+
+    # Legacy auto-created Oversale production rows, from bills saved before
+    # overselling started going negative instead of being auto-covered:
+    # reverse the stock they added and delete them, so a bill that oversold
+    # leaves no phantom production behind on its way out. Done before the
+    # normal stock restore so both movements are undone in the same order
+    # they were applied. New bills never create these (see _write_bill), so
+    # this is a no-op for them.
     oversale = ProductionEntry.objects.filter(
         reason__startswith=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}"
     )
@@ -4385,12 +4414,20 @@ def _write_bill(bill, user, payload):
     # 2. lines, and the stock they take with them.
     #
     # Overselling is allowed: a bill may take more than the shelf holds. When
-    # that happens we auto-create a matching ProductionEntry with reason
-    # "Oversale — Bill #N" for the shortfall, then decrement stock normally.
-    # The net effect is that Product.qty never goes negative and the stock
-    # ledger has a matching production row explaining where the extra units
-    # came from. _reverse_bill deletes these auto rows on edit/delete so the
-    # phantom stock does not persist past its bill.
+    # that happens the shelf is simply debited the full sale qty and goes
+    # negative — a negative Product.qty *is* the "N units short" figure. We
+    # also log an OversaleRecord for the shortfall, purely for reporting: it
+    # never touches Product.qty or ProductionEntry, so an oversold sale can
+    # never be mistaken for real manufacture in the production totals. Real
+    # production entered later adds to the shelf exactly as normal and brings
+    # the balance back up. _reverse_bill deletes this bill's OversaleRecord
+    # rows on edit/delete, same as it does every other line-level record.
+    #
+    # (Bills saved before this changed may still carry the old-style
+    # auto-created "Oversale — Bill #N" ProductionEntry rows that covered the
+    # shortfall and kept qty non-negative — those are left exactly as they
+    # are; see the OVERSALE_REASON_PREFIX handling in _stock_events and
+    # _reverse_bill.)
     for item in items:
         BillItem.objects.create(
             bill=bill,
@@ -4406,17 +4443,11 @@ def _write_bill(bill, user, payload):
             pk=item["product"].pk
         )
         if item["qty"] > current_qty:
-            shortage = item["qty"] - current_qty
-            ProductionEntry.objects.create(
+            OversaleRecord.objects.create(
+                bill=bill,
                 product=item["product"],
-                production_date=bill.bill_date,
-                qty_produced=shortage,
-                reason=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}",
-                stock_before=current_qty,
-                stock_after=current_qty + shortage,
-            )
-            Product.objects.filter(pk=item["product"].pk).update(
-                qty=F("qty") + shortage
+                qty=item["qty"] - current_qty,
+                oversale_date=bill.bill_date,
             )
 
         Product.objects.filter(pk=item["product"].pk).update(

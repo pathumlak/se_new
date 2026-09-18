@@ -61,7 +61,7 @@
     {{ period.label }}
   </span>
 </div>
-<div class="mb-5 grid gap-3 sm:grid-cols-4">
+<div class="mb-5 grid gap-3 sm:grid-cols-5">
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Opening</p>
     <p class="mt-1 text-lg font-semibold text-slate-900">{{ opening_balance|floatformat:"-3" }}</p>
@@ -76,6 +76,11 @@
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total sold</p>
     <p class="mt-1 text-lg font-semibold text-rose-700">{{ total_sold|floatformat:"-3" }}</p>
     <p class="mt-0.5 text-[11px] text-slate-400">In this period</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total oversold</p>
+    <p class="mt-1 text-lg font-semibold text-rose-600">{{ total_oversold|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">Sold with no stock behind it — not counted as production</p>
   </div>
   <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Closing</p>
@@ -166,6 +171,7 @@
                      {% elif row.kind == 'oversale' %}bg-rose-50/60
                      {% elif row.kind == 'production' %}border-l-4 border-emerald-400
                      {% elif row.kind == 'supplier' %}border-l-4 border-sky-400
+                     {% elif row.kind == 'sale' and row.oversale_qty %}border-l-4 border-rose-500 bg-rose-50/60
                      {% elif row.kind == 'sale' %}border-l-4 border-rose-300
                      {% elif row.kind == 'adjust_up' %}border-l-4 border-amber-400 bg-amber-50/40
                      {% elif row.kind == 'adjust_down' %}border-l-4 border-amber-500 bg-amber-50/40
@@ -201,6 +207,12 @@
 
             <td class="px-4 py-2.5 text-slate-800">
               {{ row.customer }}
+              {% if row.oversale_qty %}
+                <span class="ml-1 inline-block rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700"
+                      title="{{ row.oversale_qty|floatformat:'-3' }} of this sale had no stock on hand and took the balance negative">
+                  Oversold {{ row.oversale_qty|floatformat:"-3" }}
+                </span>
+              {% endif %}
             </td>
 
             <td class="whitespace-nowrap px-4 py-2.5 text-slate-500">
@@ -250,7 +262,8 @@
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 align-middle"></span> Production ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400 align-middle"></span> Supplier receipt ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 align-middle"></span> Sale ·
-  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500 align-middle"></span> Oversold sale (balance went negative) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto, historical) ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Manual adjustment
 </p>
 

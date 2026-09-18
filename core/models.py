@@ -1524,6 +1524,39 @@ class ProductionEntry(models.Model):
         return f"{self.product} × {self.qty_produced} on {self.production_date}"
 
 
+class OversaleRecord(models.Model):
+    """How many units a bill line sold beyond what was on the shelf at save time.
+
+    Overselling is allowed by design (see core.views._write_bill): a bill may
+    take more than Product.qty holds, and the shelf is simply debited the
+    full sale qty, going negative if it has to. This model is a pure audit
+    trail of that — it never moves Product.qty and is never read by the stock
+    math, only by reports and the ledger's display. Kept apart from
+    ProductionEntry specifically so an oversold sale can never be mistaken
+    for, or counted as, real manufacture.
+    """
+
+    bill = models.ForeignKey(
+        Bill,
+        on_delete=models.CASCADE,
+        related_name="oversale_records",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="oversale_records",
+    )
+    qty = models.DecimalField(max_digits=12, decimal_places=3)
+    oversale_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-oversale_date", "-id"]
+
+    def __str__(self):
+        return f"{self.product} oversold {self.qty} on Bill #{self.bill_id}"
+
+
 class StockAdjustment(models.Model):
     """A manual correction to a product's on-hand stock.
 
