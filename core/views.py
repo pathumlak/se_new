@@ -4145,8 +4145,13 @@ def _reverse_bill(bill):
     # normal stock restore so both movements are undone in the same order
     # they were applied. New bills never create these (see _write_bill), so
     # this is a no-op for them.
+    #
+    # Exact match, not startswith: reason is always written as exactly this
+    # string with nothing appended after the pk, and a prefix match would
+    # also catch other bills whose pk starts with this one's digits (e.g.
+    # reversing bill #27 wrongly matching a row written for bill #272).
     oversale = ProductionEntry.objects.filter(
-        reason__startswith=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}"
+        reason=OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}"
     )
     for entry in oversale:
         Product.objects.filter(pk=entry.product_id).update(
