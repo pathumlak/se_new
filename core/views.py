@@ -1,5 +1,6 @@
 import hmac
 import json
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
@@ -1263,8 +1264,54 @@ def _stock_events(product):
     """
     events = []
 
+    # Oversale ProductionEntry rows only store the *bill's database id* in
+    # their reason text (e.g. "Oversale — Bill #272") — never the
+    # bill.bill_number operators actually search the bill list by, and the two
+    # drift apart over time (drafts, cancellations, deletions). Resolve every
+    # referenced bill once, up front, so the ledger can show and link the
+    # real bill_number instead of the internal id. Reading `bill.pk` back out
+    # of the reason text is intentional and must track how it's written in
+    # _write_bill/_reverse_bill (OVERSALE_REASON_PREFIX + f" Bill #{bill.pk}");
+    # the stored text itself is never rewritten here.
+    oversale_bill_pks = set()
+    for reason in (
+        ProductionEntry.objects.filter(
+            product=product, reason__startswith=OVERSALE_REASON_PREFIX
+        )
+        .values_list("reason", flat=True)
+    ):
+        match = re.search(r"Bill #(\d+)$", reason)
+        if match:
+            oversale_bill_pks.add(int(match.group(1)))
+    oversale_bills = {
+        b.pk: b
+        for b in Bill.objects.filter(pk__in=oversale_bill_pks).only("pk", "bill_number")
+    }
+
     for entry in ProductionEntry.objects.filter(product=product):
         is_oversale = entry.reason.startswith(OVERSALE_REASON_PREFIX)
+        customer = entry.reason or ""
+        bill_number = ""
+        bill_pk = None
+        if is_oversale:
+            match = re.search(r"Bill #(\d+)$", entry.reason)
+            referenced_pk = int(match.group(1)) if match else None
+            bill = oversale_bills.get(referenced_pk) if referenced_pk else None
+            if bill and bill.bill_number:
+                bill_number = f"#{bill.bill_number:04d}"
+                bill_pk = bill.pk
+                customer = f"Oversale — Bill {bill_number}"
+            elif bill:
+                # Exists but has no bill_number of its own (rare) — still link
+                # straight to it rather than showing a dead-end number.
+                bill_pk = bill.pk
+                customer = f"Oversale — Bill #{bill.pk:04d}"
+            else:
+                # The bill this oversale cover was created for no longer
+                # exists (deleted outside the normal edit/delete flow, which
+                # would have removed this row too) — flag it instead of
+                # silently showing a number nothing owns.
+                customer = f"{entry.reason} (bill deleted)"
         events.append(
             {
                 "date": entry.production_date,
@@ -1275,8 +1322,9 @@ def _stock_events(product):
                 "kind": "oversale" if is_oversale else "production",
                 "production": entry.qty_produced,
                 "sales": None,
-                "customer": entry.reason or "",
-                "bill_number": "",
+                "customer": customer,
+                "bill_number": bill_number,
+                "bill_pk": bill_pk,
             }
         )
 
@@ -1323,7 +1371,13 @@ def _stock_events(product):
                 "production": None,
                 "sales": item.qty,
                 "customer": who,
-                "bill_number": f"#{bill.pk:04d}",
+                # bill.bill_number is what operators actually search the bill
+                # list by; bill.pk is only the internal id. Fall back to the
+                # pk-based format for the rare bill saved before bill_number
+                # was assigned, rather than showing a blank.
+                "bill_number": (
+                    f"#{bill.bill_number:04d}" if bill.bill_number else f"#{bill.pk:04d}"
+                ),
                 # Explicit pk so the template can link straight to the bill
                 # without parsing the formatted "#0001" back apart.
                 "bill_pk": bill.pk,
