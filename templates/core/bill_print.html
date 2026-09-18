@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Invoice #{{ bill.pk }} · {{ billing.company_name }}</title>
+  <title>Invoice #{{ bill.bill_number|default:bill.pk }} · {{ billing.company_name }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -364,7 +364,7 @@
 
         <div class="doc-tag">
           <div class="doc-label">Invoice</div>
-          <div class="doc-number">#{{ bill.pk }}</div>
+          <div class="doc-number">#{{ bill.bill_number|default:bill.pk }}</div>
           <div class="doc-date">{{ bill.bill_date|date:"d F Y" }}</div>
         </div>
       </div>
@@ -527,7 +527,7 @@
         <div class="terms">{{ billing.terms_line }}</div>
       {% endif %}
       <div class="generated">
-        Invoice #{{ bill.pk }} · Generated {{ bill.bill_date|date:"d M Y" }}{% if bill.edit_date %} · Rev {{ bill.edit_date|date:"d M Y" }}{% endif %}
+        Invoice #{{ bill.bill_number|default:bill.pk }} · Generated {{ bill.bill_date|date:"d M Y" }}{% if bill.edit_date %} · Rev {{ bill.edit_date|date:"d M Y" }}{% endif %}
       </div>
     </div>
   </div>

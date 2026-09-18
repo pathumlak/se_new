@@ -274,7 +274,7 @@
               {% elif row.bill_pk and row.remaining > 0 %}
                 <a href="{% url 'core:bill_add_payment' row.bill_pk %}"
                    class="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
-                   title="Record a payment against Bill #{{ row.bill_pk }} (outstanding: {{ row.remaining|floatformat:2|intcomma }})">
+                   title="Record a payment against Bill #{{ row.bill_number|default:row.bill_pk }} (outstanding: {{ row.remaining|floatformat:2|intcomma }})">
                   Pay
                 </a>
               {% elif row.bill_pk %}

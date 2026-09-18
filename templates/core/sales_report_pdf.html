@@ -127,7 +127,7 @@
     {% for row in cash_rows %}
       <tr>
         <td>{{ row.bill.bill_date|date:"j M Y" }}</td>
-        <td>#{{ row.bill_id }}</td>
+        <td>#{{ row.bill.bill_number|default:row.bill_id }}</td>
         <td>{% if row.bill.customer %}{{ row.bill.customer.name }}{% else %}{{ row.bill.walk_in_name|default:"Walk-in Customer" }}{% endif %}</td>
         <td class="r">{{ row.amount|floatformat:2|intcomma }}</td>
         <td>{% if row.account %}{{ row.get_account_display }} Acc{% else %}Physical{% endif %}</td>
@@ -167,7 +167,7 @@
     {% for cheque in cheque_rows %}
       <tr>
         <td>{{ cheque.payment.bill.bill_date|date:"j M Y" }}</td>
-        <td>#{{ cheque.payment.bill_id }}</td>
+        <td>#{{ cheque.payment.bill.bill_number|default:cheque.payment.bill_id }}</td>
         <td>{{ cheque.customer.name }}</td>
         <td>{{ cheque.cheque_no }}</td>
         <td>{{ cheque.bank_name }}</td>
@@ -203,7 +203,7 @@
     {% for bill in bills %}
       <tr>
         <td>{{ bill.bill_date|date:"j M Y" }}</td>
-        <td>#{{ bill.pk }}</td>
+        <td>#{{ bill.bill_number|default:bill.pk }}</td>
         <td>{% if bill.customer %}{{ bill.customer.name }}{% else %}{{ bill.walk_in_name|default:"Walk-in Customer" }}{% endif %}</td>
         <td class="r">{{ bill.total_amount|floatformat:2|intcomma }}</td>
         <td>{{ bill.get_payment_type_display }}</td>

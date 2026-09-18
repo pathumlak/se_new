@@ -2985,7 +2985,10 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         if bill.discount_amount:
             pct = f" ({bill.discount_percent:g}%)" if bill.discount_percent else ""
             extra.append(f"-{bill.discount_amount:.2f} discount{pct}")
-        description = f"Sale ({', '.join(extra)})" if extra else "Sale"
+        # bill.bill_number, not bill.pk: that's the number the bill list and
+        # every other ledger search by, and this row's number has to match it.
+        bill_label = f"#{bill.bill_number:04d}" if bill.bill_number else f"#{bill.pk:04d}"
+        description = f"Sale {bill_label}" + (f" ({', '.join(extra)})" if extra else "")
 
         entries.append(
             {
@@ -3000,6 +3003,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 # bill that still owes money. Everything else lands as None so
                 # the template can guard on it with a single check.
                 "bill_pk": bill.pk,
+                "bill_number": bill.bill_number,
                 "remaining": bill.remaining_balance,
             }
         )
@@ -4056,9 +4060,10 @@ def _record_payments(bill, customer, parts, when=None):
         when = bill.bill_date if bill is not None else timezone.localdate()
 
     # A short label used on CashDrawer.reason so a drawer entry can be read
-    # back without joining anything.
+    # back without joining anything. bill.bill_number, not bill.pk: that's the
+    # number searchable/shown everywhere else a bill is referenced.
     if bill is not None:
-        source_label = f"Bill #{bill.pk}"
+        source_label = f"Bill #{bill.bill_number or bill.pk}"
     else:
         who = customer.name if customer is not None else "settlement"
         source_label = f"Settlement · {who}"
@@ -4672,7 +4677,7 @@ def bill_add_payment(request, pk):
         messages.error(request, "Cancelled bills can't take new payments.")
         return redirect("core:bill_detail", pk=pk)
     if bill.remaining_balance <= ZERO:
-        messages.info(request, f"Bill #{bill.pk} is already settled.")
+        messages.info(request, f"Bill #{bill.bill_number or bill.pk} is already settled.")
         return redirect("core:bill_detail", pk=pk)
 
     form = BillPaymentForm(request.POST or None, bill=bill)
@@ -4730,7 +4735,7 @@ def bill_add_payment(request, pk):
 
         messages.success(
             request,
-            f"Recorded {amount:,.2f} against Bill #{bill.pk}. "
+            f"Recorded {amount:,.2f} against Bill #{bill.bill_number or bill.pk}. "
             f"Remaining: {bill.remaining_balance:,.2f}.",
         )
         return redirect("core:bill_detail", pk=bill.pk)
@@ -5158,7 +5163,7 @@ def bill_edit(request, pk):
         # Spent. The next edit of this bill is a new one and asks again.
         request.session.pop(_edit_gate_key(pk), None)
 
-        messages.success(request, f"Bill #{bill.pk} was updated.")
+        messages.success(request, f"Bill #{bill.bill_number or bill.pk} was updated.")
         return JsonResponse(
             {
                 "success": True,
@@ -5220,7 +5225,7 @@ def bill_edit(request, pk):
 @super_admin_required
 def bill_delete(request, pk):
     bill = get_object_or_404(Bill.objects.select_related("customer"), pk=pk)
-    label = f"Bill #{bill.pk}"
+    label = f"Bill #{bill.bill_number or bill.pk}"
     customer = bill.walk_in_name if bill.is_walk_in else bill.customer.name
 
     with transaction.atomic():
@@ -5535,7 +5540,7 @@ def bill_list_excel(request):
         paid_amount_sum += paid_amount
         outstanding_sum += outstanding
 
-        ws.cell(row=row, column=1, value=f"#{bill.pk:04d}")
+        ws.cell(row=row, column=1, value=f"#{bill.bill_number:04d}" if bill.bill_number else f"#{bill.pk:04d}")
         ws.cell(row=row, column=2, value=bill.bill_date.strftime("%Y-%m-%d") if bill.bill_date else "")
         ws.cell(row=row, column=3, value=customer_name)
         ws.cell(row=row, column=4, value=bill.get_status_display())
@@ -7891,7 +7896,7 @@ def _write_customer_ledger_sheet(ws, customer, from_date=None, to_date=None):
         c_bal = ws.cell(row=row_num, column=5, value=float(r["balance"]))
         c_ref = ws.cell(
             row=row_num, column=6,
-            value=(f"Bill #{r['bill_pk']}" if r.get("bill_pk") else ""),
+            value=(f"Bill #{r.get('bill_number') or r['bill_pk']}" if r.get("bill_pk") else ""),
         )
 
         c_date.alignment = center

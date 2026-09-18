@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Record payment · Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
+{% block title %}Record payment · Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
 {% block header %}Record Payment{% endblock %}
 
 {% block content %}
 <div class="max-w-2xl">
 
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:bill_detail' bill.pk %}" class="hover:text-slate-900">Bill #{{ bill.pk }}</a>
+    <a href="{% url 'core:bill_detail' bill.pk %}" class="hover:text-slate-900">Bill #{{ bill.bill_number|default:bill.pk }}</a>
     <span class="text-slate-300">/</span>
     <span class="text-slate-700">Record payment</span>
   </nav>
@@ -24,7 +24,7 @@
     <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
       <p class="text-sm text-slate-700">
         Against
-        <a href="{% url 'core:bill_detail' bill.pk %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ bill.pk }}</a>
+        <a href="{% url 'core:bill_detail' bill.pk %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ bill.bill_number|default:bill.pk }}</a>
         for
         <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-semibold text-slate-900 hover:underline">
           {{ bill.customer.name }}

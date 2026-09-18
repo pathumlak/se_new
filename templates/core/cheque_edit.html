@@ -26,7 +26,7 @@
       <p class="text-sm text-slate-700">
         From <a href="{% url 'core:customer_detail' cheque.customer.pk %}" class="font-semibold text-slate-900 hover:underline">{{ cheque.customer.name }}</a>
         {% if cheque.payment.bill_id %}
-          against <a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ cheque.payment.bill_id }}</a>
+          against <a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ cheque.payment.bill.bill_number|default:cheque.payment.bill_id }}</a>
         {% endif %}
       </p>
       <p class="mt-0.5 text-xs text-slate-500">

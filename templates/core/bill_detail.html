@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
-{% block header %}Bill #{{ bill.pk }}{% endblock %}
+{% block title %}Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
+{% block header %}Bill #{{ bill.bill_number|default:bill.pk }}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -96,7 +96,7 @@
       Bills
     </a>
 
-    <h2 class="mt-2 text-xl font-semibold text-slate-900">Bill #{{ bill.pk }}</h2>
+    <h2 class="mt-2 text-xl font-semibold text-slate-900">Bill #{{ bill.bill_number|default:bill.pk }}</h2>
 
     <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
       {% if bill.is_walk_in %}
@@ -154,7 +154,7 @@
     {% if is_super_admin %}
       <button type="button"
               data-delete-url="{% url 'core:bill_delete' bill.pk %}"
-              data-bill="Bill #{{ bill.pk }}"
+              data-bill="Bill #{{ bill.bill_number|default:bill.pk }}"
               data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
               data-total="{{ bill.total_amount|floatformat:2|intcomma }}"
               data-reverses="{{ reverses }}"
@@ -405,7 +405,7 @@
       </div>
       <div style="text-align: right;">
         <h2 style="font-size: 22px; font-weight: 800; color: #000000; margin: 0 0 5px 0; text-transform: uppercase;">INVOICE / BILL</h2>
-        <p style="font-size: 13px; font-weight: 700; color: #000000; margin: 2px 0;">Invoice No: #{{ bill.pk }}</p>
+        <p style="font-size: 13px; font-weight: 700; color: #000000; margin: 2px 0;">Invoice No: #{{ bill.bill_number|default:bill.pk }}</p>
         <p style="font-size: 12px; color: #000000; margin: 2px 0;">Date: {{ bill.bill_date|date:"j M Y" }}</p>
         <p style="font-size: 12px; color: #000000; margin: 2px 0;">Payment: {{ bill.get_payment_type_display }}</p>
       </div>

@@ -130,7 +130,7 @@
               <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ row.bill.bill_date|date:"j M Y" }}</td>
               <td class="whitespace-nowrap px-4 py-3">
                 <a href="{% url 'core:bill_detail' row.bill_id %}" class="font-medium text-slate-900 hover:underline">
-                  #{{ row.bill_id }}
+                  #{{ row.bill.bill_number|default:row.bill_id }}
                 </a>
               </td>
               <td class="whitespace-nowrap px-4 py-3 text-slate-900">
@@ -204,7 +204,7 @@
               <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ cheque.payment.bill.bill_date|date:"j M Y" }}</td>
               <td class="whitespace-nowrap px-4 py-3">
                 <a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-medium text-slate-900 hover:underline">
-                  #{{ cheque.payment.bill_id }}
+                  #{{ cheque.payment.bill.bill_number|default:cheque.payment.bill_id }}
                 </a>
               </td>
               <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ cheque.customer.name }}</td>
@@ -282,7 +282,7 @@
               <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
               <td class="whitespace-nowrap px-4 py-3">
                 <a href="{% url 'core:bill_detail' bill.pk %}" class="font-medium text-slate-900 hover:underline">
-                  #{{ bill.pk }}
+                  #{{ bill.bill_number|default:bill.pk }}
                 </a>
               </td>
               <td class="whitespace-nowrap px-4 py-3 text-slate-900">

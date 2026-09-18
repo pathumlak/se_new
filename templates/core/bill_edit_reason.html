@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Edit Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
-{% block header %}Edit Bill #{{ bill.pk }}{% endblock %}
+{% block title %}Edit Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
+{% block header %}Edit Bill #{{ bill.bill_number|default:bill.pk }}{% endblock %}
 
 {% block content %}
 
@@ -11,12 +11,12 @@
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
     </svg>
-    Bill #{{ bill.pk }}
+    Bill #{{ bill.bill_number|default:bill.pk }}
   </a>
 
   <h2 class="mt-2 text-xl font-semibold text-slate-900">Why is this bill being edited?</h2>
   <p class="mt-1 text-sm text-slate-500">
-    Bill #{{ bill.pk }} from {{ bill.bill_date|date:"j M Y" }}
+    Bill #{{ bill.bill_number|default:bill.pk }} from {{ bill.bill_date|date:"j M Y" }}
     for
     {% if bill.is_walk_in %}
       <span class="italic">{{ bill.walk_in_name }} (walk-in)</span>
