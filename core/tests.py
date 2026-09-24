@@ -35,6 +35,7 @@ from core.models import (
     PaymentEditAudit,
     Product,
     ProductionEntry,
+    StockAdjustment,
     SupplierBill,
     SupplierBillItem,
 )
@@ -7591,6 +7592,69 @@ class StockLedgerTests(UserFactoryMixin, TestCase):
             [row["date"] for row in all_time.context["rows"]],
             [today, previous_month_end, previous_month_end],
         )
+
+
+class StockAdjustmentSetsExactFigureTests(UserFactoryMixin, TestCase):
+    """An adjustment sets the shelf to exactly the figure typed, whatever
+    else happened to the product that same day."""
+
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        self.customer = Customer.objects.create(name="Buyer")
+        self.product = Product.objects.create(
+            name="tee", size="20mm", category=Category.objects.create(name="Fittings"),
+            qty=Decimal("100"),
+        )
+
+    def sell(self, qty):
+        bill = Bill.objects.create(
+            customer=self.customer, bill_date=date.today(),
+            total_amount=Decimal("1.00"), payment_type=Bill.PaymentType.FULL_CASH,
+            status=Bill.Status.PAID,
+        )
+        BillItem.objects.create(
+            bill=bill, product=self.product, qty=qty, unit_price=1, line_total=qty
+        )
+        self.product.refresh_from_db()
+        self.product.qty -= qty
+        self.product.save(update_fields=["qty"])
+
+    def adjust_to(self, target):
+        return self.client.post(
+            reverse("core:stock_adjust_create", args=[self.product.pk]),
+            {"adjustment_date": date.today().isoformat(), "qty": target, "reason": "count"},
+        )
+
+    def test_count_after_the_days_sales_lands_on_the_typed_figure(self):
+        self.sell(Decimal("200"))  # shelf now -100
+        self.adjust_to("500")
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.qty, Decimal("500"))
+        adj = StockAdjustment.objects.get()
+        self.assertEqual(adj.qty, Decimal("600"))
+        rows = views._stock_ledger_rows(self.product)["rows"]
+        self.assertEqual([r["kind"] for r in rows], ["opening", "sale", "adjust_up"])
+        self.assertEqual(rows[-1]["balance"], Decimal("500"))
+
+    def test_sale_after_the_count_draws_on_the_counted_figure(self):
+        self.sell(Decimal("200"))
+        self.adjust_to("500")
+        self.sell(Decimal("30"))
+        rows = views._stock_ledger_rows(self.product)["rows"]
+        self.assertEqual(
+            [r["kind"] for r in rows], ["opening", "sale", "adjust_up", "sale"]
+        )
+        self.assertEqual(rows[2]["balance"], Decimal("500"))
+        self.assertEqual(rows[-1]["balance"], Decimal("470"))
+
+    def test_ledger_row_shows_the_set_figure(self):
+        self.sell(Decimal("200"))
+        self.adjust_to("500")
+        response = self.client.get(
+            reverse("core:stock_ledger", args=[self.product.pk]) + "?month=all"
+        )
+        self.assertContains(response, "Set to 500")
 
 
 class CustomerListExcelTests(UserFactoryMixin, TestCase):

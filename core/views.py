@@ -17,6 +17,7 @@ from django.db.models import (
     DecimalField,
     ExpressionWrapper,
     F,
+    Max,
     ProtectedError,
     Q,
     Subquery,
@@ -1326,6 +1327,7 @@ def _stock_events(product):
                 "customer": customer,
                 "bill_number": bill_number,
                 "bill_pk": bill_pk,
+                "_created_at": entry.created_at,
             }
         )
 
@@ -1347,6 +1349,7 @@ def _stock_events(product):
                 "sales": None,
                 "customer": f"Supplier: {sb.supplier.name}",
                 "bill_number": f"SUP-{sb.pk}",
+                "_supplier_bill_pk": sb.pk,
             }
         )
 
@@ -1397,21 +1400,24 @@ def _stock_events(product):
             }
         )
 
+    events.sort(key=lambda e: e["_sort"])
+
     # Manual stock corrections. An adjustment SETS the shelf to an exact figure
     # on its date; the delta it stores (`qty`) is what it took to get there
-    # from the balance the ledger stood at *at that date* — recomputed by
+    # from the balance the ledger stood at *at that point* — recomputed by
     # `_recompute_stock`, never against the latest stock. Positive delta rides
     # in the PRODUCTION column, negative in the SALES column, and the
     # adjustment object is carried so the recompute can re-set it.
-    for adj in StockAdjustment.objects.filter(product=product).select_related("adjusted_by"):
+    adjustments = []
+    for adj in (
+        StockAdjustment.objects.filter(product=product)
+        .select_related("adjusted_by")
+        .order_by("created_at", "pk")
+    ):
         is_up = adj.qty >= 0
-        events.append(
+        adjustments.append(
             {
                 "date": adj.adjustment_date,
-                # Same day, after production and supplier receipts but before
-                # same-day sales (an adjustment reads as the position before
-                # the day's selling started).
-                "_sort": (adj.adjustment_date, 0, adj.created_at, adj.pk),
                 "kind": "adjust_up" if is_up else "adjust_down",
                 "production": adj.qty if is_up else None,
                 "sales": (-adj.qty) if not is_up else None,
@@ -1428,8 +1434,62 @@ def _stock_events(product):
             }
         )
 
-    events.sort(key=lambda e: e["_sort"])
-    return events
+    return _place_adjustments(events, adjustments)
+
+
+def _recorded_before(event, adj):
+    """Was `event` already on the books when `adj`'s shelf count was taken?
+
+    The count already reflects such a movement, so the adjustment must sit
+    after it; anything recorded later happened to the counted shelf and sits
+    after the adjustment. Without this, a count of 500 taken after the day's
+    sales would be placed before them and the sales would be taken off the
+    500 a second time.
+    """
+    if event.get("adjustment") is not None:
+        return True  # already placed; same-day adjustments stay in save order
+    if event.get("_created_at") is not None:
+        return event["_created_at"] <= adj.created_at
+    if event["kind"] == "supplier":
+        if adj.last_supplier_bill_id is None:
+            return True  # legacy: receipts sat before the adjustment
+        return event["_supplier_bill_pk"] <= adj.last_supplier_bill_id
+    # A sale.
+    if adj.last_bill_id is None:
+        return False  # legacy: the adjustment read as before the day's selling
+    return (event.get("bill_pk") or 0) <= adj.last_bill_id
+
+
+def _place_adjustments(events, adjustments):
+    """Merge adjustments into the date-sorted `events`.
+
+    Within its date, each adjustment goes after every movement recorded
+    before it was saved and before every movement recorded after — so the
+    row lands on exactly the figure counted and later movements draw on it.
+    Other events keep their relative order.
+    """
+    if not adjustments:
+        return events
+
+    by_date = {}
+    for adj_event in adjustments:
+        by_date.setdefault(adj_event["date"], []).append(adj_event)
+
+    placed = []
+    i = 0
+    dates = sorted({e["date"] for e in events} | set(by_date))
+    for d in dates:
+        day = []
+        while i < len(events) and events[i]["date"] == d:
+            day.append(events[i])
+            i += 1
+        for adj_event in by_date.get(d, []):
+            adj = adj_event["adjustment"]
+            before = [e for e in day if _recorded_before(e, adj)]
+            after = [e for e in day if not _recorded_before(e, adj)]
+            day = before + [adj_event] + after
+        placed.extend(day)
+    return placed
 
 
 #: Quantity zero, three decimal places — the shelf is counted in thousandths.
@@ -1719,6 +1779,11 @@ def stock_adjust_create(request, pk):
         entry.stock_after = target
         entry.stock_before = target        # placeholder; recompute fixes it
         entry.qty = ZERO_QTY               # placeholder; recompute fixes it
+        # Everything on the books right now is already in the count.
+        entry.last_bill_id = Bill.objects.aggregate(m=Max("pk"))["m"] or 0
+        entry.last_supplier_bill_id = (
+            SupplierBill.objects.aggregate(m=Max("pk"))["m"] or 0
+        )
         entry.save()
 
         _recompute_stock(product, opening)

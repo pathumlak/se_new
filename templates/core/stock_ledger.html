@@ -182,7 +182,12 @@
                        {% if row.kind == 'oversale' %}text-rose-700
                        {% elif row.kind == 'adjust_up' %}text-amber-700
                        {% else %}text-emerald-700{% endif %}">
-              {% if row.production is not None %}
+              {% if row.adjustment_pk %}
+                {% if row.production is not None %}
+                  Set to {{ row.adj_target|floatformat:"-3" }}
+                  <span class="block text-[10px] font-normal text-slate-400">change +{{ row.production|floatformat:"-3" }}</span>
+                {% endif %}
+              {% elif row.production is not None %}
                 +{{ row.production|floatformat:"-3" }}
               {% endif %}
             </td>
@@ -193,7 +198,12 @@
 
             <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
                        {% if row.kind == 'adjust_down' %}text-amber-700{% else %}text-rose-700{% endif %}">
-              {% if row.sales is not None %}
+              {% if row.adjustment_pk %}
+                {% if row.sales is not None %}
+                  Set to {{ row.adj_target|floatformat:"-3" }}
+                  <span class="block text-[10px] font-normal text-slate-400">change −{{ row.sales|floatformat:"-3" }}</span>
+                {% endif %}
+              {% elif row.sales is not None %}
                 −{{ row.sales|floatformat:"-3" }}
               {% endif %}
             </td>

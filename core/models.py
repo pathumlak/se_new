@@ -1589,6 +1589,16 @@ class StockAdjustment(models.Model):
     stock_before = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     stock_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
 
+    # The newest Bill / SupplierBill pk at the moment the shelf was counted.
+    # Bills and supplier bills don't carry a creation time, so this watermark
+    # is how the ledger tells a same-day sale the count already reflects
+    # (pk <= mark: placed before the adjustment) from one rung up after it
+    # (pk > mark: placed after, and drawn off the counted figure). Bill pks
+    # survive edits, unlike item pks. Null on rows saved before this existed;
+    # those keep the old "before the day's sales" placement.
+    last_bill_id = models.PositiveIntegerField(null=True, blank=True)
+    last_supplier_bill_id = models.PositiveIntegerField(null=True, blank=True)
+
     adjusted_by = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
