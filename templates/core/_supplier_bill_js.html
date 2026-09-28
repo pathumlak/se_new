@@ -22,6 +22,9 @@ spanning lines, it isn't stripped and renders onto the page as text.
     const INITIAL = initialEl ? JSON.parse(initialEl.textContent) : null;
 
     const supplierSelect = $('supplier');
+    // Only on a new bill; an edit keeps its original date.
+    const billDate = $('bill-date');
+    const TODAY = '{{ today|date:"Y-m-d" }}';
     const rowsBody   = $('line-rows');
     const emptyBody  = $('line-empty');
     const totalCell  = $('running-total');
@@ -155,11 +158,16 @@ spanning lines, it isn't stripped and renders onto the page as text.
         invalidNote.classList.add('hidden');
       }
 
-      const ready = lines.length > 0 && invalid === 0 && supplierSelect.value !== '';
+      // Dates compare correctly as YYYY-MM-DD strings.
+      const dateProblem = !billDate ? ''
+        : billDate.value === '' ? 'Choose a purchase date.'
+        : billDate.value > TODAY ? "Purchase date can't be in the future."
+        : '';
+      const ready = lines.length > 0 && invalid === 0 && supplierSelect.value !== '' && !dateProblem;
       saveBtn.disabled = !ready;
       saveNote.textContent = supplierSelect.value === '' && lines.length > 0
         ? 'Choose a supplier.'
-        : '';
+        : dateProblem;
       saveNote.className = 'mr-1 text-xs text-slate-400';
     }
 
@@ -373,6 +381,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
     function collect() {
       return {
         supplier_id: supplierSelect.value,
+        bill_date: billDate ? billDate.value : '',
         lines: lines.map(function (line) {
           return {
             product_id: Number(line.select.value),
@@ -425,6 +434,7 @@ spanning lines, it isn't stripped and renders onto the page as text.
     // ================= wiring =================
 
     supplierSelect.addEventListener('change', recalc);
+    if (billDate) billDate.addEventListener('input', recalc);
     $('add-line').addEventListener('click', function () {
       addLine('', '1', '');
       recalc();

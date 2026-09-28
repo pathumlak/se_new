@@ -5184,6 +5184,43 @@ class SupplierBillTests(UserFactoryMixin, TestCase):
         self.supplier.refresh_from_db()
         return self.supplier.balance
 
+    # ---- purchase date ----
+    def test_form_defaults_the_purchase_date_to_today(self):
+        response = self.client.get(reverse("core:supplier_bill_create"))
+        self.assertContains(response, 'id="bill-date"')
+        self.assertContains(response, f'value="{timezone.localdate():%Y-%m-%d}"')
+
+    def test_a_chosen_earlier_purchase_date_is_kept(self):
+        earlier = timezone.localdate() - timedelta(days=3)
+        payload = self.payload()
+        payload["bill_date"] = earlier.isoformat()
+        self.assertTrue(self.save(payload).json()["success"])
+        self.assertEqual(SupplierBill.objects.get().bill_date, earlier)
+
+    def test_a_future_purchase_date_is_refused(self):
+        payload = self.payload()
+        payload["bill_date"] = (timezone.localdate() + timedelta(days=1)).isoformat()
+        response = self.save(payload)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("future", response.json()["error"])
+        self.assertFalse(SupplierBill.objects.exists())
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("10.000"))
+
+    def test_an_edit_keeps_the_original_purchase_date(self):
+        earlier = timezone.localdate() - timedelta(days=5)
+        payload = self.payload()
+        payload["bill_date"] = earlier.isoformat()
+        self.save(payload)
+        bill = SupplierBill.objects.get()
+        payload["bill_date"] = timezone.localdate().isoformat()
+        self.client.post(
+            reverse("core:supplier_bill_edit", args=[bill.pk]),
+            json.dumps(payload), content_type="application/json",
+        )
+        bill.refresh_from_db()
+        self.assertEqual(bill.bill_date, earlier)
+
     # ---- saving ----
     def test_saving_writes_the_bill_and_its_lines(self):
         response = self.save()

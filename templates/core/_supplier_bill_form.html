@@ -33,6 +33,21 @@ spanning lines, it isn't stripped and renders onto the page as text.
     </button>
   </div>
 
+  <div class="mt-4">
+    <label for="bill-date" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Purchase date {% if not is_edit %}<span class="text-rose-500">*</span>{% endif %}
+    </label>
+    {% if is_edit %}
+      {# An edit keeps the date the goods arrived — see _write_supplier_bill. #}
+      <p class="text-sm text-slate-900">{{ bill.bill_date|date:"j M Y" }}</p>
+    {% else %}
+      <input type="date" id="bill-date" value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"
+             class="block w-full max-w-[12rem] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
+                    text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <p class="mt-1 text-xs text-slate-400">Defaults to today. Change it if the goods arrived earlier.</p>
+    {% endif %}
+  </div>
+
   <!-- Inline supplier creation -->
   <div id="supplier-panel" class="mt-4 hidden rounded-lg border border-slate-200 bg-slate-50 p-4">
     <p class="text-sm font-semibold text-slate-900">New supplier</p>

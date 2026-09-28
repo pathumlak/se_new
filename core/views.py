@@ -6807,6 +6807,24 @@ def _reverse_supplier_bill(bill):
     bill.items.all().delete()
 
 
+def _read_supplier_bill_date(raw):
+    """The purchase date off a new supplier bill's payload.
+
+    The form pre-fills today, so a missing value means an older client and
+    falls back to today. A date in the future is refused: goods that have
+    not arrived cannot be on the shelf or owed for yet.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return timezone.localdate()
+    purchase_date = _parse_date(text)
+    if purchase_date is None:
+        raise SupplierBillError("Enter a valid purchase date.")
+    if purchase_date > timezone.localdate():
+        raise SupplierBillError("Purchase date can't be in the future.")
+    return purchase_date
+
+
 def _write_supplier_bill(bill, payload):
     supplier = Customer.objects.filter(
         pk=payload.get("supplier_id"), is_supplier=True
@@ -6824,10 +6842,11 @@ def _write_supplier_bill(bill, payload):
     total = _round_to_whole(raw_total)
     round_off = total - raw_total
 
-    # 1. header. An edit keeps the date the goods actually arrived.
+    # 1. header. A new bill takes the purchase date from the form (today
+    # unless changed); an edit keeps the date the goods actually arrived.
     bill.supplier = supplier
     if bill.pk is None:
-        bill.bill_date = timezone.localdate()
+        bill.bill_date = _read_supplier_bill_date(payload.get("bill_date"))
     bill.total_amount = total
     bill.raw_total_amount = raw_total
     bill.round_off_amount = round_off
@@ -7090,6 +7109,7 @@ def _supplier_bill_form_context(request, bill=None):
         "product_form": ProductQuickForm(),
         "supplier_form": SupplierQuickForm(),
         "is_edit": bill is not None,
+        "today": timezone.localdate(),
         "save_url": (
             reverse("core:supplier_bill_edit", args=[bill.pk])
             if bill
