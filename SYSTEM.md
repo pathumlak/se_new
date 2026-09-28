@@ -93,7 +93,8 @@ Custom user: `AUTH_USER_MODEL = "core.User"`.
   - `amount_to_collect = total_amount - credit_applied` (display only).
 - **BillItem**: `bill` CASCADE, `product` PROTECT, `qty`, `unit_price`, `line_total`.
 - **BillSettlement**: money written off a bill (not collected). `Method` cash/cheque. `save()` posts once on create: adds to `bill.settled_amount`, `bill.balance_change`, and `customer.balance`. **Never re-posted** on re-save — edit means reverse+create new.
-- **BillEditAudit**: one row per bill edit (Bill.edit_reason holds only the latest). Carries no amount.
+- **BillEditAudit**: one row per bill edit (Bill.edit_reason holds only the latest). Moves no balance; `previous_total` / `new_total` snapshot the bill's total either side of the edit (null on older rows). The customer ledger annotates the edited bill's own row ("Edited", was → now) — never a separate row.
+- **SupplierBillEditAudit**: same idea for supplier bills (written by `_update_supplier_bill`), shown on the supplier's ledger.
 - **Payment**: money in against a bill (or a customer directly). `Method` cash/cheque/transfer. `Account` senovka/dinusha. Nullable `bill` allows top-ups that sit as credit; nullable `customer` allows detached payments.
 - **Cheque**: hangs off a Payment. `Status` pending/deposited/bounced/held. `bill` set when the cheque arrived at settlement time. `bounce_new_date` for re-presentation.
 - **CashTransfer**: senovka ↔ dinusha account transfer, tied to a Payment.

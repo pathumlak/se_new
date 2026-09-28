@@ -193,7 +193,8 @@
       <tbody class="divide-y divide-slate-100">
         
         {% for row in rows %}
-          <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %} {% if row.is_opening %}bg-slate-50 font-semibold{% endif %}">
+          <tr class="hover:bg-slate-50 {% if row.is_note %}italic text-slate-400{% endif %} {% if row.is_opening %}bg-slate-50 font-semibold{% endif %}
+                     {% if row.edits %}border-l-4 border-amber-400 bg-amber-50/60{% elif row.is_adjustment %}border-l-4 border-sky-400 bg-sky-50/60{% endif %}">
             {% if edit_opening and row.is_opening %}
               <td colspan="6" class="px-5 py-3">
                 <form method="post" action="{% url 'core:customer_opening_balance_edit' customer.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
@@ -251,8 +252,31 @@
                   <span class="rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700">Returned</span>
                   {{ row.description }}
                 </span>
+              {% elif row.is_adjustment %}
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">Adjustment</span>
+                  Balance adjusted ({{ row.adjustment_sign }})
+                </span>
+                <p class="mt-0.5 text-xs text-slate-500">{{ row.adjustment_reason }}</p>
               {% else %}
                 {{ row.description }}
+              {% endif %}
+              {% if row.edits %}
+                <span class="ml-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Edited</span>
+                <ul class="mt-1 space-y-0.5 text-xs text-amber-800">
+                  {% for edit in row.edits %}
+                    <li>
+                      {{ edit.date|date:"j M Y" }}:
+                      {% if edit.difference is not None %}
+                        was {{ edit.previous_total|floatformat:2|intcomma }} → now {{ edit.new_total|floatformat:2|intcomma }}
+                        <span class="font-semibold">({% if edit.difference >= 0 %}+{% endif %}{{ edit.difference|floatformat:2|intcomma }})</span>
+                      {% else %}
+                        amount changed
+                      {% endif %}
+                      {% if edit.reason %}<span class="text-slate-500">— {{ edit.reason }}</span>{% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
               {% endif %}
             </td>
 
@@ -349,6 +373,10 @@
 <p class="mt-3 text-xs text-slate-400">
   Balance runs positive when the customer owes us: each sale adds, each
   cheque, cash payment or purchase subtracts.
+</p>
+<p class="mt-1 text-xs text-slate-400">
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Edited bill — amount shown is after the edit ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400 align-middle"></span> Manual balance adjustment
 </p>
 
 {% endblock %}

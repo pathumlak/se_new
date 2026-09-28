@@ -118,6 +118,7 @@ from .models import (
     Rider,
     StockAdjustment,
     SupplierBill,
+    SupplierBillEditAudit,
     SupplierBillItem,
     User,
     Vehicle,
@@ -3050,6 +3051,41 @@ def _parse_date(raw):
         return None
 
 
+def _edit_history(audits):
+    """A bill's edits as the ledger shows them, oldest first, plus one line of
+    text for the printed/exported ledger.
+
+    Each edit is annotated onto the bill's own row rather than given a row of
+    its own: the row's amount already is the post-edit total, so a separate
+    row carrying the difference would count it twice.
+    """
+    edits = []
+    for audit in sorted(audits, key=lambda a: (a.edit_date, a.pk)):
+        prev, new = audit.previous_total, audit.new_total
+        known = prev is not None and new is not None
+        edits.append(
+            {
+                "date": audit.edit_date,
+                "reason": getattr(audit, "reason", ""),
+                "previous_total": prev,
+                "new_total": new,
+                "difference": (new - prev) if known else None,
+            }
+        )
+    parts = []
+    for e in edits:
+        text = f"Edited {e['date']:%d %b %Y}"
+        if e["difference"] is not None:
+            text += (
+                f": {e['previous_total']:,.2f} → {e['new_total']:,.2f}"
+                f" ({e['difference']:+,.2f})"
+            )
+        if e["reason"]:
+            text += f" — {e['reason']}"
+        parts.append(text)
+    return edits, "; ".join(parts)
+
+
 def _ledger_rows(customer, from_date=None, to_date=None):
     """Every ledger line for one customer, oldest first, with a running balance.
 
@@ -3072,7 +3108,10 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     """
     entries = []
 
-    for bill in customer.bills.exclude(status=Bill.Status.CANCELLED):
+    for bill in customer.bills.exclude(status=Bill.Status.CANCELLED).prefetch_related(
+        "edit_audits"
+    ):
+        edits, edit_note = _edit_history(bill.edit_audits.all())
         # Delivery and discount are folded into total_amount already; spelled
         # out here so the ledger reads as more than a bare "Sale" whenever
         # either moved the figure.
@@ -3102,6 +3141,9 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "bill_pk": bill.pk,
                 "bill_number": bill.bill_number,
                 "remaining": bill.remaining_balance,
+                # Highlighted on screen; see _edit_history.
+                "edits": edits,
+                "edit_note": edit_note,
             }
         )
 
@@ -3113,8 +3155,9 @@ def _ledger_rows(customer, from_date=None, to_date=None):
 
     for supplier_bill in customer.supplier_bills.exclude(
         status=SupplierBill.Status.CANCELLED
-    ):
+    ).prefetch_related("edit_audits"):
         note = supplier_bill.notes.strip()
+        edits, edit_note = _edit_history(supplier_bill.edit_audits.all())
         entries.append(
             {
                 "date": supplier_bill.bill_date,
@@ -3124,6 +3167,8 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": None,
                 "credit": supplier_bill.total_amount,
                 "is_note": False,
+                "edits": edits,
+                "edit_note": edit_note,
             }
         )
 
@@ -3293,6 +3338,11 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": None if is_credit else adjustment.amount,
                 "credit": adjustment.amount if is_credit else None,
                 "is_note": False,
+                # Highlighted on screen so a manual move stands out from
+                # ordinary trading.
+                "is_adjustment": True,
+                "adjustment_reason": adjustment.reason,
+                "adjustment_sign": sign,
             }
         )
 
@@ -4343,6 +4393,7 @@ def _update_bill(bill, user, payload, edit_date, edit_reason):
     that failed to save has no note claiming it did, and a bill that saved can
     never be missing the reason it changed.
     """
+    previous_total = bill.total_amount
     _reverse_bill(bill)
 
     # Set before the write rather than saved after it: _write_bill saves the
@@ -4356,6 +4407,8 @@ def _update_bill(bill, user, payload, edit_date, edit_reason):
         edit_date=edit_date,
         reason=edit_reason,
         created_by=user,
+        previous_total=previous_total,
+        new_total=bill.total_amount,
     )
     return bill
 
@@ -6883,9 +6936,19 @@ def _save_supplier_bill(payload):
 
 
 @transaction.atomic
-def _update_supplier_bill(bill, payload):
+def _update_supplier_bill(bill, payload, user):
+    previous_total = bill.total_amount
     _reverse_supplier_bill(bill)
-    return _write_supplier_bill(bill, payload)
+    bill = _write_supplier_bill(bill, payload)
+    # Same transaction as the rewrite, so a refused edit leaves no note.
+    SupplierBillEditAudit.objects.create(
+        supplier_bill=bill,
+        edit_date=timezone.localdate(),
+        previous_total=previous_total,
+        new_total=bill.total_amount,
+        created_by=user,
+    )
+    return bill
 
 
 def _supplier_bill_payload(request):
@@ -7169,7 +7232,7 @@ def supplier_bill_edit(request, pk):
         if payload is None:
             return JsonResponse({"success": False, "error": MALFORMED}, status=400)
         try:
-            bill = _update_supplier_bill(bill, payload)
+            bill = _update_supplier_bill(bill, payload, request.user)
         except BillError as exc:
             # Atomic, so the reversal it began is undone with it.
             return JsonResponse({"success": False, "error": str(exc)}, status=400)
@@ -8046,7 +8109,10 @@ def _write_customer_ledger_sheet(ws, customer, from_date=None, to_date=None):
     row_num = header_row + 1
     for r in rows:
         c_date = ws.cell(row=row_num, column=1, value=r["date"].strftime("%d %b %Y"))
-        c_desc = ws.cell(row=row_num, column=2, value=r["description"])
+        description = r["description"]
+        if r.get("edit_note"):
+            description += f" [{r['edit_note']}]"
+        c_desc = ws.cell(row=row_num, column=2, value=description)
         c_sale = ws.cell(
             row=row_num, column=3,
             value=float(r["sale"]) if r["sale"] is not None else "",

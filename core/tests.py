@@ -1091,9 +1091,9 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         )
 
     def test_edit_notes_are_not_shown_on_the_ledger(self):
-        """Bill-edit audits are kept in the database for history but are
-        deliberately never rendered on the customer ledger — the account stays
-        clean whether or not a bill was ever edited."""
+        """Bill-edit audits never become ledger rows of their own — the account
+        keeps one row per bill. The edit is annotated onto that bill's row
+        instead (see LedgerEditHighlightTests)."""
         before = len(self.rows())
         self.audit(self.june1, 4, reason="Price correction")
         rows = self.rows()
@@ -1106,7 +1106,9 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         self.assertTrue(
             BillEditAudit.objects.filter(reason="Price correction").exists()
         )
-        self.assertNotContains(self.response, "Price correction")
+        # Shown as a highlight on the edited bill's own row.
+        self.assertContains(self.response, "Price correction")
+        self.assertContains(self.response, "Edited")
 
     def test_an_edit_note_leaves_the_balance_and_totals_untouched(self):
         self.rows()
@@ -7901,6 +7903,101 @@ class StockLedgerSameDayMixTests(UserFactoryMixin, TestCase):
         )
         response = self.client.get(reverse("core:stock_ledger", args=[product.pk]) + "?month=all")
         self.assertEqual(response.status_code, 200)
+
+
+class LedgerEditHighlightTests(UserFactoryMixin, TestCase):
+    """Edited bills and manual balance adjustments stand out on the ledger."""
+
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        self.product = Product.objects.create(
+            name="pipe", category=Category.objects.create(name="Pipes"),
+            qty=Decimal("100"), default_price=Decimal("100.00"),
+        )
+        self.customer = Customer.objects.create(name="Kamal", credit_limit=Decimal("100000"))
+
+    def bill_payload(self, qty):
+        return {
+            "customer_id": self.customer.pk,
+            "bill_date": date.today().isoformat(),
+            "lines": [{"product_id": self.product.pk, "qty": qty, "unit_price": "100.00"}],
+            "payment": {"type": "pay_later"},
+        }
+
+    def ledger(self, customer):
+        return self.client.get(
+            reverse("core:customer_ledger", args=[customer.pk]) + "?month=all"
+        )
+
+    def test_edited_bill_row_shows_was_now_and_difference(self):
+        bill = views._save_bill(self.admin, self.bill_payload("2"))
+        views._update_bill(bill, self.admin, self.bill_payload("3"), date.today(), "Wrong qty")
+        audit = bill.edit_audits.get()
+        self.assertEqual((audit.previous_total, audit.new_total), (Decimal("200.00"), Decimal("300.00")))
+
+        self.customer.refresh_from_db()
+        sale = next(r for r in views._ledger_rows(self.customer) if r.get("bill_pk"))
+        self.assertEqual(sale["sale"], Decimal("300.00"))  # one row, no double count
+        self.assertEqual(sale["edits"][0]["difference"], Decimal("100.00"))
+        self.assertIn("200.00 → 300.00 (+100.00)", sale["edit_note"])
+
+        response = self.ledger(self.customer)
+        self.assertContains(response, "Edited")
+        self.assertContains(response, "was 200.00 → now 300.00")
+        self.assertContains(response, "Wrong qty")
+
+    def test_legacy_edit_without_amounts_still_shows_the_badge(self):
+        bill = views._save_bill(self.admin, self.bill_payload("2"))
+        BillEditAudit.objects.create(
+            bill=bill, edit_date=date.today(), reason="old edit", created_by=self.admin
+        )
+        response = self.ledger(self.customer)
+        self.assertContains(response, "amount changed")
+        self.assertContains(response, "old edit")
+
+    def test_edited_supplier_bill_is_highlighted_on_the_supplier_ledger(self):
+        supplier = Customer.objects.create(name="Lanka Polymers", is_supplier=True)
+        payload = {
+            "supplier_id": supplier.pk,
+            "lines": [{"product_id": self.product.pk, "qty": "5", "unit_price": "600.00"}],
+        }
+        self.client.post(reverse("core:supplier_bill_create"), json.dumps(payload),
+                         content_type="application/json")
+        bill = SupplierBill.objects.get()
+        payload["lines"][0]["qty"] = "4"
+        self.client.post(reverse("core:supplier_bill_edit", args=[bill.pk]), json.dumps(payload),
+                         content_type="application/json")
+        audit = bill.edit_audits.get()
+        self.assertEqual((audit.previous_total, audit.new_total), (Decimal("3000.00"), Decimal("2400.00")))
+        response = self.ledger(supplier)
+        self.assertContains(response, "was 3,000.00 → now 2,400.00")
+        self.assertContains(response, "(-600.00)")
+
+    def test_refused_supplier_edit_leaves_no_note(self):
+        supplier = Customer.objects.create(name="Lanka Polymers", is_supplier=True)
+        payload = {
+            "supplier_id": supplier.pk,
+            "lines": [{"product_id": self.product.pk, "qty": "5", "unit_price": "600.00"}],
+        }
+        self.client.post(reverse("core:supplier_bill_create"), json.dumps(payload),
+                         content_type="application/json")
+        bill = SupplierBill.objects.get()
+        payload["lines"] = []
+        self.client.post(reverse("core:supplier_bill_edit", args=[bill.pk]), json.dumps(payload),
+                         content_type="application/json")
+        self.assertFalse(bill.edit_audits.exists())
+
+    def test_manual_balance_adjustment_is_highlighted(self):
+        self.client.post(
+            reverse("core:customer_adjustment_create", args=[self.customer.pk]),
+            {"adjustment_date": date.today().isoformat(), "adjustment_type": "credit",
+             "amount": "7020.00", "reason": "Old credit note"},
+        )
+        response = self.ledger(self.customer)
+        self.assertContains(response, ">Adjustment<")
+        self.assertContains(response, "Balance adjusted (+)")
+        self.assertContains(response, "Old credit note")
 
 
 class CustomerListExcelTests(UserFactoryMixin, TestCase):

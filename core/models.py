@@ -436,6 +436,15 @@ class BillEditAudit(models.Model):
     )
     edit_date = models.DateField()
     reason = models.CharField(max_length=500)
+    # The bill's total either side of the edit — a snapshot for the ledger's
+    # "was → now" note, never posted anywhere. Null on edits recorded before
+    # these existed.
+    previous_total = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    new_total = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         User,
@@ -743,6 +752,34 @@ class SupplierBill(models.Model):
         there's no settled_amount on the supplier side, so it's just the
         total less what's been paid."""
         return self.total_amount - self.paid_amount
+
+
+class SupplierBillEditAudit(models.Model):
+    """A note that a supplier bill was rewritten — the purchase-side
+    BillEditAudit. Carries the total either side of the edit for the ledger's
+    "was → now" note; like BillEditAudit it moves no balance itself.
+    """
+
+    supplier_bill = models.ForeignKey(
+        SupplierBill,
+        on_delete=models.CASCADE,
+        related_name="edit_audits",
+    )
+    edit_date = models.DateField()
+    previous_total = models.DecimalField(max_digits=12, decimal_places=2)
+    new_total = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="supplier_bill_edit_audits",
+    )
+
+    class Meta:
+        ordering = ["-edit_date", "-id"]
+
+    def __str__(self):
+        return f"Supplier Bill #{self.supplier_bill_id} edited {self.edit_date}"
 
 
 class SupplierBillItem(models.Model):
