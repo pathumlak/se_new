@@ -182,6 +182,22 @@ urlpatterns = [
     path("bills/<int:pk>/delete/", views.bill_delete, name="bill_delete"),
     # Record a follow-up payment against a bill that still owes money.
     path("bills/<int:pk>/pay/", views.bill_add_payment, name="bill_add_payment"),
+    # Goods a customer sends back: credits their balance and restocks every
+    # non-damaged line. Delete (super-admin) reverses both.
+    path("returns/", views.customer_return_list, name="customer_return_list"),
+    path("returns/create/", views.customer_return_create, name="customer_return_create"),
+    path("returns/<int:pk>/", views.customer_return_detail, name="customer_return_detail"),
+    path(
+        "returns/<int:pk>/delete/",
+        views.customer_return_delete,
+        name="customer_return_delete",
+    ),
+    # Feeds the optional bill dropdown on the return form.
+    path(
+        "api/returns/bills/<int:customer_id>/",
+        views.customer_return_bills,
+        name="customer_return_bills",
+    ),
     path("cheques/", views.cheque_list, name="cheque_list"),
     path("cheques/excel/", views.cheque_list_excel, name="cheque_list_excel"),
     path("cheques/<int:pk>/deposit/", views.cheque_deposit, name="cheque_deposit"),

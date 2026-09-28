@@ -230,6 +230,22 @@
                   <span class="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">Opening</span>
                   Balance carried forward
                 </span>
+              {% elif row.return_pk %}
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">Return</span>
+                  Returned items
+                  <a href="{% url 'core:customer_return_detail' row.return_pk %}" class="font-medium text-violet-700 hover:underline">{{ row.return_ref }}</a>
+                  {% if row.return_bill %}<span class="text-xs text-slate-500">· Bill {{ row.return_bill }}</span>{% endif %}
+                </span>
+                <ul class="mt-1 space-y-0.5 text-xs text-slate-500">
+                  {% for line in row.return_lines %}
+                    <li>
+                      {{ line.product }} × {{ line.qty|floatformat:"-3" }} @ {{ line.unit_price|floatformat:2|intcomma }}
+                      = <span class="font-medium text-slate-700">{{ line.line_total|floatformat:2|intcomma }}</span>
+                      <span class="{% if line.restocked %}text-slate-500{% else %}text-rose-600{% endif %}">({{ line.reason }}{% if not line.restocked %}, not restocked{% endif %})</span>
+                    </li>
+                  {% endfor %}
+                </ul>
               {% elif row.is_returned_cheque %}
                 <span class="inline-flex items-center gap-1.5">
                   <span class="rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700">Returned</span>

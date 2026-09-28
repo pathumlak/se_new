@@ -1881,3 +1881,119 @@ class AuditLog(models.Model):
             base = self.timestamp or _tz.now()
             self.month = base.date().replace(day=1)
         super().save(*args, **kwargs)
+
+
+class CustomerReturn(models.Model):
+    """Goods a customer sent back, credited to their account.
+
+    Not a negative Bill: a bill carries payments, cheques, settlements and a
+    payment type, none of which a return has, and every sales report would
+    have to learn to subtract it. A return does exactly two things, both
+    posted once when it is saved and undone only by deleting it:
+
+      * Customer.balance += total_amount — the goods are credited back, so a
+        debtor owes less and anyone else is owed more (the same direction as
+        a CREDIT CustomerBalanceAdjustment).
+      * Product.qty += qty for every line whose reason is not Damaged. A
+        damaged item came back but cannot be sold, so it never reaches the
+        shelf.
+
+    `bill` is optional because the customer often cannot say which bill the
+    goods came from. SET_NULL so deleting that bill later leaves the return,
+    and the credit it posted, standing.
+
+    balance_before / balance_after snapshot Customer.balance around the post,
+    for the same reason ProductionEntry snapshots stock: once a later movement
+    touches the balance there is no way to work out what this return found.
+    """
+
+    #: What ReferenceCounter counts for returns.
+    REFERENCE_KEY = "customer_return"
+
+    reference_no = models.CharField(max_length=20, unique=True, blank=True)
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.PROTECT,
+        related_name="returns",
+    )
+    bill = models.ForeignKey(
+        Bill,
+        on_delete=models.SET_NULL,
+        related_name="returns",
+        null=True,
+        blank=True,
+    )
+    return_date = models.DateField()
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    notes = models.TextField(blank=True)
+
+    balance_before = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="customer_returns",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-return_date", "-id"]
+
+    def __str__(self):
+        return f"{self.reference_no} · {self.customer}"
+
+    def save(self, *args, **kwargs):
+        """Number a new return from ReferenceCounter — see Order.save for why
+        not from the highest reference in the table."""
+        if not self.reference_no:
+            nxt = ReferenceCounter.next_value(self.REFERENCE_KEY)
+            self.reference_no = f"RET-{nxt:04d}"
+        super().save(*args, **kwargs)
+
+
+class CustomerReturnItem(models.Model):
+    """One product line on a CustomerReturn."""
+
+    class Reason(models.TextChoices):
+        DAMAGED = "damaged", "Damaged"
+        WRONG_ITEM = "wrong_item", "Wrong item supplied"
+        EXCESS = "excess", "Excess quantity"
+        NOT_REQUIRED = "not_required", "No longer required"
+        QUALITY = "quality", "Quality complaint"
+        OTHER = "other", "Other"
+
+    customer_return = models.ForeignKey(
+        CustomerReturn,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="return_items",
+    )
+    qty = models.DecimalField(max_digits=12, decimal_places=3)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    line_total = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=20, choices=Reason.choices)
+    reason_note = models.CharField(max_length=255, blank=True)
+
+    # Whether this line went back on the shelf. Stored rather than derived
+    # from `reason` so a later change to which reasons restock can never
+    # rewrite what an old return actually did to stock.
+    restocked = models.BooleanField(default=False)
+    stock_before = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    stock_after = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.product} × {self.qty} ({self.get_reason_display()})"
+
+    @property
+    def reason_text(self):
+        """The reason as the ledgers print it, with any note appended."""
+        label = self.get_reason_display()
+        return f"{label}: {self.reason_note}" if self.reason_note else label

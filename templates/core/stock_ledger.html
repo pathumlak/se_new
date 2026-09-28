@@ -171,6 +171,7 @@
                      {% elif row.kind == 'oversale' %}bg-rose-50/60
                      {% elif row.kind == 'production' %}border-l-4 border-emerald-400
                      {% elif row.kind == 'supplier' %}border-l-4 border-sky-400
+                     {% elif row.kind == 'return' %}border-l-4 border-violet-400 bg-violet-50/40
                      {% elif row.kind == 'sale' and row.oversale_qty %}border-l-4 border-rose-500 bg-rose-50/60
                      {% elif row.kind == 'sale' %}border-l-4 border-rose-300
                      {% elif row.kind == 'adjust_up' %}border-l-4 border-amber-400 bg-amber-50/40
@@ -181,6 +182,7 @@
             <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
                        {% if row.kind == 'oversale' %}text-rose-700
                        {% elif row.kind == 'adjust_up' %}text-amber-700
+                       {% elif row.kind == 'return' %}text-violet-700
                        {% else %}text-emerald-700{% endif %}">
               {% if row.adjustment_pk %}
                 {% if row.production is not None %}
@@ -226,7 +228,12 @@
             </td>
 
             <td class="whitespace-nowrap px-4 py-2.5 text-slate-500">
-              {% if row.bill_pk %}
+              {% if row.return_pk %}
+                <a href="{% url 'core:customer_return_detail' row.return_pk %}"
+                   class="font-medium text-violet-700 hover:underline">
+                  {{ row.bill_number }}
+                </a>
+              {% elif row.bill_pk %}
                 <a href="{% url 'core:bill_detail' row.bill_pk %}"
                    class="font-medium text-slate-700 hover:underline">
                   {{ row.bill_number }}
@@ -274,7 +281,8 @@
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 align-middle"></span> Sale ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500 align-middle"></span> Oversold sale (balance went negative) ·
   <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto, historical) ·
-  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Manual adjustment
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Manual adjustment ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-violet-400 align-middle"></span> Customer return
 </p>
 
 <!-- ============================ ADJUST STOCK MODAL ============================ -->

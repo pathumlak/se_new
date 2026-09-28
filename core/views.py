@@ -93,6 +93,8 @@ from .models import (
     CustomerBalanceAdjustment,
     CustomerOpeningBalanceEditAudit,
     CustomerPrice,
+    CustomerReturn,
+    CustomerReturnItem,
     DailyMachineRun,
     DailyOtherWork,
     HeldBill,
@@ -1320,7 +1322,10 @@ def _stock_events(product):
                 # (date, kind, tiebreaker) — production comes before same-day
                 # sales so the sale reads as drawing on that morning's batch,
                 # not on stock that arrived later in the day.
-                "_sort": (entry.production_date, 0, entry.created_at, entry.pk),
+                # Third slot is a number in every bucket-0 key: a supplier
+                # receipt has no timestamp, and a datetime next to a date in
+                # the same slot makes the sort raise on a shared day.
+                "_sort": (entry.production_date, 0, entry.created_at.timestamp(), entry.pk),
                 "kind": "oversale" if is_oversale else "production",
                 "production": entry.qty_produced,
                 "sales": None,
@@ -1343,7 +1348,7 @@ def _stock_events(product):
                 "date": sb.bill_date,
                 # No created_at on SupplierBillItem — order by pk within the
                 # day, which is monotonic and stable across page loads.
-                "_sort": (sb.bill_date, 0, sb.bill_date, item.pk),
+                "_sort": (sb.bill_date, 0, 0.0, item.pk),
                 "kind": "supplier",
                 "production": item.qty,
                 "sales": None,
@@ -1397,6 +1402,28 @@ def _stock_events(product):
                 # without parsing the formatted "#0001" back apart.
                 "bill_pk": bill.pk,
                 "oversale_qty": oversale_qty_by_bill.get(bill.pk),
+            }
+        )
+
+    # Customer returns put back on the shelf. Damaged lines never moved stock,
+    # so they have no row here — the return's own page lists them. Bucket 2:
+    # after the same day's sales, since goods come back after they went out.
+    return_items = CustomerReturnItem.objects.filter(
+        product=product, restocked=True
+    ).select_related("customer_return__customer")
+    for item in return_items:
+        ret = item.customer_return
+        events.append(
+            {
+                "date": ret.return_date,
+                "_sort": (ret.return_date, 2, ret.created_at.timestamp(), item.pk),
+                "kind": "return",
+                "production": item.qty,
+                "sales": None,
+                "customer": f"Return — {ret.customer.name} ({item.reason_text})",
+                "bill_number": ret.reference_no,
+                "return_pk": ret.pk,
+                "_created_at": ret.created_at,
             }
         )
 
@@ -1593,12 +1620,17 @@ def _stock_ledger_rows(product):
     for e in events:
         if e["production"] is not None:
             balance += e["production"]
-            running_total += e["production"]
+            # A return is goods coming back, not goods made: it moves the
+            # balance but stays out of the cumulative production counter.
+            is_return = e["kind"] == "return"
+            if not is_return:
+                running_total += e["production"]
             rows.append(
                 {
                     "date": e["date"],
                     "production": e["production"],
-                    "total": running_total,
+                    "total": None if is_return else running_total,
+                    "return_pk": e.get("return_pk"),
                     "sales": None,
                     "balance": balance,
                     "customer": e["customer"],
@@ -3261,6 +3293,51 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "sale": None if is_credit else adjustment.amount,
                 "credit": adjustment.amount if is_credit else None,
                 "is_note": False,
+            }
+        )
+
+    # Returned goods credit the customer, like a payment: what they owe us
+    # falls by the value of what came back. The description spells out every
+    # line so the printed and exported ledgers, which only carry this text,
+    # still show what was returned; the screen draws `return_lines` instead.
+    # Kind 4 sorts it after anything else on its day — goods come back after
+    # they were sold — and keeps its created_at off every other row's
+    # tie-break.
+    customer_returns = customer.returns.select_related("bill").prefetch_related(
+        "items__product"
+    )
+    for ret in customer_returns:
+        lines = [
+            {
+                "product": str(item.product),
+                "qty": item.qty,
+                "unit_price": item.unit_price,
+                "line_total": item.line_total,
+                "reason": item.reason_text,
+                "restocked": item.restocked,
+            }
+            for item in ret.items.all()
+        ]
+        bill_part = f" · Bill {_bill_label(ret.bill)}" if ret.bill else ""
+        detail = "; ".join(
+            f"{line['product']} × {_qty_text(line['qty'])} @ {line['unit_price']:,.2f}"
+            f" = {line['line_total']:,.2f} ({line['reason']})"
+            for line in lines
+        )
+        entries.append(
+            {
+                "date": ret.return_date,
+                "kind": 4,
+                "pk": ret.pk,
+                "description": f"Returned Items {ret.reference_no}{bill_part}: {detail}",
+                "sale": None,
+                "credit": ret.total_amount,
+                "is_note": False,
+                "sort_time": ret.created_at,
+                "return_pk": ret.pk,
+                "return_ref": ret.reference_no,
+                "return_bill": _bill_label(ret.bill) if ret.bill else "",
+                "return_lines": lines,
             }
         )
 
@@ -11126,3 +11203,407 @@ def db_admin_row_delete(request, model_name, pk):
         "cascade": cascade,
         "blocked": bool(protected),
     })
+
+
+# ------------------------------------------------------------ customer returns
+# Goods sent back by a customer. Saving one credits the customer's balance and
+# puts every non-damaged line back on the shelf — see CustomerReturn for why it
+# is its own model rather than a negative bill.
+
+
+def _return_line_restocks(reason):
+    """Whether a returned line goes back into stock. Damaged goods do not."""
+    return reason != CustomerReturnItem.Reason.DAMAGED
+
+
+def _bill_label(bill):
+    """A bill as the bill list shows it: its bill_number, not its pk."""
+    return f"#{bill.bill_number:04d}" if bill.bill_number else f"#{bill.pk:04d}"
+
+
+def _return_bills_for(customer):
+    """The bills a return may be tied to: the customer's own, not cancelled."""
+    return (
+        Bill.objects.filter(customer=customer)
+        .exclude(status__in=[Bill.Status.CANCELLED, Bill.Status.DRAFT])
+        .order_by("-bill_date", "-id")
+    )
+
+
+def _parse_return_items(raw_json, customer):
+    """Read the items JSON off a return POST and return validated dicts.
+
+    Unlike a bill or quotation, one product may appear on several lines: part
+    of a delivery can come back damaged and the rest in good order, and those
+    two lines move stock differently. A blank price falls back to the price
+    this customer is charged for the product.
+    """
+    try:
+        rows = json.loads(raw_json or "[]")
+    except (ValueError, TypeError):
+        raise BillError("Item list is malformed.")
+    if not isinstance(rows, list) or not rows:
+        raise BillError("Add at least one returned item.")
+
+    ids = [r.get("product_id") for r in rows if isinstance(r, dict)]
+    products = {p.pk: p for p in Product.objects.filter(pk__in=ids)}
+    reasons = {value for value, _ in CustomerReturnItem.Reason.choices}
+
+    items = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise BillError(f"Item {index}: malformed row.")
+        product = products.get(row.get("product_id"))
+        if product is None:
+            raise BillError(f"Item {index}: product no longer exists.")
+
+        qty = _decimal(row.get("qty"), f"{product} quantity", 3)
+        if qty <= ZERO:
+            raise BillError(f"{product}: return quantity must be above 0.")
+
+        raw_price = row.get("unit_price")
+        if raw_price is None or str(raw_price).strip() == "":
+            unit_price = _order_line_price(customer.pk, product)
+        else:
+            unit_price = _decimal(raw_price, f"{product} price", 2)
+
+        reason = str(row.get("reason") or "").strip()
+        if reason not in reasons:
+            raise BillError(f"{product}: choose a reason for the return.")
+        reason_note = str(row.get("reason_note") or "").strip()[:255]
+        if reason == CustomerReturnItem.Reason.OTHER and not reason_note:
+            raise BillError(f"{product}: describe the reason when choosing Other.")
+
+        items.append(
+            {
+                "product": product,
+                "qty": qty,
+                "unit_price": unit_price,
+                "line_total": (qty * unit_price).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                ),
+                "reason": reason,
+                "reason_note": reason_note,
+                "restocked": _return_line_restocks(reason),
+            }
+        )
+    return items
+
+
+def _return_items_json(items):
+    """Items as the form's JS expects them, for re-drawing a refused form."""
+    return [
+        {
+            "product_id": item["product"].pk,
+            "product_name": item["product"].name,
+            "size": item["product"].size,
+            "qty": f"{item['qty']:.3f}",
+            "unit_price": f"{item['unit_price']:.2f}",
+            "reason": item["reason"],
+            "reason_note": item["reason_note"],
+        }
+        for item in items
+    ]
+
+
+def _posted_return_items(raw_json):
+    """Best-effort read of a refused form's lines, so the operator does not
+    have to key them in again. Anything unreadable is simply dropped."""
+    try:
+        rows = json.loads(raw_json or "[]")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    rows = [r for r in rows if isinstance(r, dict)]
+    products = {
+        p.pk: p
+        for p in Product.objects.filter(pk__in=[r.get("product_id") for r in rows])
+    }
+    kept = []
+    for row in rows:
+        product = products.get(row.get("product_id"))
+        if product is None:
+            continue
+        kept.append(
+            {
+                "product_id": product.pk,
+                "product_name": product.name,
+                "size": product.size,
+                "qty": str(row.get("qty") or ""),
+                "unit_price": str(row.get("unit_price") or ""),
+                "reason": str(row.get("reason") or ""),
+                "reason_note": str(row.get("reason_note") or ""),
+            }
+        )
+    return kept
+
+
+def _restock_after(products, write):
+    """Run `write` (which adds or removes restocked return lines) and re-flow
+    the stock of every product it touches.
+
+    Goes through the same opening/recompute walk as a stock adjustment rather
+    than bumping Product.qty directly, so a return dated before a later shelf
+    count is absorbed by that count instead of being added on top of it. With
+    no adjustments on the product the walk is plain addition.
+    """
+    openings = {}
+    for product in products:
+        locked = Product.objects.select_for_update().get(pk=product.pk)
+        openings[product.pk] = (locked, _stock_opening(locked))
+    write()
+    for locked, opening in openings.values():
+        _recompute_stock(locked, opening)
+
+
+@login_required
+def customer_return_list(request):
+    month_filter = get_month_filter(request)
+    query = request.GET.get("q", "").strip()
+    customer_id = request.GET.get("customer", "").strip()
+
+    returns = (
+        CustomerReturn.objects.select_related("customer", "bill", "created_by")
+        .annotate(
+            item_count=Count("items", distinct=True),
+            restocked_qty=Coalesce(
+                Sum("items__qty", filter=Q(items__restocked=True)),
+                Value(Decimal("0.000")),
+                output_field=DecimalField(max_digits=12, decimal_places=3),
+            ),
+            damaged_qty=Coalesce(
+                Sum("items__qty", filter=Q(items__restocked=False)),
+                Value(Decimal("0.000")),
+                output_field=DecimalField(max_digits=12, decimal_places=3),
+            ),
+        )
+        .order_by("-return_date", "-id")
+    )
+    returns = month_filter.apply(returns, field="return_date")
+    if customer_id.isdigit():
+        returns = returns.filter(customer_id=int(customer_id))
+    if query:
+        returns = returns.filter(
+            Q(reference_no__icontains=query) | Q(customer__name__icontains=query)
+        )
+
+    totals = CustomerReturn.objects.filter(pk__in=returns.values("pk")).aggregate(
+        count=Count("pk"),
+        value=Coalesce(Sum("total_amount"), ZERO, output_field=MONEY),
+    )
+    page_obj = _paginate(request, returns)
+
+    return render(
+        request,
+        "core/customer_return_list.html",
+        {
+            "page_obj": page_obj,
+            "returns": page_obj.object_list,
+            "month_filter": month_filter,
+            "query": query,
+            "customer_id": customer_id,
+            "customers": Customer.objects.filter(returns__isnull=False)
+            .distinct()
+            .order_by("name"),
+            "total_count": totals["count"],
+            "total_value": totals["value"],
+            "is_filtered": bool(query or customer_id or not month_filter.is_all_time),
+        },
+    )
+
+
+@login_required
+def customer_return_create(request):
+    today = timezone.localdate()
+    form_values = {
+        "customer": "",
+        "bill": "",
+        "return_date": today.isoformat(),
+        "notes": "",
+    }
+    initial_items = []
+
+    if request.method == "POST":
+        form_values = {
+            key: (request.POST.get(key) or "").strip() for key in form_values
+        }
+        try:
+            with transaction.atomic():
+                customer_id = form_values["customer"]
+                customer = (
+                    Customer.objects.select_for_update()
+                    .filter(pk=int(customer_id), is_walk_in_account=False)
+                    .first()
+                    if customer_id.isdigit()
+                    else None
+                )
+                if customer is None:
+                    raise BillError("Choose the customer returning the goods.")
+
+                bill = None
+                if form_values["bill"]:
+                    bill = (
+                        _return_bills_for(customer)
+                        .filter(pk=int(form_values["bill"]))
+                        .first()
+                        if form_values["bill"].isdigit()
+                        else None
+                    )
+                    if bill is None:
+                        raise BillError("That bill is not one of this customer's bills.")
+
+                return_date = _parse_date(form_values["return_date"])
+                if return_date is None:
+                    raise BillError("Enter the return date.")
+                if return_date > today:
+                    raise BillError("A return can't be dated in the future.")
+
+                items = _parse_return_items(request.POST.get("items_json"), customer)
+                total = sum((item["line_total"] for item in items), ZERO)
+
+                customer_return = CustomerReturn.objects.create(
+                    customer=customer,
+                    bill=bill,
+                    return_date=return_date,
+                    notes=form_values["notes"],
+                    total_amount=total,
+                    balance_before=customer.balance,
+                    balance_after=customer.balance + total,
+                    created_by=request.user,
+                )
+
+                restock_products = {
+                    item["product"].pk: item["product"]
+                    for item in items
+                    if item["restocked"]
+                }
+                shelf = {
+                    p.pk: p.qty
+                    for p in Product.objects.filter(pk__in=[i["product"].pk for i in items])
+                }
+
+                def write_items():
+                    for item in items:
+                        before = shelf[item["product"].pk]
+                        after = before + item["qty"] if item["restocked"] else before
+                        shelf[item["product"].pk] = after
+                        CustomerReturnItem.objects.create(
+                            customer_return=customer_return,
+                            product=item["product"],
+                            qty=item["qty"],
+                            unit_price=item["unit_price"],
+                            line_total=item["line_total"],
+                            reason=item["reason"],
+                            reason_note=item["reason_note"],
+                            restocked=item["restocked"],
+                            stock_before=before,
+                            stock_after=after,
+                        )
+
+                _restock_after(restock_products.values(), write_items)
+                Customer.objects.filter(pk=customer.pk).update(
+                    balance=F("balance") + total
+                )
+        except BillError as exc:
+            messages.error(request, f"Return not saved: {exc}")
+            initial_items = _posted_return_items(request.POST.get("items_json"))
+        else:
+            messages.success(
+                request,
+                f"Return {customer_return.reference_no} saved — {total:,.2f} credited "
+                f"to {customer.name} (balance {customer_return.balance_before:,.2f} → "
+                f"{customer_return.balance_after:,.2f}).",
+            )
+            return redirect("core:customer_return_detail", pk=customer_return.pk)
+
+    return render(
+        request,
+        "core/customer_return_create.html",
+        {
+            "customers": _billable_customers(),
+            "categories": Category.objects.all(),
+            "form_values": form_values,
+            "initial_items_json": json.dumps(initial_items),
+            "reasons": CustomerReturnItem.Reason.choices,
+            "damaged_reason": CustomerReturnItem.Reason.DAMAGED,
+            "other_reason": CustomerReturnItem.Reason.OTHER,
+            "products_url_template": reverse(
+                "core:bill_products", kwargs={"customer_id": 999999999}
+            ),
+            "bills_url_template": reverse(
+                "core:customer_return_bills", kwargs={"customer_id": 999999999}
+            ),
+            "today": today,
+        },
+    )
+
+
+@require_GET
+@login_required
+def customer_return_bills(request, customer_id):
+    """The picked customer's bills, for the optional bill dropdown."""
+    customer = Customer.objects.filter(pk=customer_id).first()
+    if customer is None:
+        return JsonResponse({"error": "That customer no longer exists."}, status=404)
+    bills = [
+        {
+            "id": bill.pk,
+            "label": (
+                f"{_bill_label(bill)} · {bill.bill_date:%d %b %Y} · "
+                f"{bill.total_amount:,.2f}"
+            ),
+        }
+        for bill in _return_bills_for(customer)[:200]
+    ]
+    return JsonResponse({"bills": bills})
+
+
+@login_required
+def customer_return_detail(request, pk):
+    customer_return = get_object_or_404(
+        CustomerReturn.objects.select_related("customer", "bill", "created_by"),
+        pk=pk,
+    )
+    items = list(customer_return.items.select_related("product"))
+    restocked = [item for item in items if item.restocked]
+    return render(
+        request,
+        "core/customer_return_detail.html",
+        {
+            "ret": customer_return,
+            "items": items,
+            "bill_label": _bill_label(customer_return.bill) if customer_return.bill else "",
+            "restocked_qty": sum((i.qty for i in restocked), Decimal("0.000")),
+            "damaged_qty": sum(
+                (i.qty for i in items if not i.restocked), Decimal("0.000")
+            ),
+            "restocked_value": sum((i.line_total for i in restocked), ZERO),
+        },
+    )
+
+
+@require_POST
+@super_admin_required
+def customer_return_delete(request, pk):
+    """Undo a return: take its credit back off the customer and its restocked
+    lines back off the shelf, then remove it."""
+    customer_return = get_object_or_404(CustomerReturn, pk=pk)
+    ref = customer_return.reference_no
+    with transaction.atomic():
+        customer_return = CustomerReturn.objects.select_for_update().get(pk=pk)
+        restocked = {
+            item.product_id: item.product
+            for item in customer_return.items.select_related("product")
+            if item.restocked
+        }
+        Customer.objects.filter(pk=customer_return.customer_id).update(
+            balance=F("balance") - customer_return.total_amount
+        )
+        _restock_after(restocked.values(), customer_return.delete)
+
+    messages.success(
+        request,
+        f"Return {ref} deleted — its credit and restocked items have been reversed.",
+    )
+    return redirect("core:customer_return_list")

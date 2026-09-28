@@ -91,6 +91,8 @@ _LOGGED_MODELS = [
     "PettyCashEntry", "PettyCashReimbursement",
     # Quotations
     "Order",
+    # Customer returns (items are child rows; the return carries the event)
+    "CustomerReturn",
     # Access
     "User",
 ]

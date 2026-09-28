@@ -31,6 +31,7 @@ from core.models import (
     Customer,
     CustomerOpeningBalanceEditAudit,
     CustomerPrice,
+    CustomerReturn,
     Payment,
     PaymentEditAudit,
     Product,
@@ -7655,6 +7656,214 @@ class StockAdjustmentSetsExactFigureTests(UserFactoryMixin, TestCase):
             reverse("core:stock_ledger", args=[self.product.pk]) + "?month=all"
         )
         self.assertContains(response, "Set to 500")
+
+
+class CustomerReturnTests(UserFactoryMixin, TestCase):
+    """Returned goods credit the customer and restock everything not damaged."""
+
+    def setUp(self):
+        self.admin = self.make_admin()
+        self.client.force_login(self.admin)
+        cat = Category.objects.create(name="Pipes")
+        self.pipe = Product.objects.create(
+            name="pipe", size="20mm", category=cat, qty=Decimal("50"),
+            default_price=Decimal("120.00"),
+        )
+        self.elbow = Product.objects.create(
+            name="elbow", size="20mm", category=cat, qty=Decimal("10"),
+            default_price=Decimal("80.00"),
+        )
+        self.customer = Customer.objects.create(name="Kamal", balance=Decimal("500.00"))
+        CustomerPrice.objects.create(
+            customer=self.customer, product=self.pipe, unit_price=Decimal("100.00")
+        )
+
+    def post_return(self, lines, **extra):
+        data = {
+            "customer": self.customer.pk,
+            "bill": "",
+            "return_date": date.today().isoformat(),
+            "notes": "",
+            "items_json": json.dumps(lines),
+        }
+        data.update(extra)
+        return self.client.post(reverse("core:customer_return_create"), data)
+
+    def test_return_credits_balance_and_restocks_all_but_damaged(self):
+        response = self.post_return([
+            {"product_id": self.pipe.pk, "qty": "15", "unit_price": "100.00", "reason": "wrong_item"},
+            {"product_id": self.elbow.pk, "qty": "6.25", "unit_price": "80.00", "reason": "damaged"},
+        ])
+        ret = CustomerReturn.objects.get()
+        self.assertRedirects(response, reverse("core:customer_return_detail", args=[ret.pk]))
+        self.assertEqual(ret.reference_no, "RET-0001")
+        self.assertEqual(ret.total_amount, Decimal("2000.00"))
+
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.balance, Decimal("2500.00"))
+        self.assertEqual((ret.balance_before, ret.balance_after), (Decimal("500.00"), Decimal("2500.00")))
+
+        self.pipe.refresh_from_db()
+        self.elbow.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("65"))
+        self.assertEqual(self.elbow.qty, Decimal("10"))  # damaged: not restocked
+        pipe_line, elbow_line = ret.items.order_by("id")
+        self.assertTrue(pipe_line.restocked)
+        self.assertEqual((pipe_line.stock_before, pipe_line.stock_after), (Decimal("50"), Decimal("65")))
+        self.assertFalse(elbow_line.restocked)
+
+    def test_stock_ledger_records_the_return_but_not_the_damaged_line(self):
+        self.post_return([
+            {"product_id": self.pipe.pk, "qty": "5", "unit_price": "100", "reason": "excess"},
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "100", "reason": "damaged"},
+        ])
+        self.pipe.refresh_from_db()
+        rows = views._stock_ledger_rows(self.pipe)["rows"]
+        returns = [r for r in rows if r["kind"] == "return"]
+        self.assertEqual(len(returns), 1)
+        self.assertEqual(returns[0]["production"], Decimal("5"))
+        self.assertEqual(returns[0]["bill_number"], "RET-0001")
+        self.assertIsNone(returns[0]["total"])  # not counted as production
+        self.assertEqual(rows[-1]["balance"], Decimal("55"))
+        response = self.client.get(reverse("core:stock_ledger", args=[self.pipe.pk]) + "?month=all")
+        self.assertContains(response, "RET-0001")
+
+    def test_customer_ledger_shows_the_return_as_a_credit_with_its_items(self):
+        self.post_return([
+            {"product_id": self.pipe.pk, "qty": "20", "unit_price": "100", "reason": "not_required"},
+        ])
+        self.customer.refresh_from_db()
+        rows = views._ledger_rows(self.customer)
+        ret_row = next(r for r in rows if r.get("return_pk"))
+        self.assertEqual(ret_row["credit"], Decimal("2000.00"))
+        self.assertIn("RET-0001", ret_row["description"])
+        self.assertIn("pipe 20mm × 20 @ 100.00", ret_row["description"])
+        self.assertEqual(rows[-1]["balance"], -self.customer.balance)
+        # The opening line is derived, so the return moves only the closing.
+        self.assertEqual(rows[-1]["balance"] - rows[-2]["balance"], Decimal("-2000.00"))
+        response = self.client.get(reverse("core:customer_ledger", args=[self.customer.pk]) + "?month=all")
+        self.assertContains(response, "Returned items")
+        self.assertContains(response, "No longer required")
+
+    def test_blank_price_falls_back_to_the_customer_price(self):
+        self.post_return([
+            {"product_id": self.pipe.pk, "qty": "2", "unit_price": "", "reason": "excess"},
+            {"product_id": self.elbow.pk, "qty": "1", "unit_price": "", "reason": "excess"},
+        ])
+        pipe_line, elbow_line = CustomerReturn.objects.get().items.order_by("id")
+        self.assertEqual(pipe_line.unit_price, Decimal("100.00"))   # customer price
+        self.assertEqual(elbow_line.unit_price, Decimal("80.00"))   # default price
+
+    def test_bill_is_optional_but_must_belong_to_the_customer(self):
+        other = Customer.objects.create(name="Other")
+        theirs = Bill.objects.create(
+            customer=other, bill_date=date.today(), total_amount=Decimal("1.00"),
+            payment_type=Bill.PaymentType.FULL_CASH, status=Bill.Status.PAID,
+        )
+        line = [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "100", "reason": "excess"}]
+        self.post_return(line, bill=theirs.pk)
+        self.assertFalse(CustomerReturn.objects.exists())
+
+        mine = Bill.objects.create(
+            customer=self.customer, bill_date=date.today(), total_amount=Decimal("1.00"),
+            payment_type=Bill.PaymentType.FULL_CASH, status=Bill.Status.PAID,
+        )
+        self.post_return(line, bill=mine.pk)
+        self.assertEqual(CustomerReturn.objects.get().bill, mine)
+
+    def test_refused_returns_move_nothing(self):
+        cases = [
+            [],
+            [{"product_id": self.pipe.pk, "qty": "0", "unit_price": "100", "reason": "excess"}],
+            [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "100", "reason": ""}],
+            [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "100", "reason": "other"}],
+        ]
+        for lines in cases:
+            response = self.post_return(lines)
+            self.assertEqual(response.status_code, 200)
+        future = (date.today() + timedelta(days=1)).isoformat()
+        self.post_return(
+            [{"product_id": self.pipe.pk, "qty": "1", "unit_price": "100", "reason": "excess"}],
+            return_date=future,
+        )
+        self.assertFalse(CustomerReturn.objects.exists())
+        self.customer.refresh_from_db()
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.customer.balance, Decimal("500.00"))
+        self.assertEqual(self.pipe.qty, Decimal("50"))
+
+    def test_other_reason_with_a_note_is_accepted(self):
+        self.post_return([
+            {"product_id": self.pipe.pk, "qty": "1", "unit_price": "100",
+             "reason": "other", "reason_note": "Colour mismatch"},
+        ])
+        self.assertEqual(CustomerReturn.objects.get().items.get().reason_text, "Other: Colour mismatch")
+
+    def test_delete_reverses_balance_and_stock(self):
+        self.post_return([
+            {"product_id": self.pipe.pk, "qty": "15", "unit_price": "100", "reason": "wrong_item"},
+            {"product_id": self.elbow.pk, "qty": "5", "unit_price": "80", "reason": "damaged"},
+        ])
+        ret = CustomerReturn.objects.get()
+        self.client.post(reverse("core:customer_return_delete", args=[ret.pk]))
+        self.assertFalse(CustomerReturn.objects.exists())
+        self.customer.refresh_from_db()
+        self.pipe.refresh_from_db()
+        self.elbow.refresh_from_db()
+        self.assertEqual(self.customer.balance, Decimal("500.00"))
+        self.assertEqual(self.pipe.qty, Decimal("50"))
+        self.assertEqual(self.elbow.qty, Decimal("10"))
+
+    def test_manager_cannot_delete_a_return(self):
+        self.post_return([{"product_id": self.pipe.pk, "qty": "1", "unit_price": "100", "reason": "excess"}])
+        self.client.force_login(self.make_manager())
+        self.client.post(reverse("core:customer_return_delete", args=[CustomerReturn.objects.get().pk]))
+        self.assertTrue(CustomerReturn.objects.exists())
+
+    def test_list_detail_and_bill_endpoint_render(self):
+        self.post_return([{"product_id": self.pipe.pk, "qty": "3", "unit_price": "100", "reason": "excess"}])
+        ret = CustomerReturn.objects.get()
+        self.assertContains(self.client.get(reverse("core:customer_return_list")), "RET-0001")
+        detail = self.client.get(reverse("core:customer_return_detail", args=[ret.pk]))
+        self.assertContains(detail, "Customer ledger impact")
+        self.assertContains(detail, "800.00")  # balance after: 500 + 300
+        self.assertContains(self.client.get(reverse("core:customer_return_create")), "Return Items")
+        bills = self.client.get(reverse("core:customer_return_bills", args=[self.customer.pk]))
+        self.assertEqual(bills.json(), {"bills": []})
+
+    def test_backdated_return_before_a_shelf_count_is_absorbed_by_it(self):
+        yesterday = date.today() - timedelta(days=1)
+        self.client.post(
+            reverse("core:stock_adjust_create", args=[self.pipe.pk]),
+            {"adjustment_date": date.today().isoformat(), "qty": "40", "reason": "count"},
+        )
+        self.post_return(
+            [{"product_id": self.pipe.pk, "qty": "5", "unit_price": "100", "reason": "excess"}],
+            return_date=yesterday.isoformat(),
+        )
+        self.pipe.refresh_from_db()
+        self.assertEqual(self.pipe.qty, Decimal("40"))  # today's count already includes it
+
+
+class StockLedgerSameDayMixTests(UserFactoryMixin, TestCase):
+    def test_production_and_supplier_receipt_on_one_day_do_not_crash_the_ledger(self):
+        admin = self.make_admin()
+        self.client.force_login(admin)
+        product = Product.objects.create(
+            name="tee", category=Category.objects.create(name="Fittings"), qty=Decimal("0")
+        )
+        supplier = Customer.objects.create(name="Supplier", is_supplier=True)
+        sb = SupplierBill.objects.create(
+            supplier=supplier, bill_date=date.today(), total_amount=Decimal("10")
+        )
+        SupplierBillItem.objects.create(
+            supplier_bill=sb, product=product, qty=5, unit_price=2, line_total=10
+        )
+        ProductionEntry.objects.create(
+            product=product, production_date=date.today(), qty_produced=3, reason="run"
+        )
+        response = self.client.get(reverse("core:stock_ledger", args=[product.pk]) + "?month=all")
+        self.assertEqual(response.status_code, 200)
 
 
 class CustomerListExcelTests(UserFactoryMixin, TestCase):

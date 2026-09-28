@@ -100,6 +100,10 @@ Custom user: `AUTH_USER_MODEL = "core.User"`.
 - **CashDrawer**: manual drawer entries. `TxnType` in/out/transfer. Optional `bill` link (bill-linked rows are read-only — cannot be edited/deleted via drawer views). Edit metadata: `edit_reason`, `edited_at`, `edited_by`.
 - **HeldBill**: parked draft. Stores raw form `payload` as JSON; nothing else moves. On save-for-real the held row is deleted. Fields cached from payload: `label`, `item_count`, `subtotal`.
 
+### Customer returns
+- **CustomerReturn**: `reference_no` (`RET-0001` via `ReferenceCounter` key `"customer_return"`), `customer` (PROTECT), optional `bill` (SET_NULL), `return_date`, `total_amount`, `balance_before` / `balance_after` snapshots, `notes`, `created_by`. Saving posts once: `Customer.balance += total_amount` (a credit). Delete (super_admin) reverses it.
+- **CustomerReturnItem**: `product`, `qty`, `unit_price` (defaults to the customer's price), `line_total`, `reason` (damaged / wrong_item / excess / not_required / quality / other + `reason_note`), `restocked` (False only for Damaged), `stock_before` / `stock_after`. Restocked lines add to stock via the stock-ledger recompute and show as `kind="return"` rows in the stock ledger; the customer ledger shows each return as a credit listing its lines.
+
 ### Suppliers (finished-goods side)
 - **SupplierBill**: `supplier` (a Customer with `is_supplier=True`), `bill_date`, `total_amount`, `paid_amount`, `status`, `notes`.
 - **SupplierBillItem**: `product`, `qty`, `unit_price`, `line_total`.
@@ -157,6 +161,7 @@ Root section groupings (all under `core:` namespace):
 | Bills | `/bills/create/`, `/bills/save/`, `/bills/`, `/bills/<pk>/`, `/bills/<pk>/edit/`, `/bills/<pk>/delete/`, `/bills/<pk>/pay/`, `/bills/excel/` | login (edit/delete may gate) |
 | Held bills | `/bills/held/`, `/bills/hold/`, `/bills/held/<pk>/`, `/bills/held/<pk>/delete/` | login |
 | Bill helpers (JSON APIs) | `/api/bill/products/<customer_id>/`, `/api/customer-price/save-all/`, `/api/supplier/create/`, `/api/product/create/` | login |
+| Customer returns | `/returns/`, `/returns/create/`, `/returns/<pk>/`, `/returns/<pk>/delete/`, `/api/returns/bills/<customer_id>/` | login (delete super_admin) |
 | Cheques | `/cheques/…` (`deposit`/`hold`/`bounce`/`edit`/`delete`) + `/cheques/excel/` | login |
 | Cash drawer | `/cash-drawer/`, `/insert/`, `/<pk>/edit/`, `/<pk>/delete/`, `/excel/` | login (bill-linked rows read-only) |
 | Supplier bills | `/supplier-bills/…` | login |
