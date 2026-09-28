@@ -87,6 +87,16 @@
     {% csrf_token %}
     <input type="hidden" name="cheques_json" id="cheques-json">
 
+    <!-- Date -->
+    <div class="mb-5">
+      <label for="{{ form.settlement_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
+        Settlement date <span class="text-rose-500">*</span>
+      </label>
+      <div class="max-w-[12rem]">{{ form.settlement_date }}</div>
+      <p class="mt-1 text-xs text-slate-400">The day the money was received. Defaults to today.</p>
+      {% for e in form.settlement_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+    </div>
+
     <!-- Method -->
     <div>
       <span class="mb-1.5 block text-sm font-medium text-slate-700">Payment method</span>

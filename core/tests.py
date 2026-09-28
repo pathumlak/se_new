@@ -1455,6 +1455,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
                     "cash_amount": "300.00",
                     "cash_account": "",
                     "cheques_json": "",
+                    "settlement_date": "2026-08-02",
                 },
             )
 
@@ -7998,6 +7999,50 @@ class LedgerEditHighlightTests(UserFactoryMixin, TestCase):
         self.assertContains(response, ">Adjustment<")
         self.assertContains(response, "Balance adjusted (+)")
         self.assertContains(response, "Old credit note")
+
+
+class CustomerSettlementDateTests(UserFactoryMixin, TestCase):
+    """Settle Balance requires a date, defaults it to today, and books by it."""
+
+    def setUp(self):
+        self.client.force_login(self.make_admin())
+        self.customer = Customer.objects.create(name="Ariyarathne", balance=Decimal("-1000.00"))
+        self.url = reverse("core:customer_settle", args=[self.customer.pk])
+
+    def settle(self, **extra):
+        data = {"method": "cash", "cash_amount": "400.00", "cash_account": "", "cheques_json": ""}
+        data.update(extra)
+        return self.client.post(self.url, data)
+
+    def test_form_shows_the_date_prefilled_with_today(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'name="settlement_date"')
+        self.assertContains(response, f'value="{timezone.localdate():%Y-%m-%d}"')
+
+    def test_missing_date_is_refused_and_nothing_moves(self):
+        response = self.settle()
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Select the settlement date.")
+        self.assertFalse(Payment.objects.exists())
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.balance, Decimal("-1000.00"))
+
+    def test_future_date_is_refused(self):
+        tomorrow = timezone.localdate() + timedelta(days=1)
+        self.settle(settlement_date=tomorrow.isoformat())
+        self.assertFalse(Payment.objects.exists())
+
+    def test_selected_date_dates_the_payment_drawer_and_ledger(self):
+        chosen = timezone.localdate() - timedelta(days=10)
+        response = self.settle(settlement_date=chosen.isoformat())
+        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        payment = Payment.objects.get()
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), chosen)
+        self.assertEqual(CashDrawer.objects.get().txn_date, chosen)
+        self.customer.refresh_from_db()
+        row = next(r for r in views._ledger_rows(self.customer) if r.get("payment_pk"))
+        self.assertEqual(row["date"], chosen)
+        self.assertEqual(self.customer.balance, Decimal("-600.00"))
 
 
 class CustomerListExcelTests(UserFactoryMixin, TestCase):

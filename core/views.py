@@ -4230,7 +4230,7 @@ def _check_credit_limit(customer, total, parts, user):
         )
 
 
-def _record_payments(bill, customer, parts, when=None):
+def _record_payments(bill, customer, parts, when=None, paid_on=None):
     """Payment rows, and the paper trail each one leaves behind.
 
     One Payment for the cash leg (if any). One Payment plus one Cheque per
@@ -4246,8 +4246,15 @@ def _record_payments(bill, customer, parts, when=None):
     date for a bill-attached call, or the settlement date for a detached
     one. Kept explicit so a corrective settlement on last month's date
     lands in last month's cash drawer, not today's.
+
+    `paid_on`, when given, dates the Payment rows themselves (the ledger reads
+    a cash payment's day off paid_at). Only a settlement passes it; a bill's
+    payments keep the moment they were taken.
     """
     now = timezone.now()
+    if paid_on is not None:
+        local = timezone.localtime(now)
+        now = local.replace(year=paid_on.year, month=paid_on.month, day=paid_on.day)
     if when is None:
         when = bill.bill_date if bill is not None else timezone.localdate()
 
@@ -4965,7 +4972,7 @@ def _outstanding_bills_for(customer):
     return [b for b in bills if b.remaining_balance > ZERO]
 
 
-def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None):
+def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None, paid_on=None):
     """Fan a lump settlement out across the customer's outstanding bills,
     then spill anything left over into detached payments against the
     customer's account.
@@ -5001,7 +5008,7 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None)
         if take <= ZERO:
             continue
         parts = {"cash": take, "cash_account": cash_account, "cheques": []}
-        _record_payments(bill, customer, parts, when=when)
+        _record_payments(bill, customer, parts, when=when, paid_on=paid_on)
         Bill.objects.filter(pk=bill.pk).update(
             paid_amount=F("paid_amount") + take,
             balance_change=F("balance_change") + take,
@@ -5026,7 +5033,7 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None)
             continue
 
         parts = {"cash": ZERO, "cash_account": "", "cheques": [cheque]}
-        _record_payments(target, customer, parts, when=when)
+        _record_payments(target, customer, parts, when=when, paid_on=paid_on)
         Bill.objects.filter(pk=target.pk).update(
             paid_amount=F("paid_amount") + cheque["amount"],
             balance_change=F("balance_change") + cheque["amount"],
@@ -5043,7 +5050,7 @@ def _allocate_settlement(customer, cash, cash_account, cheques, user, when=None)
             "cash_account": cash_account,
             "cheques": cheques_left,
         }
-        _record_payments(None, customer, parts, when=when)
+        _record_payments(None, customer, parts, when=when, paid_on=paid_on)
         allocations.append(("detached-cash", None, cash_left))
         for c in cheques_left:
             allocations.append(("detached-cheque", None, c["amount"]))
@@ -5103,7 +5110,8 @@ def customer_settle(request, pk):
                 account,
                 cheques,
                 request.user,
-                when=timezone.localdate(),
+                when=data["settlement_date"],
+                paid_on=data["settlement_date"],
             )
 
         if outstanding:

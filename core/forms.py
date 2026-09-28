@@ -1228,11 +1228,30 @@ class CustomerSettlementForm(forms.Form):
     # received_date, maturity_date}. The template's JS collects the rows into
     # this hidden field on submit — matches how _bill_form does cheque rows.
     cheques_json = forms.CharField(required=False, widget=forms.HiddenInput())
+    # The day the money was received. Required, pre-filled with today; the
+    # ledger, cash drawer and payment rows are all dated by it.
+    settlement_date = forms.DateField(
+        error_messages={"required": "Select the settlement date."},
+        widget=forms.DateInput(
+            format="%Y-%m-%d", attrs={"class": INPUT_CLASSES, "type": "date"}
+        ),
+    )
 
     def __init__(self, *args, customer=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.customer = customer
         self.parsed_cheques = []
+        if "settlement_date" in self.fields:
+            today = timezone.localdate()
+            self.fields["settlement_date"].widget.attrs["max"] = today.isoformat()
+            if not self.is_bound:
+                self.initial.setdefault("settlement_date", today)
+
+    def clean_settlement_date(self):
+        d = self.cleaned_data["settlement_date"]
+        if d > timezone.localdate():
+            raise forms.ValidationError("Settlement date can't be in the future.")
+        return d
 
     def clean(self):
         cleaned = super().clean()
@@ -1350,6 +1369,9 @@ class SupplierBillPaymentForm(CustomerSettlementForm):
     specific to money coming in, so this is a plain subclass; the view is
     what tells the two apart by which allocator it calls afterwards.
     """
+
+    # Supplier payments keep their existing (today-dated) behaviour.
+    settlement_date = None
     pass
 
 
