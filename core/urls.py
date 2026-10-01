@@ -209,6 +209,8 @@ urlpatterns = [
     path("cash-drawer/excel/", views.cash_drawer_excel, name="cash_drawer_excel"),
     # Manual top-up of the drawer (owner deposit, petty-cash return, etc.).
     path("cash-drawer/insert/", views.cash_drawer_insert, name="cash_drawer_insert"),
+    # Super-admin-only correction to match a physical cash count.
+    path("cash-drawer/adjust/", views.cash_drawer_adjust, name="cash_drawer_adjust"),
     # Manual entries only — both views refuse a bill-linked row. The form is a
     # modal on the list, so edit is POST-only and a GET bounces back to it.
     path("cash-drawer/<int:pk>/edit/", views.cash_drawer_edit, name="cash_drawer_edit"),

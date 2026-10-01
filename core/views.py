@@ -43,6 +43,7 @@ from .forms import (
     BillEditReasonForm,
     BillingSettingsForm,
     BillPaymentForm,
+    CashDrawerAdjustForm,
     CashDrawerEditForm,
     CashDrawerInForm,
     CashDrawerOutForm,
@@ -6354,12 +6355,15 @@ def _is_manual(entry):
     return entry.bill_id is None
 
 
-def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_form=None):
+def _cash_drawer_page(
+    request, out_form, edit_form=None, edit_entry=None, in_form=None, adjust_form=None
+):
     """Render the drawer log.
 
     Shared by the list, cash_drawer_edit (which re-renders this whole page
-    when a correction fails validation), and cash_drawer_insert (same story
-    for a failed top-up) — the running balance, the totals and the filters
+    when a correction fails validation), cash_drawer_insert (same story
+    for a failed top-up), and cash_drawer_adjust (same, for a failed
+    balance correction) — the running balance, the totals and the filters
     all have to come back with it, and rebuilding them is this function.
     """
     # The edit modal is one form reused by every row, filled in by JS from the
@@ -6371,6 +6375,11 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
         in_form = CashDrawerInForm(initial={"txn_date": timezone.localdate()})
 
     balance = _cash_drawer_balance()
+
+    # Only a super admin can see/submit the adjust modal, so there is nothing
+    # to build for anyone else.
+    if adjust_form is None and _is_super_admin(request.user):
+        adjust_form = CashDrawerAdjustForm(drawer_balance=balance)
 
     # Monthly filter — the same shape used across the rest of the app.
     # Defaults to the current month so a first page load is scoped, with the
@@ -6447,6 +6456,7 @@ def _cash_drawer_page(request, out_form, edit_form=None, edit_entry=None, in_for
             "in_form": in_form,
             "edit_form": edit_form,
             "edit_entry": edit_entry,
+            "adjust_form": adjust_form,
             # The drawer as it stands now, whatever the filter shows.
             "balance": balance,
             # Scoped to the viewed month so the account tiles reset each month.
@@ -6683,6 +6693,37 @@ def cash_drawer_insert(request):
         request,
         CashDrawerOutForm(drawer_balance=_cash_drawer_balance()),
         in_form=form,
+    )
+
+
+@require_POST
+@super_admin_required
+def cash_drawer_adjust(request):
+    """Correct the drawer to match a physical cash count.
+
+    Super admin only — this writes a row sized to make the live-summed
+    balance equal whatever was actually counted, rather than a plain in/out
+    entry anyone can already make. Wrapped in a transaction so the balance
+    read and the row it's judged against can't drift if two adjustments land
+    at once.
+    """
+    with transaction.atomic():
+        balance = _cash_drawer_balance()
+        form = CashDrawerAdjustForm(request.POST, drawer_balance=balance)
+        if form.is_valid():
+            entry = form.save()
+            messages.success(
+                request,
+                f"Drawer adjusted {'up' if entry.txn_type == CashDrawer.TxnType.IN else 'down'} "
+                f"by {entry.amount:,.2f}. Balance: {_cash_drawer_balance():,.2f}.",
+            )
+            return redirect("core:cash_drawer")
+
+    messages.error(request, "That adjustment couldn't be saved — see the form.")
+    return _cash_drawer_page(
+        request,
+        CashDrawerOutForm(drawer_balance=_cash_drawer_balance()),
+        adjust_form=form,
     )
 
 

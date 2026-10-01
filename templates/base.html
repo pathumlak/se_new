@@ -1,4 +1,4 @@
-{% load static %}
+{% load static humanize %}
 <!DOCTYPE html>
 <html lang="en" class="h-full">
 <head>
@@ -680,6 +680,19 @@
       </div>
 
       <div class="ml-auto flex items-center gap-2.5">
+        {% if cash_balance is not None %}
+          <a href="{% url 'core:cash_drawer' %}"
+             class="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold
+                    {% if cash_balance < 0 %}bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200
+                    {% else %}bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200{% endif %}"
+             title="Cash drawer balance — click to open{% if is_super_admin %} or adjust{% endif %}">
+            <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9v8.25A2.25 2.25 0 004.5 19.5h15a2.25 2.25 0 002.25-2.25V9M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V9m-19.5 0h19.5M6 15h4.5"/>
+            </svg>
+            Rs {{ cash_balance|floatformat:2|intcomma }}
+          </a>
+        {% endif %}
+
         {% if current_role %}
           <span class="hidden sm:inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold
                        {% if is_super_admin %}bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200

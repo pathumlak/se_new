@@ -745,6 +745,85 @@ class CashDrawerEditForm(forms.ModelForm):
         return cleaned
 
 
+class CashDrawerAdjustForm(forms.Form):
+    """Correct the drawer to match a physical cash count.
+
+    Super admin only. Nothing stores the drawer's balance — it is always
+    summed from the CashDrawer rows — so "adjusting" it means writing the one
+    row that makes that sum equal what was actually counted. The field is the
+    counted amount itself (what's in front of whoever is counting), not the
+    difference; the delta is worked out here and written as a plain IN/OUT
+    entry, same as any other manual row.
+    """
+
+    actual_amount = forms.DecimalField(
+        label="Actual cash counted",
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0"),
+        widget=forms.NumberInput(
+            attrs={
+                "class": INPUT_CLASSES,
+                "step": "0.01",
+                "min": "0",
+                "placeholder": "0.00",
+            }
+        ),
+    )
+    reason = forms.CharField(
+        label="Reason",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={
+                "class": INPUT_CLASSES,
+                "placeholder": "e.g. Physical count on 1 Oct — drawer was short",
+            }
+        ),
+    )
+
+    def __init__(self, *args, drawer_balance=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: The live balance this adjustment is judged against — passed in by
+        #: the view so the form never has to query for it itself.
+        self.drawer_balance = drawer_balance if drawer_balance is not None else Decimal("0")
+
+    def clean_reason(self):
+        reason = self.cleaned_data["reason"].strip()
+        if not reason:
+            raise forms.ValidationError("Give a reason for the adjustment.")
+        return reason
+
+    def clean(self):
+        cleaned = super().clean()
+        actual = cleaned.get("actual_amount")
+        if actual is not None and actual == self.drawer_balance:
+            # Attached to the field (not None) so it renders with the same
+            # .form-error class the other drawer forms use for cross-field
+            # checks — the page's reopen-modal-on-error script keys off that.
+            self.add_error(
+                "actual_amount",
+                f"That already matches the current balance "
+                f"({self.drawer_balance:,.2f}) — nothing to adjust.",
+            )
+        return cleaned
+
+    @property
+    def delta(self):
+        """Positive = cash to add (IN), negative = cash to remove (OUT)."""
+        return self.cleaned_data["actual_amount"] - self.drawer_balance
+
+    def save(self):
+        delta = self.delta
+        entry = CashDrawer(
+            txn_date=timezone.localdate(),
+            txn_type=CashDrawer.TxnType.IN if delta > 0 else CashDrawer.TxnType.OUT,
+            amount=abs(delta),
+            reason=f"Balance adjustment — {self.cleaned_data['reason']}"[:255],
+        )
+        entry.save()
+        return entry
+
+
 class ChequeForm(forms.ModelForm):
     """Correct a cheque's details.
 

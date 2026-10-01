@@ -65,6 +65,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.current_role",
+                "core.context_processors.cash_drawer_balance",
                 "core.context_processors.notifications",
             ],
         },

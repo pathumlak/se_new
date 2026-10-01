@@ -188,6 +188,7 @@
   /* Style Django-rendered inputs inside modals */
   #out-modal input, #out-modal select, #out-modal textarea,
   #insert-modal input, #insert-modal select, #insert-modal textarea,
+  #adjust-modal input, #adjust-modal select, #adjust-modal textarea,
   #edit-modal input, #edit-modal select, #edit-modal textarea {
     width: 100%;
     border: 1px solid #e2e8f0;
@@ -203,6 +204,7 @@
   }
   #out-modal input:focus, #out-modal select:focus, #out-modal textarea:focus,
   #insert-modal input:focus, #insert-modal select:focus, #insert-modal textarea:focus,
+  #adjust-modal input:focus, #adjust-modal select:focus, #adjust-modal textarea:focus,
   #edit-modal input:focus, #edit-modal select:focus, #edit-modal textarea:focus {
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
@@ -311,6 +313,7 @@
   html.dark .filter-input,
   html.dark #out-modal input, html.dark #out-modal select, html.dark #out-modal textarea,
   html.dark #insert-modal input, html.dark #insert-modal select, html.dark #insert-modal textarea,
+  html.dark #adjust-modal input, html.dark #adjust-modal select, html.dark #adjust-modal textarea,
   html.dark #edit-modal input, html.dark #edit-modal select, html.dark #edit-modal textarea {
     background: #0f1728; color: #e2e8f0; border-color: #34425c;
   }
@@ -387,6 +390,17 @@
       </svg>
       Record Transfer / Withdrawal
     </button>
+    {% if is_super_admin %}
+      <button type="button" id="open-adjust-form"
+              style="background:#7c3aed;box-shadow:0 1px 3px rgba(124,58,237,0.25)"
+              class="btn-record hover:!bg-violet-700">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        Adjust Balance
+      </button>
+    {% endif %}
   </div>
 </div>
 
@@ -748,6 +762,56 @@
 </div>
 
 
+{% if is_super_admin %}
+<!-- ═══════════════════════ ADJUST BALANCE MODAL (super admin) ═══════════════════════ -->
+<div id="adjust-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="adjust-modal-title">
+  <div class="modal-box">
+    <form method="post" action="{% url 'core:cash_drawer_adjust' %}" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="adjust-modal-title" class="modal-title">Adjust drawer balance</h3>
+          <p class="modal-sub">Enter what was actually counted. Drawer shows <strong>{{ balance|floatformat:2|intcomma }}</strong> now — the difference is written as a correction entry.</p>
+        </div>
+        <button type="button" id="adjust-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if adjust_form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ adjust_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ adjust_form.actual_amount.id_for_label }}" class="form-label">{{ adjust_form.actual_amount.label }}<span class="req">*</span></label>
+          {{ adjust_form.actual_amount }}
+          <p class="form-hint">What was physically counted in the drawer — not the amount to add or remove.</p>
+          {% for error in adjust_form.actual_amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ adjust_form.reason.id_for_label }}" class="form-label">{{ adjust_form.reason.label }}<span class="req">*</span></label>
+          {{ adjust_form.reason }}
+          <p class="form-hint">Kept on the correction entry in the log.</p>
+          {% for error in adjust_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="adjust-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary" style="background:#7c3aed" onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">Adjust</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+
 <!-- ═══════════════════════ EDIT MODAL ═══════════════════════ -->
 <div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
   <div class="modal-box">
@@ -924,6 +988,17 @@ function bindClose(modal, ...btns) {
   const openBtn = document.getElementById('open-insert-form');
   if (openBtn) openBtn.addEventListener('click', () => openModal(modal));
   bindClose(modal, 'insert-modal-close', 'insert-modal-cancel');
+  // Reopen if the server bounced the form back with errors.
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
+
+/* ─── Adjust balance (super admin) ─── */
+(function () {
+  const modal = document.getElementById('adjust-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-adjust-form');
+  if (openBtn) openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'adjust-modal-close', 'adjust-modal-cancel');
   // Reopen if the server bounced the form back with errors.
   if (modal.querySelector('.form-error')) openModal(modal);
 })();

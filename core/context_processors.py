@@ -17,6 +17,24 @@ def current_role(request):
     }
 
 
+def cash_drawer_balance(request):
+    """Expose the live drawer balance to every template, for the topbar pill.
+
+    Anonymous users (just the login page) get None so it can skip rendering
+    without touching the database.
+    """
+    user = getattr(request, "user", None)
+    if not (user and user.is_authenticated):
+        return {"cash_balance": None}
+
+    # Deferred for the same reason as the import in `notifications` below:
+    # views.py imports decorators.py imports models.py, so importing views at
+    # module load time here would be a cycle.
+    from .views import _cash_drawer_balance
+
+    return {"cash_balance": _cash_drawer_balance()}
+
+
 def notifications(request):
     """The topbar bell feed, computed per request.
 
