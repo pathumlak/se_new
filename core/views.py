@@ -3344,6 +3344,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "is_adjustment": True,
                 "adjustment_reason": adjustment.reason,
                 "adjustment_sign": sign,
+                "sort_time": adjustment.created_at,
             }
         )
 
@@ -3462,7 +3463,25 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         entries = [e for e in entries if e["date"] <= to_date]
 
     # pk breaks the last tie, so two rows on one day never swap between loads.
-    entries.sort(key=lambda e: (e["date"], e["kind"], e.get("sort_time") or "", e["pk"]))
+    #
+    # The third element is (has_a_sort_time, sort_time-or-pk): entries without
+    # a sort_time never get compared against another entry's actual datetime,
+    # because the leading bool already decides the ordering whenever the two
+    # sides differ — Python's tuple comparison stops at the first unequal
+    # element. Mixing a bare `e.get("sort_time") or ""` straight into the key
+    # is what used to blow up with "'<' not supported between instances of
+    # 'str' and 'datetime.datetime'" the moment two same-day, same-kind
+    # entries disagreed on whether they carried one (e.g. a payment next to a
+    # balance adjustment).
+    entries.sort(
+        key=lambda e: (
+            e["date"],
+            e["kind"],
+            e.get("sort_time") is not None,
+            e.get("sort_time") or e["pk"],
+            e["pk"],
+        )
+    )
 
     balance = ZERO
     for entry in entries:
