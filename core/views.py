@@ -6443,6 +6443,12 @@ def _cash_drawer_page(
     # and only the display is cut into pages. Slicing the queryset instead
     # would restart the running balance at each page and make the column lie.
     #
+    # Reversed only now, after each row already has its running balance: the
+    # log reads newest-first, but that's purely a display order — the figures
+    # themselves (and the actual drawer balance) are exactly what they were
+    # computed as above, oldest-first.
+    rows.reverse()
+
     # Fifty to a page, not the usual twenty-five: the drawer takes a row for
     # every cash bill, so its log is long, and it is read as a run of figures
     # down the running-balance column rather than scanned for a single row.

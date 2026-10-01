@@ -519,15 +519,6 @@
       </thead>
 
       <tbody>
-        {% if is_filtered and rows %}
-          <tr class="opening-row">
-            <td class="whitespace-nowrap">{% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}</td>
-            <td colspan="3" style="font-weight:500">Opening balance — everything before this range</td>
-            <td class="text-right" style="font-weight:600;color:#475569">{{ opening|floatformat:2|intcomma }}</td>
-            <td></td>
-          </tr>
-        {% endif %}
-
         {% for row in rows %}
           <tr class="js-drawer-row"
               data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% elif row.entry.bill.walk_in_name %}{{ row.entry.bill.walk_in_name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
@@ -614,6 +605,18 @@
             </td>
           </tr>
         {% endfor %}
+
+        {% if is_filtered and rows and not page_obj.has_next %}
+          <!-- The log now reads newest-first, so the oldest entries — and the
+               balance carried in from before them — land on the last page,
+               not the first. -->
+          <tr class="opening-row">
+            <td class="whitespace-nowrap">{% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}</td>
+            <td colspan="3" style="font-weight:500">Opening balance — everything before this range</td>
+            <td class="text-right" style="font-weight:600;color:#475569">{{ opening|floatformat:2|intcomma }}</td>
+            <td></td>
+          </tr>
+        {% endif %}
 
         <!-- Shown by JS when a search matches nothing on this page. -->
         <tr id="js-drawer-noresults" style="display:none">
