@@ -6374,6 +6374,11 @@ def _is_manual(entry):
     return entry.bill_id is None
 
 
+def _cash_drawer_balance_as_of(on_date):
+    """What the drawer held at the end of `on_date`."""
+    return _cash_drawer_balance(CashDrawer.objects.filter(txn_date__lte=on_date))
+
+
 def _cash_drawer_page(
     request, out_form, edit_form=None, edit_entry=None, in_form=None, adjust_form=None
 ):
@@ -6398,7 +6403,10 @@ def _cash_drawer_page(
     # Only a super admin can see/submit the adjust modal, so there is nothing
     # to build for anyone else.
     if adjust_form is None and _is_super_admin(request.user):
-        adjust_form = CashDrawerAdjustForm(drawer_balance=balance)
+        adjust_form = CashDrawerAdjustForm(
+            initial={"adjustment_date": timezone.localdate()},
+            balance_as_of=_cash_drawer_balance_as_of,
+        )
 
     # Monthly filter — the same shape used across the rest of the app.
     # Defaults to the current month so a first page load is scoped, with the
@@ -6733,14 +6741,16 @@ def cash_drawer_adjust(request):
     at once.
     """
     with transaction.atomic():
-        balance = _cash_drawer_balance()
-        form = CashDrawerAdjustForm(request.POST, drawer_balance=balance)
+        form = CashDrawerAdjustForm(
+            request.POST, balance_as_of=_cash_drawer_balance_as_of
+        )
         if form.is_valid():
             entry = form.save()
             messages.success(
                 request,
                 f"Drawer adjusted {'up' if entry.txn_type == CashDrawer.TxnType.IN else 'down'} "
-                f"by {entry.amount:,.2f}. Balance: {_cash_drawer_balance():,.2f}.",
+                f"by {entry.amount:,.2f} as of {entry.txn_date:%d %b %Y}. "
+                f"Balance: {_cash_drawer_balance():,.2f}.",
             )
             return redirect("core:cash_drawer")
 

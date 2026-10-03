@@ -756,6 +756,14 @@ class CashDrawerAdjustForm(forms.Form):
     entry, same as any other manual row.
     """
 
+    adjustment_date = forms.DateField(
+        label="Adjustment date",
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"class": INPUT_CLASSES, "type": "date"},
+        ),
+        error_messages={"required": "Choose the date of the adjustment."},
+    )
     actual_amount = forms.DecimalField(
         label="Actual cash counted",
         max_digits=12,
@@ -781,11 +789,20 @@ class CashDrawerAdjustForm(forms.Form):
         ),
     )
 
-    def __init__(self, *args, drawer_balance=None, **kwargs):
+    def __init__(self, *args, balance_as_of=None, **kwargs):
         super().__init__(*args, **kwargs)
-        #: The live balance this adjustment is judged against — passed in by
-        #: the view so the form never has to query for it itself.
-        self.drawer_balance = drawer_balance if drawer_balance is not None else Decimal("0")
+        #: Callable(date) -> the drawer balance at the end of that date. The
+        #: count is a statement about one day, so it is judged against what the
+        #: drawer held then, not against today's total. Passed in by the view
+        #: so the form never has to know how the balance is summed.
+        self.balance_as_of = balance_as_of or (lambda _date: Decimal("0"))
+        self.drawer_balance = Decimal("0")
+
+    def clean_adjustment_date(self):
+        d = self.cleaned_data["adjustment_date"]
+        if d > timezone.localdate():
+            raise forms.ValidationError("Adjustment can't be dated in the future.")
+        return d
 
     def clean_reason(self):
         reason = self.cleaned_data["reason"].strip()
@@ -795,15 +812,21 @@ class CashDrawerAdjustForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        adj_date = cleaned.get("adjustment_date")
         actual = cleaned.get("actual_amount")
-        if actual is not None and actual == self.drawer_balance:
+        if adj_date is None or actual is None:
+            return cleaned
+
+        self.drawer_balance = self.balance_as_of(adj_date)
+        if actual == self.drawer_balance:
             # Attached to the field (not None) so it renders with the same
             # .form-error class the other drawer forms use for cross-field
             # checks — the page's reopen-modal-on-error script keys off that.
             self.add_error(
                 "actual_amount",
-                f"That already matches the current balance "
-                f"({self.drawer_balance:,.2f}) — nothing to adjust.",
+                f"That already matches the balance on "
+                f"{adj_date:%d %b %Y} ({self.drawer_balance:,.2f}) — "
+                f"nothing to adjust.",
             )
         return cleaned
 
@@ -815,7 +838,7 @@ class CashDrawerAdjustForm(forms.Form):
     def save(self):
         delta = self.delta
         entry = CashDrawer(
-            txn_date=timezone.localdate(),
+            txn_date=self.cleaned_data["adjustment_date"],
             txn_type=CashDrawer.TxnType.IN if delta > 0 else CashDrawer.TxnType.OUT,
             amount=abs(delta),
             reason=f"Balance adjustment — {self.cleaned_data['reason']}"[:255],
