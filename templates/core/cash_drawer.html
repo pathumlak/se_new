@@ -143,10 +143,11 @@
   /* ── Modal shared ── */
   .modal-overlay {
     position: fixed; inset: 0; z-index: 50;
-    display: none; align-items: center; justify-content: center;
+    display: none; align-items: flex-start; justify-content: center;
     background: rgba(15,23,42,0.6);
     backdrop-filter: blur(4px);
-    padding: 16px;
+    padding: 48px 16px 16px;
+    overflow-y: auto;
   }
   .modal-overlay.open { display: flex; }
   .modal-box {
