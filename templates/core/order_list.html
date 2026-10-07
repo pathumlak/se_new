@@ -131,8 +131,25 @@
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <a href="{% url 'core:order_detail' order.pk %}"
                  class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+              {# A delivered or cancelled quotation is history; the others can still be changed. #}
+              {% if order.status != 'delivered' and order.status != 'cancelled' %}
+                <a href="{% url 'core:order_edit' order.pk %}"
+                   class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Edit</a>
+                <button type="button"
+                        data-status-url="{% url 'core:order_set_status' order.pk 'cancelled' %}"
+                        data-ref="{{ order.reference_no }}"
+                        data-customer="{{ order.display_customer }}"
+                        class="js-order-cancel rounded-md px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50">Cancel</button>
+              {% endif %}
               <a href="{% url 'core:order_pdf' order.pk %}"
                  class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">PDF</a>
+              {% if is_super_admin %}
+                <button type="button"
+                        data-delete-url="{% url 'core:order_delete' order.pk %}"
+                        data-ref="{{ order.reference_no }}"
+                        data-customer="{{ order.display_customer }}"
+                        class="js-order-delete rounded-md px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">Delete</button>
+              {% endif %}
             </td>
           </tr>
         {% empty %}
@@ -268,9 +285,88 @@
   </div>
 </section>
 
+<!-- ============ Cancel / Delete confirmations (list row actions) ============ -->
+<div id="order-cancel-modal"
+     class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="order-cancel-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 id="order-cancel-title" class="text-base font-semibold text-slate-900">Cancel quotation</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Cancel <strong id="order-cancel-ref"></strong> for <span id="order-cancel-customer"></span>?
+      It stays in the book as Cancelled and can be returned to Draft later.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-order-modal-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Keep it</button>
+      <form method="post" id="order-cancel-form">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button type="submit" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">Cancel quotation</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if is_super_admin %}
+<div id="order-delete-modal"
+     class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="order-delete-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 id="order-delete-title" class="text-base font-semibold text-slate-900">Delete quotation</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <strong id="order-delete-ref"></strong> for <span id="order-delete-customer"></span>
+      and all its items? The reference number won't be reused. This can't be undone.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-order-modal-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form method="post" id="order-delete-form">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}
+<script>
+  // ---- row actions: Cancel and Delete confirmations ----
+  (function () {
+    function show(m) { m.classList.remove('hidden'); m.classList.add('flex'); }
+    function hide(m) { m.classList.add('hidden'); m.classList.remove('flex'); }
+
+    const modals = ['order-cancel-modal', 'order-delete-modal']
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+    modals.forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) hide(m); });
+      m.querySelectorAll('.js-order-modal-close').forEach(function (b) {
+        b.addEventListener('click', function () { hide(m); });
+      });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') modals.forEach(hide);
+    });
+
+    function wire(buttonSel, modalId, formId, urlKey, prefix) {
+      const modal = document.getElementById(modalId);
+      if (!modal) return;
+      document.querySelectorAll(buttonSel).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.getElementById(formId).action = btn.dataset[urlKey];
+          document.getElementById(prefix + '-ref').textContent = btn.dataset.ref;
+          document.getElementById(prefix + '-customer').textContent = btn.dataset.customer;
+          show(modal);
+        });
+      });
+    }
+    wire('.js-order-cancel', 'order-cancel-modal', 'order-cancel-form', 'statusUrl', 'order-cancel');
+    wire('.js-order-delete', 'order-delete-modal', 'order-delete-form', 'deleteUrl', 'order-delete');
+  })();
+</script>
+
 <script>
   (function () {
     const DATA_URL = "{% url 'core:order_production_check_data' %}";

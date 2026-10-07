@@ -5919,10 +5919,10 @@ def _cheque_balance_note(cheque, delta):
     )
 
 
-def _cheque_return_url(request, fallback="core:cheque_list"):
-    """Where to send the operator after a cheque action.
+def _safe_next_url(request, fallback_url):
+    """`next` from the form or query string, if it is a same-site path.
 
-    The list's action forms carry `next` — the exact page, filters and sort
+    List pages' action forms carry `next` — the exact page, filters and sort
     they were on — so finishing an action lands back there instead of on page 1
     of the default view. Only same-site paths are honoured: `next` arrives from
     a form field that anyone can edit, and an open redirect is not worth it.
@@ -5934,7 +5934,12 @@ def _cheque_return_url(request, fallback="core:cheque_list"):
         require_https=request.is_secure(),
     ):
         return target
-    return reverse(fallback)
+    return fallback_url
+
+
+def _cheque_return_url(request, fallback="core:cheque_list"):
+    """Where to send the operator after a cheque action."""
+    return _safe_next_url(request, reverse(fallback))
 
 
 def _redirect_back_to_cheques(request):
@@ -10160,7 +10165,7 @@ def order_delete(request, pk):
     with transaction.atomic():
         order.delete()  # cascades to OrderItem
     messages.success(request, f"Quotation {ref} deleted.")
-    return redirect("core:order_list")
+    return redirect(_safe_next_url(request, reverse("core:order_list")))
 
 
 @login_required
@@ -10183,10 +10188,11 @@ def order_detail(request, pk):
 @login_required
 def order_set_status(request, pk, status):
     order = get_object_or_404(Order, pk=pk)
+    back = _safe_next_url(request, reverse("core:order_detail", args=[pk]))
     valid = {v for v, _ in Order.Status.choices}
     if status not in valid:
         messages.error(request, "Unknown status.")
-        return redirect("core:order_detail", pk=pk)
+        return redirect(back)
     with transaction.atomic():
         order.status = status
         update_fields = ["status"]
@@ -10198,8 +10204,11 @@ def order_set_status(request, pk, status):
             order.delivered_at = timezone.localdate()
             update_fields.append("delivered_at")
         order.save(update_fields=update_fields)
-    messages.success(request, f"Quotation marked as {order.get_status_display()}.")
-    return redirect("core:order_detail", pk=pk)
+    messages.success(
+        request,
+        f"Quotation {order.reference_no} marked as {order.get_status_display()}.",
+    )
+    return redirect(back)
 
 
 def _order_pdf_context(order):
