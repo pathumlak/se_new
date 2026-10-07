@@ -30,6 +30,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.formats import date_format
@@ -5918,16 +5919,39 @@ def _cheque_balance_note(cheque, delta):
     )
 
 
-def _set_cheque_status(request, pk, status, bounce_new_date=None):
+def _cheque_return_url(request, fallback="core:cheque_list"):
+    """Where to send the operator after a cheque action.
+
+    The list's action forms carry `next` — the exact page, filters and sort
+    they were on — so finishing an action lands back there instead of on page 1
+    of the default view. Only same-site paths are honoured: `next` arrives from
+    a form field that anyone can edit, and an open redirect is not worth it.
+    """
+    target = request.POST.get("next") or request.GET.get("next") or ""
+    if target and url_has_allowed_host_and_scheme(
+        target,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return target
+    return reverse(fallback)
+
+
+def _redirect_back_to_cheques(request):
+    return redirect(_cheque_return_url(request))
+
+
+def _change_cheque_status(pk, status, bounce_new_date=None):
+    """Move one cheque to `status`, shifting the balance if that status needs it.
+
+    Returns (cheque, delta). `delta` is None when the cheque was already in
+    that status and nothing was touched.
+    """
     cheque = get_object_or_404(Cheque.objects.select_related("customer"), pk=pk)
     was_status, was_amount = cheque.status, cheque.amount
 
     if cheque.status == status:
-        messages.info(
-            request,
-            f"Cheque {cheque.cheque_no} is already {cheque.get_status_display().lower()}.",
-        )
-        return redirect("core:cheque_list")
+        return cheque, None
 
     fields = ["status"]
     with transaction.atomic():
@@ -5937,13 +5961,25 @@ def _set_cheque_status(request, pk, status, bounce_new_date=None):
             fields.append("bounce_new_date")
         cheque.save(update_fields=fields)
         delta = _move_balance_for_cheque(cheque, was_status, was_amount)
+    return cheque, delta
+
+
+def _set_cheque_status(request, pk, status, bounce_new_date=None):
+    cheque, delta = _change_cheque_status(pk, status, bounce_new_date)
+
+    if delta is None:
+        messages.info(
+            request,
+            f"Cheque {cheque.cheque_no} is already {cheque.get_status_display().lower()}.",
+        )
+        return _redirect_back_to_cheques(request)
 
     messages.success(
         request,
         f"Cheque {cheque.cheque_no} marked {cheque.get_status_display().lower()}."
         + _cheque_balance_note(cheque, delta),
     )
-    return redirect("core:cheque_list")
+    return _redirect_back_to_cheques(request)
 
 
 @require_POST
@@ -5968,7 +6004,7 @@ def cheque_bounce(request, pk):
         messages.error(
             request, "Enter the date the cheque is expected to be re-presented."
         )
-        return redirect("core:cheque_list")
+        return _redirect_back_to_cheques(request)
     return _set_cheque_status(request, pk, Cheque.Status.BOUNCED, new_date)
 
 
@@ -5988,7 +6024,7 @@ def cheque_delete(request, pk):
             f"Cheque {cheque.cheque_no} has been deposited, so it can't be deleted. "
             f"The money is in the bank — mark it returned if it came back.",
         )
-        return redirect("core:cheque_list")
+        return _redirect_back_to_cheques(request)
 
     number = cheque.cheque_no
     customer = cheque.customer
@@ -6021,7 +6057,7 @@ def cheque_delete(request, pk):
             f"balance is now {customer.balance:.2f}."
         )
     messages.success(request, f"Cheque {number} was deleted." + note)
-    return redirect("core:cheque_list")
+    return _redirect_back_to_cheques(request)
 
 
 @login_required
@@ -6054,16 +6090,22 @@ def cheque_edit(request, pk):
             request,
             f"Cheque {cheque.cheque_no} was updated." + _cheque_balance_note(cheque, delta),
         )
-        return redirect("core:cheque_list")
+        return _redirect_back_to_cheques(request)
 
     return render(
         request,
         "core/cheque_edit.html",
-        {"form": form, "cheque": cheque, "credited": was_status in CREDITED_CHEQUE_STATUSES},
+        {
+            "form": form,
+            "cheque": cheque,
+            "credited": was_status in CREDITED_CHEQUE_STATUSES,
+            # Carried through the GET and the POST so Save and Cancel both
+            # return to the list page the operator came from.
+            "next_url": _cheque_return_url(request),
+        },
     )
 
 
-@login_required
 @login_required
 def cheque_list_excel(request):
     """Download the cheque list as an .xlsx, honouring the same status /
@@ -6230,6 +6272,7 @@ def _cheque_supplier_bill_ref(cheque):
     return payment.supplier_bill_id if payment and payment.supplier_bill_id else None
 
 
+@login_required
 def cheque_list(request):
     today = timezone.localdate()
     horizon = today + timedelta(days=CHEQUE_WARNING_DAYS)
@@ -6254,7 +6297,26 @@ def cheque_list(request):
     to_date = _parse_date(request.GET.get("to_date"))
 
     cheques = Cheque.objects.select_related("customer", "bill", "supplier_bill", "payment")
-    cheques = month_filter.apply(cheques, field="received_date")
+
+    # Viewing the current month: also pull in cheques received in EARLIER
+    # months that are still pending and due (or overdue). A cheque taken in
+    # September that matures in October is October's job to deposit, but a
+    # list scoped purely to the received month would hide it exactly when it
+    # needs chasing. Other months stay a plain received-month view.
+    carries_earlier = (
+        not month_filter.is_all_time and month_filter.start <= today <= month_filter.end
+    )
+    if carries_earlier:
+        cheques = cheques.filter(
+            Q(received_date__gte=month_filter.start, received_date__lte=month_filter.end)
+            | Q(
+                status=Cheque.Status.PENDING,
+                received_date__lt=month_filter.start,
+                maturity_date__lte=horizon,
+            )
+        )
+    else:
+        cheques = month_filter.apply(cheques, field="received_date")
     if status:
         cheques = cheques.filter(status=status)
     if selected_customer:
@@ -6281,11 +6343,10 @@ def cheque_list(request):
     groups = []
     current = None
     for cheque in cheques:
-        cheque.is_due_soon = (
-            cheque.status == Cheque.Status.PENDING and cheque.maturity_date <= horizon
+        _annotate_cheque(cheque, today, CHEQUE_WARNING_DAYS)
+        cheque.is_earlier_month = (
+            carries_earlier and cheque.received_date < month_filter.start
         )
-        cheque.bill_ref = _cheque_bill_ref(cheque)
-        cheque.supplier_bill_ref = _cheque_supplier_bill_ref(cheque)
 
         key = (cheque.received_date, cheque.customer_id)
         if current is None or current["key"] != key:
@@ -6327,8 +6388,199 @@ def cheque_list(request):
             "due_count": due_count,
             "warning_days": CHEQUE_WARNING_DAYS,
             "today": today,
+            "maturity_summary": _maturity_summary(today, horizon),
+            "active_tab": "all",
         },
     )
+
+
+MATURITY_WINDOWS = (3, 7, 14, 30)
+MATURITY_SOON_DEFAULT_DAYS = 7
+
+
+def _plural_days(n):
+    return f"{n} day{'' if n == 1 else 's'}"
+
+
+def _annotate_cheque(cheque, today, warn_days):
+    """Fill in everything a cheque row needs to show its maturity clearly.
+
+    `maturity_state` is only ever set for a pending cheque — a deposited,
+    held or returned one has nothing left to chase on its maturity date:
+      overdue — the date has passed
+      today   — falls due today
+      soon    — inside the warning window
+      later   — still comfortably ahead
+    """
+    cheque.bill_ref = _cheque_bill_ref(cheque)
+    cheque.supplier_bill_ref = _cheque_supplier_bill_ref(cheque)
+    cheque.is_due_soon = (
+        cheque.status == Cheque.Status.PENDING
+        and cheque.maturity_date <= today + timedelta(days=warn_days)
+    )
+
+    days = (cheque.maturity_date - today).days
+    cheque.days_to_maturity = days
+    cheque.maturity_state = ""
+    cheque.maturity_label = ""
+    if cheque.status != Cheque.Status.PENDING:
+        return
+    if days < 0:
+        cheque.maturity_state = "overdue"
+        cheque.maturity_label = f"Overdue {_plural_days(-days)}"
+    elif days == 0:
+        cheque.maturity_state = "today"
+        cheque.maturity_label = "Due today"
+    elif days <= warn_days:
+        cheque.maturity_state = "soon"
+        cheque.maturity_label = f"Due in {_plural_days(days)}"
+    else:
+        cheque.maturity_state = "later"
+        cheque.maturity_label = f"In {_plural_days(days)}"
+
+
+def _maturity_summary(today, horizon):
+    """Pending cheques due inside the warning window, across every month.
+
+    Deliberately not scoped to the month or filters on screen: the banner is a
+    reminder of what is waiting, and a cheque received last month is just as
+    waiting as one received today.
+    """
+    month_start = today.replace(day=1)
+    summary = Cheque.objects.filter(
+        status=Cheque.Status.PENDING, maturity_date__lte=horizon
+    ).aggregate(
+        total=Count("pk"),
+        overdue=Count("pk", filter=Q(maturity_date__lt=today)),
+        due_today=Count("pk", filter=Q(maturity_date=today)),
+        earlier=Count("pk", filter=Q(received_date__lt=month_start)),
+    )
+    summary["soon"] = summary["total"] - summary["overdue"] - summary["due_today"]
+    return summary
+
+
+@login_required
+def cheque_maturity_soon(request):
+    """Every pending cheque that is overdue or maturing inside a chosen window.
+
+    Ignores the received month on purpose: what matters here is when the money
+    is due, not when the cheque arrived. In "Maturity Check" mode (?check=1)
+    each row gets a checkbox so a batch can be marked in one go.
+    """
+    today = timezone.localdate()
+
+    try:
+        days = int(request.GET.get("days", ""))
+    except ValueError:
+        days = MATURITY_SOON_DEFAULT_DAYS
+    if days not in MATURITY_WINDOWS:
+        days = MATURITY_SOON_DEFAULT_DAYS
+    horizon = today + timedelta(days=days)
+
+    customer_id = request.GET.get("customer", "").strip()
+    selected_customer = int(customer_id) if customer_id.isdigit() else None
+
+    cheques = Cheque.objects.select_related(
+        "customer", "bill", "supplier_bill", "payment"
+    ).filter(status=Cheque.Status.PENDING, maturity_date__lte=horizon)
+    if selected_customer:
+        cheques = cheques.filter(customer_id=selected_customer)
+    cheques = cheques.order_by("maturity_date", "customer__name", "id")
+
+    rows = list(cheques)
+    totals = {"overdue": ZERO, "today": ZERO, "soon": ZERO}
+    counts = {"overdue": 0, "today": 0, "soon": 0}
+    for cheque in rows:
+        # Everything inside this page's window reads as "soon", whatever the
+        # size of the window — the 3-day warning cut-off doesn't apply here.
+        _annotate_cheque(cheque, today, days)
+        cheque.is_earlier_month = (
+            cheque.received_date.replace(day=1) < today.replace(day=1)
+        )
+        totals[cheque.maturity_state] += cheque.amount
+        counts[cheque.maturity_state] += 1
+
+    page_obj = _paginate(request, rows)
+
+    return render(
+        request,
+        "core/cheque_maturity_soon.html",
+        {
+            "page_obj": page_obj,
+            "cheques": page_obj.object_list,
+            "customers": Customer.objects.filter(
+                cheques__status=Cheque.Status.PENDING,
+                cheques__maturity_date__lte=horizon,
+            ).distinct(),
+            "selected_customer": selected_customer,
+            "days": days,
+            "windows": MATURITY_WINDOWS,
+            "today": today,
+            "total_count": len(rows),
+            "total_amount": sum(totals.values(), ZERO),
+            "counts": counts,
+            "totals": totals,
+            "check_mode": request.GET.get("check") == "1",
+            "maturity_summary": _maturity_summary(
+                today, today + timedelta(days=CHEQUE_WARNING_DAYS)
+            ),
+            "active_tab": "maturity",
+        },
+    )
+
+
+@require_POST
+@login_required
+def cheque_bulk_status(request):
+    """Maturity Check: mark several cheques deposited, held or returned at once."""
+    actions = {
+        "deposit": Cheque.Status.DEPOSITED,
+        "hold": Cheque.Status.HELD,
+        "bounce": Cheque.Status.BOUNCED,
+    }
+    action = request.POST.get("action", "")
+    ids = [int(v) for v in request.POST.getlist("cheque_ids") if v.isdigit()]
+
+    if not ids:
+        messages.error(request, "Tick at least one cheque first.")
+        return _redirect_back_to_cheques(request)
+    if action not in actions:
+        messages.error(request, "Choose what to do with the selected cheques.")
+        return _redirect_back_to_cheques(request)
+
+    status = actions[action]
+    new_date = None
+    if status == Cheque.Status.BOUNCED:
+        new_date = _parse_date(request.POST.get("bounce_new_date"))
+        if new_date is None:
+            messages.error(
+                request, "Enter the date the cheques are expected to be re-presented."
+            )
+            return _redirect_back_to_cheques(request)
+
+    changed = skipped = 0
+    with transaction.atomic():
+        for pk in Cheque.objects.filter(pk__in=ids).order_by("pk").values_list("pk", flat=True):
+            _cheque, delta = _change_cheque_status(pk, status, new_date)
+            if delta is None:
+                skipped += 1
+            else:
+                changed += 1
+
+    label = Cheque.Status(status).label.lower()
+    if changed:
+        note = (
+            ""
+            if status == Cheque.Status.DEPOSITED
+            else " Customer balances were adjusted where needed."
+        )
+        text = f"{changed} cheque{'' if changed == 1 else 's'} marked {label}.{note}"
+        if skipped:
+            text += f" {skipped} already {label}, left as they were."
+        messages.success(request, text)
+    else:
+        messages.info(request, f"Nothing changed — the selected cheques are already {label}.")
+    return _redirect_back_to_cheques(request)
 
 
 # -------------------------------------------------------------- cash drawer

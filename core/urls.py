@@ -200,6 +200,18 @@ urlpatterns = [
     ),
     path("cheques/", views.cheque_list, name="cheque_list"),
     path("cheques/excel/", views.cheque_list_excel, name="cheque_list_excel"),
+    # Pending cheques that are overdue or due inside a window, across all months,
+    # with a Maturity Check mode for marking a batch at once.
+    path(
+        "cheques/maturity-soon/",
+        views.cheque_maturity_soon,
+        name="cheque_maturity_soon",
+    ),
+    path(
+        "cheques/bulk-status/",
+        views.cheque_bulk_status,
+        name="cheque_bulk_status",
+    ),
     path("cheques/<int:pk>/deposit/", views.cheque_deposit, name="cheque_deposit"),
     path("cheques/<int:pk>/hold/", views.cheque_hold, name="cheque_hold"),
     path("cheques/<int:pk>/bounce/", views.cheque_bounce, name="cheque_bounce"),
