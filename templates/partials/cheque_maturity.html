@@ -1,0 +1,19 @@
+{# Maturity date + how close it is. Expects `cheque` annotated by _annotate_cheque. #}
+<span class="block text-sm font-semibold
+             {% if cheque.maturity_state == 'overdue' %}text-rose-700
+             {% elif cheque.maturity_state == 'today' or cheque.maturity_state == 'soon' %}text-amber-800
+             {% else %}text-slate-800{% endif %}">
+  {{ cheque.maturity_date|date:"D, j M Y" }}
+</span>
+{% if cheque.maturity_label %}
+  <span class="mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset
+               {% if cheque.maturity_state == 'overdue' %}bg-rose-100 text-rose-700 ring-rose-200
+               {% elif cheque.maturity_state == 'today' %}bg-amber-200 text-amber-900 ring-amber-300
+               {% elif cheque.maturity_state == 'soon' %}bg-amber-100 text-amber-800 ring-amber-200
+               {% else %}bg-slate-100 text-slate-500 ring-slate-200{% endif %}">
+    {{ cheque.maturity_label }}
+  </span>
+{% endif %}
+{% if cheque.bounce_new_date %}
+  <span class="block text-xs text-slate-400">re-present {{ cheque.bounce_new_date|date:"j M Y" }}</span>
+{% endif %}

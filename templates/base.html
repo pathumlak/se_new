@@ -484,6 +484,13 @@
         Cheques
       </a>
 
+      <a href="{% url 'core:cheque_maturity_soon' %}" class="nav-link {% if active == 'cheque_maturity_soon' %}active{% endif %}">
+        <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Maturity Soon
+      </a>
+
       <div class="nav-section-label">Finance</div>
 
       <a href="{% url 'core:cash_drawer' %}" class="nav-link {% if active == 'cash_drawer' %}active{% endif %}">

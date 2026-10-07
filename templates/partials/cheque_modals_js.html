@@ -1,0 +1,140 @@
+<script>
+  // ---- keep the list position across a cheque action ----
+  // The server redirects back to the same page and filters (`next`); this puts
+  // the scroll offset back too, so the operator lands on the row they were on
+  // rather than at the top of the page.
+  (function () {
+    const KEY = 'cheque-scroll:' + location.pathname + location.search;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+      sessionStorage.removeItem(KEY);
+      // Ignore a stale value left behind by an action that never came back here.
+      if (saved && Date.now() - saved.t < 60000) window.scrollTo(0, saved.y);
+    } catch (e) {}
+
+    document.addEventListener('submit', function (e) {
+      if (!e.target.matches || !e.target.matches('form[data-keep-position]')) return;
+      try {
+        sessionStorage.setItem(KEY, JSON.stringify({ y: window.scrollY, t: Date.now() }));
+      } catch (err) {}
+    });
+  })();
+
+  // ---- returned-cheque modal ----
+  (function () {
+    const modal = document.getElementById('bounce-modal');
+    if (!modal) return;
+
+    const form     = document.getElementById('bounce-modal-form');
+    const chequeEl = document.getElementById('bounce-modal-cheque');
+    const custEl   = document.getElementById('bounce-modal-customer');
+    const amountEl = document.getElementById('bounce-modal-amount');
+    const effectEl = document.getElementById('bounce-modal-effect');
+    const dateEl   = document.getElementById('bounce_new_date');
+    const cancel   = document.getElementById('bounce-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.bounceUrl;
+      chequeEl.textContent = btn.dataset.cheque;
+      custEl.textContent = btn.dataset.customer;
+      amountEl.textContent = btn.dataset.amount;
+
+      // A cheque still credited to the customer gives the debt back when it
+      // bounces; one already held or bounced was never counted, so nothing
+      // moves. Say which, rather than let the balance shift unannounced.
+      // An issued cheque (paying a supplier) runs the other way: bouncing it
+      // means WE owe THEM again, not the reverse.
+      if (btn.dataset.credited === 'yes' && btn.dataset.issued === 'yes') {
+        effectEl.textContent = 'We will owe ' + btn.dataset.customer + ' ' + btn.dataset.amount +
+          ' again — it comes back off what was recorded as paid.';
+        effectEl.classList.remove('hidden');
+      } else if (btn.dataset.credited === 'yes') {
+        effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
+          ' again — the payment is taken back off their balance.';
+        effectEl.classList.remove('hidden');
+      } else {
+        effectEl.classList.add('hidden');
+      }
+
+      dateEl.value = '';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      dateEl.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-bounce').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+
+  // ---- delete (super admins only; the modal isn't rendered otherwise) ----
+  (function () {
+    const modal = document.getElementById('delete-modal');
+    if (!modal) return;
+
+    const form     = document.getElementById('delete-modal-form');
+    const chequeEl = document.getElementById('delete-modal-cheque');
+    const custEl   = document.getElementById('delete-modal-customer');
+    const amountEl = document.getElementById('delete-modal-amount');
+    const effectEl = document.getElementById('delete-modal-effect');
+    const cancel   = document.getElementById('delete-modal-cancel');
+    let lastFocus = null;
+
+    function open(btn) {
+      lastFocus = btn;
+      form.action = btn.dataset.deleteUrl;
+      chequeEl.textContent = btn.dataset.cheque;
+      custEl.textContent = btn.dataset.customer;
+      amountEl.textContent = btn.dataset.amount;
+
+      // Only a pending cheque is still credited, so only that one moves the
+      // balance on the way out. An issued cheque runs the other way — see
+      // the bounce modal above for the same split.
+      if (btn.dataset.credited === 'yes' && btn.dataset.issued === 'yes') {
+        effectEl.textContent = 'We will owe ' + btn.dataset.customer + ' ' + btn.dataset.amount +
+          ' again — it comes back off what was recorded as paid.';
+        effectEl.classList.remove('hidden');
+      } else if (btn.dataset.credited === 'yes') {
+        effectEl.textContent = btn.dataset.customer + ' will owe ' + btn.dataset.amount +
+          ' again — the payment is taken back off their balance.';
+        effectEl.classList.remove('hidden');
+      } else {
+        effectEl.classList.add('hidden');
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      cancel.focus();
+    }
+
+    function close() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (lastFocus) lastFocus.focus();
+    }
+
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () { open(btn); });
+    });
+
+    cancel.addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+  })();
+</script>

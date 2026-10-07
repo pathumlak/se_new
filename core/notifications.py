@@ -195,7 +195,7 @@ def _cheque_notifications(warning_days):
                 "icon": "cheque",
                 "title": f"Cheque #{cheque.cheque_no} · Rs {cheque.amount}",
                 "body": body,
-                "url": reverse("core:cheque_list") + "?status=pending",
+                "url": reverse("core:cheque_maturity_soon"),
                 "timestamp": _isoformat(_now()),
             }
         )

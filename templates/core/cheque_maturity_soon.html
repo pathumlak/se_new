@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Maturity Soon · Senovka Plastics{% endblock %}
+{% block header %}Maturity Soon{% endblock %}
+
+{% block content %}
+
+{% include 'partials/cheque_tabs.html' %}
+
+<!-- Scope: how much of the cheque book to manage here. -->
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  <a href="?show=soon&days={{ days }}{% if selected_customer %}&customer={{ selected_customer }}{% endif %}{% if check_mode %}&check=1{% endif %}"
+     class="rounded-full px-3.5 py-1.5 text-sm font-medium {% if show == 'soon' %}bg-amber-500 text-white{% else %}border border-slate-300 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+    Due soon <span class="ml-1 font-bold">{{ scope_counts.soon }}</span>
+  </a>
+  <a href="?show=pending&days={{ days }}{% if selected_customer %}&customer={{ selected_customer }}{% endif %}{% if check_mode %}&check=1{% endif %}"
+     class="rounded-full px-3.5 py-1.5 text-sm font-medium {% if show == 'pending' %}bg-slate-900 text-white{% else %}border border-slate-300 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+    All pending <span class="ml-1 font-bold">{{ scope_counts.pending }}</span>
+  </a>
+  <a href="?show=all&days={{ days }}{% if selected_customer %}&customer={{ selected_customer }}{% endif %}{% if check_mode %}&check=1{% endif %}"
+     class="rounded-full px-3.5 py-1.5 text-sm font-medium {% if show == 'all' %}bg-slate-900 text-white{% else %}border border-slate-300 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+    All cheques <span class="ml-1 font-bold">{{ scope_counts.all }}</span>
+  </a>
+  <span class="ml-2 text-xs text-slate-500">
+    {% if show == 'soon' %}Pending cheques that are overdue or due within {{ days }} days — any month.
+    {% elif show == 'pending' %}Every pending cheque, soonest first.
+    {% else %}Every cheque in any status, latest maturity first.{% endif %}
+  </span>
+</div>
+
+<!-- Filters -->
+<form method="get" class="mb-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+  <input type="hidden" name="show" value="{{ show }}">
+  {% if check_mode %}<input type="hidden" name="check" value="1">{% endif %}
+
+  {% if show == 'soon' %}
+    <div>
+      <label for="days" class="mb-1.5 block text-xs font-medium text-slate-600">Due within</label>
+      <select id="days" name="days"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        {% for w in windows %}
+          <option value="{{ w }}" {% if w == days %}selected{% endif %}>{{ w }} days</option>
+        {% endfor %}
+      </select>
+    </div>
+  {% else %}
+    <input type="hidden" name="days" value="{{ days }}">
+  {% endif %}
+
+  {% if show == 'all' %}
+    <div>
+      <label for="status" class="mb-1.5 block text-xs font-medium text-slate-600">Status</label>
+      <select id="status" name="status"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                     focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">Any status</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  {% endif %}
+
+  <div>
+    <label for="customer" class="mb-1.5 block text-xs font-medium text-slate-600">Customer</label>
+    <select id="customer" name="customer"
+            class="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">All customers</option>
+      {% for customer in customers %}
+        <option value="{{ customer.pk }}" {% if customer.pk == selected_customer %}selected{% endif %}>{{ customer.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="flex gap-2">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Filter
+    </button>
+    {% if selected_customer or status %}
+      <a href="?show={{ show }}&days={{ days }}{% if check_mode %}&check=1{% endif %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>
+    {% endif %}
+  </div>
+
+  <div class="ml-auto">
+    {% if check_mode %}
+      <a href="?show={{ show }}&days={{ days }}{% if selected_customer %}&customer={{ selected_customer }}{% endif %}{% if status %}&status={{ status }}{% endif %}"
+         class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        Exit Maturity Check
+      </a>
+    {% else %}
+      <a href="?show={{ show }}&days={{ days }}{% if selected_customer %}&customer={{ selected_customer }}{% endif %}{% if status %}&status={{ status }}{% endif %}&check=1"
+         class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Maturity Check
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Where the money stands -->
+<div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+    <p class="text-[11px] font-bold uppercase tracking-wider text-rose-600">Overdue</p>
+    <p class="mt-1 text-xl font-bold text-rose-800">{{ counts.overdue }}</p>
+    <p class="text-xs text-rose-700">Rs {{ totals.overdue|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-amber-300 bg-amber-100 px-4 py-3">
+    <p class="text-[11px] font-bold uppercase tracking-wider text-amber-700">Due today</p>
+    <p class="mt-1 text-xl font-bold text-amber-900">{{ counts.today }}</p>
+    <p class="text-xs text-amber-800">Rs {{ totals.today|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+    <p class="text-[11px] font-bold uppercase tracking-wider text-amber-600">Due within {{ days }} days</p>
+    <p class="mt-1 text-xl font-bold text-amber-800">{{ counts.soon }}</p>
+    <p class="text-xs text-amber-700">Rs {{ totals.soon|floatformat:2|intcomma }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Listed here</p>
+    <p class="mt-1 text-xl font-bold text-slate-900">{{ total_count }}</p>
+    <p class="text-xs text-slate-500">Rs {{ total_amount|floatformat:2|intcomma }}</p>
+  </div>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+{% if check_mode %}
+  <!-- Maturity Check: tick cheques, then mark them all in one go. -->
+  <form method="post" id="bulk-form" action="{% url 'core:cheque_bulk_status' %}" data-keep-position
+        class="sticky top-14 z-10 mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+    <label class="flex items-center gap-2 text-sm font-semibold text-emerald-900">
+      <input type="checkbox" id="check-all" class="h-4 w-4 rounded border-slate-300">
+      Select all on this page
+    </label>
+    <span class="text-sm text-emerald-800"><span id="check-count" class="font-bold">0</span> selected</span>
+
+    <span class="ml-auto flex flex-wrap items-center gap-2">
+      <button type="submit" name="action" value="deposit"
+              class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700">
+        Mark Deposited
+      </button>
+      <button type="submit" name="action" value="hold"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        Hold
+      </button>
+      <span class="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2 py-1">
+        <input type="date" name="bounce_new_date" title="Date the cheques will be re-presented"
+               class="rounded border border-slate-300 px-2 py-1 text-xs text-slate-900">
+        <button type="submit" name="action" value="bounce" formnovalidate
+                class="rounded-md bg-rose-600 px-3 py-1 text-sm font-semibold text-white hover:bg-rose-700">
+          Returned
+        </button>
+      </span>
+    </span>
+  </form>
+{% endif %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          {% if check_mode %}<th class="w-10 px-4 py-2.5"></th>{% endif %}
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Maturity</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bank</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for cheque in cheques %}
+          {% if show != 'all' %}
+            {% ifchanged cheque.maturity_state %}
+              <tr class="bg-slate-50">
+                <td colspan="{% if check_mode %}9{% else %}8{% endif %}"
+                    class="px-4 py-2 text-xs font-bold uppercase tracking-wider
+                           {% if cheque.maturity_state == 'overdue' %}text-rose-600
+                           {% elif cheque.maturity_state == 'today' or cheque.maturity_state == 'soon' %}text-amber-700
+                           {% else %}text-slate-500{% endif %}">
+                  {% if cheque.maturity_state == 'overdue' %}Overdue — maturity date has passed
+                  {% elif cheque.maturity_state == 'today' %}Due today
+                  {% elif cheque.maturity_state == 'soon' %}Due within {{ days }} days
+                  {% else %}Later{% endif %}
+                </td>
+              </tr>
+            {% endifchanged %}
+          {% endif %}
+          <tr class="{% if cheque.maturity_state == 'overdue' %}bg-rose-50 hover:bg-rose-100{% elif cheque.maturity_state == 'today' or cheque.maturity_state == 'soon' %}bg-amber-50 hover:bg-amber-100{% else %}hover:bg-slate-50{% endif %}">
+            {% if check_mode %}
+              <td class="px-4 py-3">
+                <input type="checkbox" name="cheque_ids" value="{{ cheque.pk }}" form="bulk-form"
+                       class="js-check h-4 w-4 rounded border-slate-300">
+              </td>
+            {% endif %}
+            <td class="whitespace-nowrap px-4 py-3">
+              {% include 'partials/cheque_maturity.html' %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+              {{ cheque.cheque_no }}
+              {% if cheque.is_earlier_month %}
+                <span class="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700"
+                      title="Received {{ cheque.received_date|date:'j M Y' }}">earlier month</span>
+              {% endif %}
+              <span class="block text-xs font-normal text-slate-400">received {{ cheque.received_date|date:"j M Y" }}</span>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:customer_detail' cheque.customer.pk %}"
+                 class="font-medium text-slate-800 hover:underline">{{ cheque.customer.name }}</a>
+              {% if cheque.customer.is_supplier %}
+                <span class="ml-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">Issued</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if cheque.bill_ref %}
+                <a href="{% url 'core:bill_detail' cheque.bill_ref %}" class="font-medium text-slate-700 hover:underline">#{{ cheque.bill_ref }}</a>
+              {% elif cheque.supplier_bill_ref %}
+                <a href="{% url 'core:supplier_bill_detail' cheque.supplier_bill_ref %}" class="font-medium text-slate-700 hover:underline">#{{ cheque.supplier_bill_ref }}</a>
+              {% else %}
+                <span class="text-slate-300">—</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {{ cheque.bank_name }}{% if cheque.branch %}<span class="block text-xs text-slate-400">{{ cheque.branch }}</span>{% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">{{ cheque.amount|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if cheque.status == 'pending' %}
+                <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Pending</span>
+              {% elif cheque.status == 'deposited' %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Deposited</span>
+              {% elif cheque.status == 'bounced' %}
+                <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Returned</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Held</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              {% include 'partials/cheque_actions.html' %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{% if check_mode %}9{% else %}8{% endif %}" class="px-4 py-12 text-center">
+              <p class="text-sm text-slate-500">
+                {% if show == 'soon' %}Nothing is overdue or due within {{ days }} days. All clear.
+                {% else %}No cheques match.{% endif %}
+              </p>
+              {% if show == 'soon' %}
+                <a href="?show=pending" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">See every pending cheque</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include 'partials/cheque_modals.html' %}
+
+{% endblock %}
+
+{% block extra_js %}
+{% include 'partials/cheque_modals_js.html' %}
+<script>
+  // ---- Maturity Check: select-all and the running count ----
+  (function () {
+    const all = document.getElementById('check-all');
+    if (!all) return;
+    const boxes = Array.from(document.querySelectorAll('.js-check'));
+    const counter = document.getElementById('check-count');
+
+    function refresh() {
+      const n = boxes.filter(function (b) { return b.checked; }).length;
+      counter.textContent = n;
+      all.checked = n > 0 && n === boxes.length;
+      all.indeterminate = n > 0 && n < boxes.length;
+    }
+    all.addEventListener('change', function () {
+      boxes.forEach(function (b) { b.checked = all.checked; });
+      refresh();
+    });
+    boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+    refresh();
+  })();
+</script>
+{% endblock %}

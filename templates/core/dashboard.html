@@ -224,7 +224,7 @@
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
   </a>
 
-  <a href="{% url 'core:cheque_list' %}?status=pending" class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} reveal {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
+  <a href="{% url 'core:cheque_maturity_soon' %}" class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} reveal {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %} mb-2">Cheques Maturing</p>
@@ -384,12 +384,12 @@
       <svg class="h-3.5 w-3.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
     </span>
     <h2 class="text-[13px] font-semibold text-slate-800">Cheques maturing within {{ warning_days }} day{{ warning_days|pluralize }}</h2>
-    <a href="{% url 'core:cheque_list' %}?status=pending" class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>
+    <a href="{% url 'core:cheque_maturity_soon' %}" class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>
     <button type="button" id="dismiss-cheques" class="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition shadow-sm">Dismiss</button>
   </div>
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
     {% for cheque in maturing_cheques %}
-      <a href="{% url 'core:cheque_list' %}?status=pending" class="cheque-card">
+      <a href="{% url 'core:cheque_maturity_soon' %}" class="cheque-card">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="truncate text-[13px] font-bold text-amber-900">Cheque #{{ cheque.cheque_no }}</p>

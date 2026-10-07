@@ -9,7 +9,7 @@
 
   <!-- Breadcrumb -->
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:cheque_list' %}" class="hover:text-slate-900">Cheques</a>
+    <a href="{{ next_url }}" class="hover:text-slate-900">Cheques</a>
     <span class="text-slate-300">/</span>
     <span class="text-slate-700">{{ cheque.cheque_no }}</span>
   </nav>
@@ -41,6 +41,7 @@
 
     <form method="post" novalidate>
       {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next_url }}">
 
       <div class="space-y-5">
 
@@ -150,7 +151,7 @@
       </div>
 
       <div class="mt-7 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
-        <a href="{% url 'core:cheque_list' %}"
+        <a href="{{ next_url }}"
            class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Cancel
         </a>

@@ -1,0 +1,26 @@
+{# Switcher between the two cheque lists, plus the Maturity Check shortcut. #}
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  <a href="{% url 'core:cheque_list' %}"
+     class="rounded-lg px-3.5 py-2 text-sm font-semibold
+            {% if active_tab == 'all' %}bg-slate-900 text-white{% else %}border border-slate-300 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+    All cheques
+  </a>
+  <a href="{% url 'core:cheque_maturity_soon' %}"
+     class="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold
+            {% if active_tab == 'maturity' %}bg-slate-900 text-white{% else %}border border-slate-300 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+    Maturity Soon
+    {% if maturity_summary.total %}
+      <span class="rounded-full px-2 py-0.5 text-[11px] font-bold
+                   {% if active_tab == 'maturity' %}bg-white/20 text-white{% else %}bg-amber-100 text-amber-800{% endif %}">
+        {{ maturity_summary.total }}
+      </span>
+    {% endif %}
+  </a>
+  <a href="{% url 'core:cheque_maturity_soon' %}?check=1"
+     class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    Maturity Check
+  </a>
+</div>

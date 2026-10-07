@@ -6459,13 +6459,21 @@ def _maturity_summary(today, horizon):
     return summary
 
 
+MATURITY_SCOPES = ("soon", "pending", "all")
+
+
 @login_required
 def cheque_maturity_soon(request):
-    """Every pending cheque that is overdue or maturing inside a chosen window.
+    """The cheque maturity desk: one list to review and manage every cheque.
 
-    Ignores the received month on purpose: what matters here is when the money
-    is due, not when the cheque arrived. In "Maturity Check" mode (?check=1)
-    each row gets a checkbox so a batch can be marked in one go.
+    `show` picks how much of it to see:
+      soon    — pending cheques overdue or due inside the chosen window (default)
+      pending — every pending cheque, however far off its maturity date is
+      all     — every cheque in any status, optionally narrowed by `status`
+
+    None of these look at the received month: what matters here is when the
+    money is due, not when the cheque arrived. In "Maturity Check" mode
+    (?check=1) each row gets a checkbox so a batch can be marked in one go.
     """
     today = timezone.localdate()
 
@@ -6477,28 +6485,52 @@ def cheque_maturity_soon(request):
         days = MATURITY_SOON_DEFAULT_DAYS
     horizon = today + timedelta(days=days)
 
+    show = request.GET.get("show", "").strip()
+    if show not in MATURITY_SCOPES:
+        show = "soon"
+
+    status = request.GET.get("status", "").strip()
+    if status not in {value for value, _ in Cheque.Status.choices}:
+        status = ""
+
     customer_id = request.GET.get("customer", "").strip()
     selected_customer = int(customer_id) if customer_id.isdigit() else None
 
-    cheques = Cheque.objects.select_related(
-        "customer", "bill", "supplier_bill", "payment"
-    ).filter(status=Cheque.Status.PENDING, maturity_date__lte=horizon)
+    base = Cheque.objects.select_related("customer", "bill", "supplier_bill", "payment")
     if selected_customer:
-        cheques = cheques.filter(customer_id=selected_customer)
-    cheques = cheques.order_by("maturity_date", "customer__name", "id")
+        base = base.filter(customer_id=selected_customer)
+
+    # Tab badges are counted on the customer-filtered set, not the page, so
+    # switching tab tells you what is there before you click.
+    pending = base.filter(status=Cheque.Status.PENDING)
+    scope_counts = {
+        "soon": pending.filter(maturity_date__lte=horizon).count(),
+        "pending": pending.count(),
+        "all": base.count(),
+    }
+
+    if show == "soon":
+        cheques = pending.filter(maturity_date__lte=horizon).order_by(
+            "maturity_date", "customer__name", "id"
+        )
+    elif show == "pending":
+        cheques = pending.order_by("maturity_date", "customer__name", "id")
+    else:
+        if status:
+            base = base.filter(status=status)
+        # Newest maturity first: the far past is mostly settled history.
+        cheques = base.order_by("-maturity_date", "customer__name", "id")
 
     rows = list(cheques)
-    totals = {"overdue": ZERO, "today": ZERO, "soon": ZERO}
-    counts = {"overdue": 0, "today": 0, "soon": 0}
+    totals = {"overdue": ZERO, "today": ZERO, "soon": ZERO, "later": ZERO}
+    counts = {"overdue": 0, "today": 0, "soon": 0, "later": 0}
+    this_month = today.replace(day=1)
     for cheque in rows:
-        # Everything inside this page's window reads as "soon", whatever the
-        # size of the window — the 3-day warning cut-off doesn't apply here.
         _annotate_cheque(cheque, today, days)
-        cheque.is_earlier_month = (
-            cheque.received_date.replace(day=1) < today.replace(day=1)
-        )
-        totals[cheque.maturity_state] += cheque.amount
-        counts[cheque.maturity_state] += 1
+        cheque.is_earlier_month = cheque.received_date.replace(day=1) < this_month
+        if cheque.maturity_state:
+            totals[cheque.maturity_state] += cheque.amount
+            counts[cheque.maturity_state] += 1
 
     page_obj = _paginate(request, rows)
 
@@ -6508,16 +6540,17 @@ def cheque_maturity_soon(request):
         {
             "page_obj": page_obj,
             "cheques": page_obj.object_list,
-            "customers": Customer.objects.filter(
-                cheques__status=Cheque.Status.PENDING,
-                cheques__maturity_date__lte=horizon,
-            ).distinct(),
+            "customers": Customer.objects.filter(cheques__isnull=False).distinct(),
             "selected_customer": selected_customer,
             "days": days,
             "windows": MATURITY_WINDOWS,
+            "show": show,
+            "status": status,
+            "statuses": Cheque.Status.choices,
+            "scope_counts": scope_counts,
             "today": today,
             "total_count": len(rows),
-            "total_amount": sum(totals.values(), ZERO),
+            "total_amount": sum((c.amount for c in rows), ZERO),
             "counts": counts,
             "totals": totals,
             "check_mode": request.GET.get("check") == "1",
