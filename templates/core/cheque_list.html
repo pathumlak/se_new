@@ -17,8 +17,7 @@
            class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
   </div>
-  {# An empty month box means "current month" to the server, so while viewing all
-     months a hidden month=all travels with the form. Picking a month switches it off. #}
+  
   {% if month_filter.is_all_time %}<input type="hidden" id="month-all" name="month" value="all">{% endif %}
 
   <div>
