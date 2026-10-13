@@ -344,3 +344,46 @@ class MaturityCheckBulkTests(ChequeMaturityBase):
         self.assertEqual(self.post([self.a.pk], "deposit").status_code, 302)
         self.a.refresh_from_db()
         self.assertEqual(self.a.status, Cheque.Status.PENDING)
+
+
+class FiltersSurviveNavigationTests(ChequeMaturityBase):
+    """Moving between months must not wipe the other filters."""
+
+    def hrefs(self, **params):
+        import html
+        import re
+
+        page = self.client.get(reverse("core:cheque_list"), params).content.decode()
+        return page, [html.unescape(h) for h in re.findall(r'href="(\?[^"]*)"', page)]
+
+    def test_month_links_keep_customer_status_sort_and_maturity_dates(self):
+        self.cheque("X", days=1)
+        _page, links = self.hrefs(
+            month="2026-07", customer=self.nimal.pk, status="pending",
+            sort="customer", from_date="2026-07-01", to_date="2026-08-30", page=4,
+        )
+        month_links = [h for h in links if "month=" in h]
+        self.assertEqual(len(month_links), 3)  # previous, next, all months
+        for href in month_links:
+            for needle in (f"customer={self.nimal.pk}", "status=pending", "sort=customer",
+                           "from_date=2026-07-01", "to_date=2026-08-30"):
+                self.assertIn(needle, href)
+            self.assertNotIn("page=", href)  # a different month starts on page 1
+        self.assertTrue(any("month=2026-06" in h for h in month_links))
+        self.assertTrue(any("month=2026-08" in h for h in month_links))
+        self.assertTrue(any("month=all" in h for h in month_links))
+
+    def test_back_to_this_month_keeps_the_filters_but_drops_month(self):
+        _page, links = self.hrefs(month="all", customer=self.nimal.pk, status="pending")
+        back = [h for h in links if "customer=" in h]
+        self.assertEqual(len(back), 1)
+        self.assertIn("status=pending", back[0])
+        self.assertNotIn("month=", back[0])
+
+    def test_all_months_survives_applying_another_filter(self):
+        page, _links = self.hrefs(month="all")
+        self.assertIn('id="month-all" name="month" value="all"', page)
+
+    def test_a_single_month_view_has_no_all_months_hidden_field(self):
+        page, _links = self.hrefs(month="2026-07")
+        self.assertNotIn('id="month-all"', page)

@@ -17,6 +17,9 @@
            class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
   </div>
+  {# An empty month box means "current month" to the server, so while viewing all
+     months a hidden month=all travels with the form. Picking a month switches it off. #}
+  {% if month_filter.is_all_time %}<input type="hidden" id="month-all" name="month" value="all">{% endif %}
 
   <div>
     <label for="sort" class="mb-1.5 block text-xs font-medium text-slate-600">Sort by</label>
@@ -98,15 +101,16 @@
   <span class="font-medium text-slate-800">
     Received: {{ month_filter.label }}
   </span>
+  {# Every other filter rides along (customer, status, sort, maturity dates); only the month changes and the page resets. #}
   {% if not month_filter.is_all_time %}
-    <a href="?month={{ month_filter.previous|date:'Y-m' }}{% if sort %}&sort={{ sort }}{% endif %}"
+    <a href="{% querystring month=month_filter.previous|date:'Y-m' page=None %}"
        class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">← {{ month_filter.previous|date:'F Y' }}</a>
-    <a href="?month={{ month_filter.next|date:'Y-m' }}{% if sort %}&sort={{ sort }}{% endif %}"
+    <a href="{% querystring month=month_filter.next|date:'Y-m' page=None %}"
        class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">{{ month_filter.next|date:'F Y' }} →</a>
-    <a href="?month=all{% if sort %}&sort={{ sort }}{% endif %}"
+    <a href="{% querystring month='all' page=None %}"
        class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">All months</a>
   {% else %}
-    <a href="{% url 'core:cheque_list' %}{% if sort %}?sort={{ sort }}{% endif %}"
+    <a href="{% querystring month=None page=None %}"
        class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">Back to this month</a>
   {% endif %}
 </div>
@@ -285,8 +289,17 @@
         const el = document.getElementById(id);
         if (el && el.value) params.set(id, el.value);
       });
+      const monthAll = document.getElementById('month-all');
+      if (monthAll && !monthAll.disabled) params.set('month', 'all');
       const qs = params.toString();
       btn.href = BASE_URL + (qs ? '?' + qs : '');
+    }
+
+    // Choosing a month overrides "all months"; clearing the box goes back to it.
+    const monthEl  = document.getElementById('month');
+    const monthAll = document.getElementById('month-all');
+    if (monthEl && monthAll) {
+      monthEl.addEventListener('input', function () { monthAll.disabled = !!monthEl.value; });
     }
 
     fields.forEach(function (id) {
