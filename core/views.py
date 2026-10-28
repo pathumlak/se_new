@@ -10352,26 +10352,12 @@ def order_excel(request, pk):
 
 @login_required
 def order_delivery_note_excel(request, pk):
-    """Delivery Note for an order, laid out to the company's A4 template.
-
-    The layout is not incidental — it mirrors `Delivery_Note_Template_A4.xlsx`
-    cell for cell so a printed note from this system is indistinguishable from
-    the one the office already uses. Column widths, row heights, merge ranges,
-    fills and the 67% fit-to-page scale are all taken from that file; changing
-    any of them changes what comes out of the printer, so they are written as
-    explicit constants rather than "whatever looks right".
-
-    Three columns are deliberately left empty for the delivery run to fill in
-    by hand — vehicle/driver/helper, the "Checked at Customer's Place" column,
-    and the payment block. Those are facts nobody knows until the lorry is
-    loaded and the customer has signed, and pre-filling them with a guess is
-    worse than leaving a ruled box.
-    """
+    """Download the order filled into the supplied delivery-note template."""
     import os
     import re
     from io import BytesIO
 
-    from openpyxl import Workbook
+    from openpyxl import load_workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.worksheet.properties import PageSetupProperties
 
@@ -10379,9 +10365,66 @@ def order_delivery_note_excel(request, pk):
     items = list(order.items.select_related("product"))
     billing = BillingSettings.load()
 
-    wb = Workbook()
+    template_path = os.path.join(settings.BASE_DIR, "Book1.xlsx")
+    wb = load_workbook(template_path)
     ws = wb.active
-    ws.title = "Delivery Note"
+
+    def set_value(cell, value):
+        ws[cell] = value if value is not None else ""
+
+    def split_name(product):
+        size = (product.size or "").strip()
+        name = product.name
+        if size and name.upper().startswith(size.upper()):
+            name = name[len(size):].strip(" -–")
+        name = re.sub(r"\s*-\s*[^-]+$", "", name).strip()
+        return size, (name or product.name)
+
+    # Keep the supplied workbook as the source of all formatting, merges,
+    # dimensions, labels, payment fields, and signature areas.
+    set_value("C1", (billing.company_name or "SENOVKA PLASTICS").upper())
+    set_value("F2", re.sub(r"^ORD-", "DN-", order.reference_no or "") or f"DN-{order.pk:04d}")
+    set_value("F3", timezone.localdate().strftime("%d/%m/%Y"))
+    set_value("F4", order.reference_no or "")
+    set_value("C7", order.display_customer)
+
+    raw_address = (order.customer.address or "") if order.customer_id else ""
+    address_lines = [line.strip() for line in raw_address.splitlines() if line.strip()]
+    set_value("C8", address_lines[0] if address_lines else "")
+    set_value("C9", ", ".join(address_lines[1:]) if len(address_lines) > 1 else "")
+    set_value("C10", (order.customer.phone or "") if order.customer_id else "")
+    set_value("F8", order.order_date.strftime("%d/%m/%Y"))
+    set_value("F9", timezone.localdate().strftime("%d/%m/%Y"))
+
+    for row in range(15, 32):
+        item_index = row - 15
+        if item_index >= len(items):
+            for column in ("A", "B", "C", "E", "F", "G"):
+                set_value(f"{column}{row}", "")
+            continue
+
+        item = items[item_index]
+        size, name = split_name(item.product)
+        qty = item.qty
+        qty_out = int(qty) if qty == qty.to_integral_value() else float(qty)
+        set_value(f"A{row}", item_index + 1)
+        set_value(f"B{row}", size)
+        set_value(f"C{row}", name)
+        set_value(f"E{row}", qty_out)
+        set_value(f"F{row}", "")
+        set_value(f"G{row}", "")
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="delivery_note_{order.reference_no or order.pk}.xlsx"'
+    )
+    return response
 
     # ── Palette, straight off the template ───────────────────────────────
     NAVY = "FF1F4E79"        # headings, section bars, table header

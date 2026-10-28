@@ -7469,7 +7469,11 @@ class OrderTests(UserFactoryMixin, TestCase):
         self.customer = Customer.objects.create(name="Mr Farhan")
 
     def test_order_delivery_note_excel(self):
+        from io import BytesIO
+
         from core.models import Order, OrderItem
+        from openpyxl import load_workbook
+
         order = Order.objects.create(
             customer=self.customer,
             order_date=date.today(),
@@ -7492,7 +7496,16 @@ class OrderTests(UserFactoryMixin, TestCase):
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         self.assertIn("attachment; filename=", response["Content-Disposition"])
-        self.assertIn("issue_note_ORD-", response["Content-Disposition"])
+        self.assertIn("delivery_note_ORD-", response["Content-Disposition"])
+
+        workbook = load_workbook(BytesIO(response.content), data_only=False)
+        sheet = workbook.active
+        self.assertEqual(sheet.title, "Sheet1")
+        self.assertEqual(sheet["F1"].value, "DELIVERY NOTE")
+        self.assertEqual(sheet["F4"].value, order.reference_no)
+        self.assertEqual(sheet["B15"].value, self.product.size)
+        self.assertEqual(sheet["E15"].value, 400)
+        self.assertIsNone(sheet["F15"].value)
 
     def test_marking_confirmed_order_delivered_stamps_delivered_at(self):
         from core.models import Order
