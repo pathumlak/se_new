@@ -3863,12 +3863,24 @@ class ChequeModuleTests(UserFactoryMixin, TestCase):
         self.assertEqual(response.context["closing_balance"], Decimal("1000.00"))
         self.assertEqual(self.balance(), Decimal("-6000.00"))
 
-    def test_a_held_cheque_drops_out_of_the_ledger_too(self):
+    def test_a_held_cheque_is_shown_on_the_ledger_without_a_credit(self):
         self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
         response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
-        self.assertNotIn(
-            "Cheque received", [r["description"] for r in response.context["rows"]]
+        held = [
+            r for r in response.context["rows"]
+            if r["description"].startswith("Held Cheque")
+        ]
+        self.assertEqual(len(held), 1)
+        self.assertIsNone(held[0]["credit"])
+
+    def test_holding_a_cheque_updates_its_maturity_date(self):
+        new_date = date(2026, 9, 1)
+        self.client.post(
+            reverse("core:cheque_hold", args=[self.cheque.pk]),
+            {"maturity_date": new_date.isoformat()},
         )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.maturity_date, new_date)
 
     def test_a_deposited_cheque_stays_in_the_ledger(self):
         self.client.post(reverse("core:cheque_deposit", args=[self.cheque.pk]))
@@ -4123,13 +4135,19 @@ class ReturnedChequeLedgerTests(UserFactoryMixin, TestCase):
         self.nimal.refresh_from_db()
         self.assertEqual(self.nimal.balance, Decimal("500.00"))
 
-    def test_a_held_cheque_is_still_left_off_the_ledger_entirely(self):
-        """Held is not returned — it's money we've chosen not to bank yet —
-        so it keeps the old drop-out-entirely treatment, no reversal line."""
-        self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
-        rows = self.ledger_rows()
+    def test_a_held_cheque_is_shown_as_a_non_credit_on_its_new_date(self):
+        new_date = date(2026, 9, 1)
+        self.client.post(
+            reverse("core:cheque_hold", args=[self.cheque.pk]),
+            {"maturity_date": new_date.isoformat()},
+        )
+        self.cheque.refresh_from_db()
+        self.assertEqual(self.cheque.maturity_date, new_date)
+        rows = views._ledger_rows(self.nimal)
         descriptions = [r["description"] for r in rows]
-        self.assertNotIn("Cheque received", descriptions)
+        held = next(r for r in rows if r["description"].startswith("Held Cheque"))
+        self.assertEqual(held["date"], new_date)
+        self.assertIsNone(held["credit"])
         self.assertFalse(any(d.startswith("Returned Cheque") for d in descriptions))
 
     def test_a_legacy_bounced_cheque_without_bounced_at_falls_back_to_maturity_date(self):

@@ -3265,6 +3265,26 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 }
             )
 
+    # A held cheque is deliberately not a credit, but it remains an important
+    # dated event on the account so the customer can see why the payment is
+    # not currently reducing the amount owed.
+    held_cheques = customer.cheques.filter(status=Cheque.Status.HELD).exclude(
+        payment__bill__status=Bill.Status.CANCELLED
+    )
+    for cheque in held_cheques:
+        entries.append(
+            {
+                "date": cheque.maturity_date,
+                "kind": 3,
+                "pk": cheque.pk,
+                "description": f"Held Cheque - {cheque.cheque_no} ({cheque.bank_name})",
+                "sale": None,
+                "credit": None,
+                "is_note": True,
+                "is_held_cheque": True,
+            }
+        )
+
     # Supplier Bill Payments — money paid OUT against a specific supplier
     # bill. The mirror of the `payments` block above: a payment there brings
     # money in (credit, balance falls); a payment here sends money out
@@ -5946,7 +5966,7 @@ def _redirect_back_to_cheques(request):
     return redirect(_cheque_return_url(request))
 
 
-def _change_cheque_status(pk, status, bounce_new_date=None):
+def _change_cheque_status(pk, status, bounce_new_date=None, maturity_date=None):
     """Move one cheque to `status`, shifting the balance if that status needs it.
 
     Returns (cheque, delta). `delta` is None when the cheque was already in
@@ -5964,13 +5984,18 @@ def _change_cheque_status(pk, status, bounce_new_date=None):
         if bounce_new_date is not None:
             cheque.bounce_new_date = bounce_new_date
             fields.append("bounce_new_date")
+        if maturity_date is not None and cheque.maturity_date != maturity_date:
+            cheque.maturity_date = maturity_date
+            fields.append("maturity_date")
         cheque.save(update_fields=fields)
         delta = _move_balance_for_cheque(cheque, was_status, was_amount)
     return cheque, delta
 
 
-def _set_cheque_status(request, pk, status, bounce_new_date=None):
-    cheque, delta = _change_cheque_status(pk, status, bounce_new_date)
+def _set_cheque_status(request, pk, status, bounce_new_date=None, maturity_date=None):
+    cheque, delta = _change_cheque_status(
+        pk, status, bounce_new_date, maturity_date
+    )
 
     if delta is None:
         messages.info(
@@ -5998,7 +6023,14 @@ def cheque_deposit(request, pk):
 @require_POST
 @login_required
 def cheque_hold(request, pk):
-    return _set_cheque_status(request, pk, Cheque.Status.HELD)
+    cheque = get_object_or_404(Cheque, pk=pk)
+    new_date = _parse_date(request.POST.get("maturity_date")) or cheque.maturity_date
+    if new_date < cheque.received_date:
+        messages.error(request, "Maturity date cannot be before the received date.")
+        return _redirect_back_to_cheques(request)
+    return _set_cheque_status(
+        request, pk, Cheque.Status.HELD, maturity_date=new_date
+    )
 
 
 @require_POST

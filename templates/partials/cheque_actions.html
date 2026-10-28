@@ -16,6 +16,9 @@
     <form method="post" action="{% url 'core:cheque_hold' cheque.pk %}" data-keep-position>
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <input type="date" name="maturity_date" value="{{ cheque.maturity_date|date:'Y-m-d' }}"
+             title="New maturity date" required
+             class="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700">
       <button type="submit"
               class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
         Hold
