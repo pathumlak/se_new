@@ -3629,21 +3629,19 @@ class ChequeModuleTests(UserFactoryMixin, TestCase):
         self.assertEqual(self.balance(), Decimal("0.00"))
 
     # ---- hold ----
-    def test_hold_gives_the_debt_back(self):
+    def test_hold_until_a_date_marks_held_without_changing_balance(self):
         self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
         self.cheque.refresh_from_db()
         self.assertEqual(self.cheque.status, Cheque.Status.HELD)
-        # Not +6000: holding means we don't have the money, so he owes again.
-        self.assertEqual(self.balance(), Decimal("-6000.00"))
+        self.assertEqual(self.balance(), Decimal("0.00"))
 
-    def test_hold_message_names_the_move(self):
+    def test_hold_message_names_the_held_status(self):
         response = self.client.post(
             reverse("core:cheque_hold", args=[self.cheque.pk]), follow=True
         )
         msgs = [str(m) for m in response.context["messages"]]
         self.assertIn(
-            "Cheque C-1001 marked held. Nimal owes 6000.00 again — "
-            "balance is now -6000.00.",
+            "Cheque C-1001 marked held.",
             msgs,
         )
 
@@ -3863,7 +3861,7 @@ class ChequeModuleTests(UserFactoryMixin, TestCase):
         self.assertEqual(response.context["closing_balance"], Decimal("1000.00"))
         self.assertEqual(self.balance(), Decimal("-6000.00"))
 
-    def test_a_held_cheque_is_shown_on_the_ledger_without_a_credit(self):
+    def test_held_cheque_is_shown_without_a_balance_effect_on_the_ledger(self):
         self.client.post(reverse("core:cheque_hold", args=[self.cheque.pk]))
         response = self.client.get(reverse("core:customer_ledger", args=[self.nimal.pk]))
         held = [
@@ -3872,6 +3870,9 @@ class ChequeModuleTests(UserFactoryMixin, TestCase):
         ]
         self.assertEqual(len(held), 1)
         self.assertIsNone(held[0]["credit"])
+        self.assertEqual(response.context["current_balance"], Decimal("0.00"))
+        self.assertContains(response, "Held")
+        self.assertContains(response, "Held Cheque - C-1001")
 
     def test_holding_a_cheque_updates_its_maturity_date(self):
         new_date = date(2026, 9, 1)
@@ -4135,7 +4136,7 @@ class ReturnedChequeLedgerTests(UserFactoryMixin, TestCase):
         self.nimal.refresh_from_db()
         self.assertEqual(self.nimal.balance, Decimal("500.00"))
 
-    def test_a_held_cheque_is_shown_as_a_non_credit_on_its_new_date(self):
+    def test_held_cheque_is_shown_on_its_new_date_without_a_balance_effect(self):
         new_date = date(2026, 9, 1)
         self.client.post(
             reverse("core:cheque_hold", args=[self.cheque.pk]),
@@ -4144,10 +4145,11 @@ class ReturnedChequeLedgerTests(UserFactoryMixin, TestCase):
         self.cheque.refresh_from_db()
         self.assertEqual(self.cheque.maturity_date, new_date)
         rows = views._ledger_rows(self.nimal)
-        descriptions = [r["description"] for r in rows]
         held = next(r for r in rows if r["description"].startswith("Held Cheque"))
-        self.assertEqual(held["date"], new_date)
+        self.assertEqual(held["date"], self.cheque.received_date)
+        self.assertIn("Maturity 01 Sep 2026", held["description"])
         self.assertIsNone(held["credit"])
+        descriptions = [r["description"] for r in rows]
         self.assertFalse(any(d.startswith("Returned Cheque") for d in descriptions))
 
     def test_a_legacy_bounced_cheque_without_bounced_at_falls_back_to_maturity_date(self):

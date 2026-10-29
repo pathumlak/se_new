@@ -96,7 +96,7 @@ Custom user: `AUTH_USER_MODEL = "core.User"`.
 - **BillEditAudit**: one row per bill edit (Bill.edit_reason holds only the latest). Moves no balance; `previous_total` / `new_total` snapshot the bill's total either side of the edit (null on older rows). The customer ledger annotates the edited bill's own row ("Edited", was → now) — never a separate row.
 - **SupplierBillEditAudit**: same idea for supplier bills (written by `_update_supplier_bill`), shown on the supplier's ledger.
 - **Payment**: money in against a bill (or a customer directly). `Method` cash/cheque/transfer. `Account` senovka/dinusha. Nullable `bill` allows top-ups that sit as credit; nullable `customer` allows detached payments.
-- **Cheque**: hangs off a Payment. `Status` pending/deposited/bounced/held. `bill` set when the cheque arrived at settlement time. `bounce_new_date` for re-presentation.
+- **Cheque**: hangs off a Payment. `Status` pending/deposited/bounced/held. `bill` set when the cheque arrived at settlement time. `bounce_new_date` for re-presentation. The date-based Hold action changes the status to held and postpones the maturity date without changing the customer balance; returned cheques reverse the credit.
 - **CashTransfer**: senovka ↔ dinusha account transfer, tied to a Payment.
 - **CashDrawer**: manual drawer entries. `TxnType` in/out/transfer. Optional `bill` link (bill-linked rows are read-only — cannot be edited/deleted via drawer views). Edit metadata: `edit_reason`, `edited_at`, `edited_by`.
 - **HeldBill**: parked draft. Stores raw form `payload` as JSON; nothing else moves. On save-for-real the held row is deleted. Fields cached from payload: `label`, `item_count`, `subtotal`.

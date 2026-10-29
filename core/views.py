@@ -3274,10 +3274,17 @@ def _ledger_rows(customer, from_date=None, to_date=None):
     for cheque in held_cheques:
         entries.append(
             {
-                "date": cheque.maturity_date,
+                # The held event belongs to the date the cheque was received
+                # (or issued to a supplier), not its future maturity date.
+                # Using maturity_date makes a held cheque disappear from the
+                # month in which the operator actually recorded it.
+                "date": cheque.received_date,
                 "kind": 3,
                 "pk": cheque.pk,
-                "description": f"Held Cheque - {cheque.cheque_no} ({cheque.bank_name})",
+                "description": (
+                    f"Held Cheque - {cheque.cheque_no} ({cheque.bank_name})"
+                    f" · Maturity {cheque.maturity_date:%d %b %Y}"
+                ),
                 "sale": None,
                 "credit": None,
                 "is_note": True,
@@ -5817,8 +5824,8 @@ def bill_list_excel(request):
 
 # ------------------------------------------------------------------ cheques
 # A cheque is money we are counting on but do not have. Pending and deposited
-# both mean we still expect it, so the customer keeps the credit. Held and
-# bounced mean we don't, so the debt comes back.
+# all three mean the customer remains credited; held is a postponed cheque,
+# while bounced means the credit is subsequently reversed.
 #
 # The very same statuses drive an issued cheque (one we wrote to pay a
 # supplier) too, just in the opposite direction on the balance: pending and
@@ -5827,7 +5834,11 @@ def bill_list_excel(request):
 # to them comes back.
 
 #: Statuses where the cheque's amount is still credited to the customer.
-CREDITED_CHEQUE_STATUSES = {Cheque.Status.PENDING, Cheque.Status.DEPOSITED}
+CREDITED_CHEQUE_STATUSES = {
+    Cheque.Status.PENDING,
+    Cheque.Status.DEPOSITED,
+    Cheque.Status.HELD,
+}
 
 
 def _cheque_credit(status, amount):
@@ -5874,7 +5885,7 @@ def _move_balance_for_cheque(cheque, was_status, was_amount):
     One rule covers every transition, including an amount correction:
 
         pending  -> deposited   nothing moves, we still expect the money
-        pending  -> held        credit comes off, the debt is back
+        pending  -> held        no balance move; the cheque is postponed
         deposited-> bounced     same, even though it had cleared
         bounced  -> pending     re-presented, credit goes back on
         amount 100 -> 150       while credited, 50 more is owed to us
@@ -6029,7 +6040,10 @@ def cheque_hold(request, pk):
         messages.error(request, "Maturity date cannot be before the received date.")
         return _redirect_back_to_cheques(request)
     return _set_cheque_status(
-        request, pk, Cheque.Status.HELD, maturity_date=new_date
+        request,
+        pk,
+        Cheque.Status.HELD,
+        maturity_date=new_date,
     )
 
 

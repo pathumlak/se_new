@@ -304,8 +304,8 @@ class MaturityCheckBulkTests(ChequeMaturityBase):
         self.a.refresh_from_db()
         self.nimal.refresh_from_db()
         self.assertEqual(self.a.status, Cheque.Status.HELD)
-        # A pending cheque is credited; holding it takes the credit back off.
-        self.assertEqual(self.nimal.balance, before - Decimal("100.00"))
+        # Holding changes the workflow status but does not change the credit.
+        self.assertEqual(self.nimal.balance, before)
 
     def test_bulk_return_needs_a_date(self):
         response = self.post([self.a.pk], "bounce")
@@ -344,6 +344,25 @@ class MaturityCheckBulkTests(ChequeMaturityBase):
         self.assertEqual(self.post([self.a.pk], "deposit").status_code, 302)
         self.a.refresh_from_db()
         self.assertEqual(self.a.status, Cheque.Status.PENDING)
+
+
+class ChequeHoldReschedulingTests(ChequeMaturityBase):
+    def test_holding_until_a_date_marks_held_without_changing_balance(self):
+        cheque = self.cheque("RESCHEDULE", days=1)
+        before = self.nimal.balance
+        new_date = self.today + timedelta(days=14)
+
+        response = self.client.post(
+            reverse("core:cheque_hold", args=[cheque.pk]),
+            {"maturity_date": new_date.isoformat()},
+        )
+
+        self.assertRedirects(response, reverse("core:cheque_list"))
+        cheque.refresh_from_db()
+        self.nimal.refresh_from_db()
+        self.assertEqual(cheque.status, Cheque.Status.HELD)
+        self.assertEqual(cheque.maturity_date, new_date)
+        self.assertEqual(self.nimal.balance, before)
 
 
 class FiltersSurviveNavigationTests(ChequeMaturityBase):
