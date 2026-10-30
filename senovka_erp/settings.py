@@ -45,6 +45,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.permission_middleware.ERPPermissionMiddleware",
     # Stashes the current request on a thread-local so audit-log signal
     # handlers know which user fired the save. Must come after
     # AuthenticationMiddleware so `request.user` is populated by then.

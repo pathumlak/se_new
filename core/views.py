@@ -123,6 +123,10 @@ from .models import (
     SupplierBillEditAudit,
     SupplierBillItem,
     User,
+    PermissionAssignment,
+    PermissionAudit,
+    PermissionDefinition,
+    PermissionTemplate,
     Vehicle,
     VehicleTrip,
     generate_password,
@@ -517,6 +521,107 @@ def user_list(request):
             "credentials": _pop_credentials(request),
         },
     )
+
+
+@super_admin_required
+def manager_permissions(request, user_pk=None):
+    managers = User.objects.filter(role=User.Role.MANAGER, is_active=True).order_by("username")
+    selected = get_object_or_404(managers, pk=user_pk) if user_pk else managers.first()
+    definitions = PermissionDefinition.objects.filter(is_active=True)
+    if selected and request.method == "POST":
+        requested = set(request.POST.getlist("permissions"))
+        valid = set(definitions.values_list("codename", flat=True))
+        requested &= valid
+        with transaction.atomic():
+            existing = set(
+                PermissionAssignment.objects.filter(user=selected).values_list(
+                    "permission__codename", flat=True
+                )
+            )
+            PermissionAssignment.objects.filter(user=selected).exclude(
+                permission__codename__in=requested
+            ).delete()
+            for definition in definitions.filter(codename__in=requested):
+                if definition.codename not in existing:
+                    PermissionAssignment.objects.create(
+                        user=selected, permission=definition, granted_by=request.user
+                    )
+                    PermissionAudit.objects.create(
+                        actor=request.user, target_user=selected,
+                        permission=definition, action=PermissionAudit.Action.GRANT,
+                    )
+            for codename in existing - requested:
+                definition = PermissionDefinition.objects.get(codename=codename)
+                PermissionAudit.objects.create(
+                    actor=request.user, target_user=selected,
+                    permission=definition, action=PermissionAudit.Action.REVOKE,
+                )
+        messages.success(request, f"Permissions updated for {selected.username}.")
+        return redirect("core:manager_permissions_for_user", user_pk=selected.pk)
+    assigned = set(
+        PermissionAssignment.objects.filter(user=selected).values_list(
+            "permission__codename", flat=True
+        )
+    ) if selected else set()
+    grouped = {}
+    for definition in definitions:
+        grouped.setdefault(definition.module, []).append(definition)
+    return render(request, "core/manager_permissions.html", {
+        "managers": managers, "selected": selected, "permission_groups": grouped.items(),
+        "assigned": assigned, "permission_audits": PermissionAudit.objects.filter(
+            target_user=selected
+        ).select_related("actor", "permission")[:30] if selected else [],
+    })
+
+
+@super_admin_required
+def permission_templates(request):
+    templates = PermissionTemplate.objects.prefetch_related("permissions").order_by("name")
+    if request.method == "POST":
+        name = request.POST.get("name", "").strip()
+        if not name:
+            messages.error(request, "Template name is required.")
+        else:
+            template = PermissionTemplate.objects.create(
+                name=name, description=request.POST.get("description", ""),
+                created_by=request.user,
+            )
+            selected = PermissionDefinition.objects.filter(
+                codename__in=request.POST.getlist("permissions"), is_active=True
+            )
+            template.permissions.set(selected)
+            messages.success(request, f"Template '{name}' created.")
+            return redirect("core:permission_templates")
+    return render(request, "core/permission_templates.html", {
+        "templates": templates,
+        "permission_definitions": PermissionDefinition.objects.filter(is_active=True),
+        "managers": User.objects.filter(role=User.Role.MANAGER, is_active=True),
+    })
+
+
+@require_POST
+@super_admin_required
+def permission_template_assign(request, template_pk):
+    template = get_object_or_404(PermissionTemplate, pk=template_pk)
+    target = get_object_or_404(User, pk=request.POST.get("manager"), role=User.Role.MANAGER)
+    with transaction.atomic():
+        for definition in template.permissions.filter(is_active=True):
+            assignment, created = PermissionAssignment.objects.get_or_create(
+                user=target, permission=definition,
+                defaults={"granted_by": request.user},
+            )
+            if created:
+                PermissionAudit.objects.create(
+                    actor=request.user, target_user=target, permission=definition,
+                    template=template, action=PermissionAudit.Action.TEMPLATE_ASSIGN,
+                )
+        PermissionAudit.objects.create(
+            actor=request.user, target_user=target, template=template,
+            action=PermissionAudit.Action.TEMPLATE_ASSIGN,
+            details="Copied template permissions without revoking existing grants.",
+        )
+    messages.success(request, f"Template copied to {target.username}.")
+    return redirect("core:permission_templates")
 
 
 @super_admin_required
@@ -1049,9 +1154,12 @@ def product_create(request):
     form = ProductForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
-        product = form.save()
-        messages.success(request, f"Product '{product}' was created.")
-        return redirect("core:product_list")
+        if not request.user.has_erp_permission("pricing.create"):
+            form.add_error("default_price", "You do not have permission to create pricing.")
+        else:
+            product = form.save()
+            messages.success(request, f"Product '{product}' was created.")
+            return redirect("core:product_list")
 
     return render(
         request,
@@ -1066,9 +1174,14 @@ def product_update(request, pk):
     form = ProductForm(request.POST or None, instance=product)
 
     if request.method == "POST" and form.is_valid():
-        product = form.save()
-        messages.success(request, f"Product '{product}' was updated.")
-        return redirect("core:product_list")
+        if "default_price" in form.changed_data and not request.user.has_erp_permission(
+            "pricing.edit"
+        ):
+            form.add_error("default_price", "You do not have permission to edit prices.")
+        else:
+            product = form.save()
+            messages.success(request, f"Product '{product}' was updated.")
+            return redirect("core:product_list")
 
     return render(
         request,
@@ -4553,6 +4666,10 @@ def _write_bill(bill, user, payload):
                 "quoted": quoted.get(product.pk, product.default_price),
             }
         )
+
+    if any(item["unit_price"] != item["quoted"] for item in items):
+        if not user.has_erp_permission("pricing.edit"):
+            raise BillError("You do not have permission to change product prices.")
 
     # Delivery is charged on top of the goods; the discount comes off the lot.
     # Both are optional, so a payload without them prices exactly as before.

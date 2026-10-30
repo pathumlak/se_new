@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Permission Templates{% endblock %}
+{% block header %}Permission Templates{% endblock %}
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-[320px_1fr]">
+  <form method="post" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    {% csrf_token %}<h2 class="mb-4 font-semibold text-slate-900">Create template</h2>
+    <input name="name" required placeholder="Template name" class="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+    <textarea name="description" placeholder="Description" class="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea>
+    <div class="mb-4 max-h-80 space-y-1 overflow-y-auto">{% for p in permission_definitions %}<label class="block text-sm"><input type="checkbox" name="permissions" value="{{ p.codename }}"> {{ p.name }}</label>{% endfor %}</div>
+    <button class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Create template</button>
+  </form>
+  <div class="space-y-3">{% for template in templates %}<div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex justify-between"><div><h3 class="font-semibold text-slate-900">{{ template.name }}</h3><p class="text-sm text-slate-500">{{ template.permissions.count }} permissions</p></div><form method="post" action="{% url 'core:permission_template_assign' template.pk %}" class="flex gap-2">{% csrf_token %}<select name="manager" required class="rounded-lg border border-slate-300 px-2 text-sm"><option value="">Copy to manager...</option>{% for manager in managers %}<option value="{{ manager.pk }}">{{ manager.username }}</option>{% endfor %}</select><button class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Copy</button></form></div></div>{% empty %}<p class="text-sm text-slate-500">No templates yet.</p>{% endfor %}</div>
+</div>
+{% endblock %}

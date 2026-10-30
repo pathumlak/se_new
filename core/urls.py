@@ -19,6 +19,10 @@ urlpatterns = [
     ),
     # Super-admin only, enforced per view. There is no self-registration.
     path("users/", views.user_list, name="user_list"),
+    path("settings/user-management/permissions/", views.manager_permissions, name="manager_permissions"),
+    path("settings/user-management/permissions/<int:user_pk>/", views.manager_permissions, name="manager_permissions_for_user"),
+    path("settings/user-management/templates/", views.permission_templates, name="permission_templates"),
+    path("settings/user-management/templates/<int:template_pk>/assign/", views.permission_template_assign, name="permission_template_assign"),
     path("users/create/", views.user_create, name="user_create"),
     path("users/<int:pk>/edit/", views.user_edit, name="user_edit"),
     # Super admin types a new password directly (replacing the older

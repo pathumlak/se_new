@@ -39,6 +39,113 @@ class User(AbstractUser):
         fields are blank."""
         return self.get_full_name() or ""
 
+    def has_erp_permission(self, codename):
+        """Return whether this user may perform an ERP operation."""
+        if self.role == self.Role.SUPER_ADMIN or self.is_superuser:
+            return True
+        from .permissions import permission_candidates
+
+        return PermissionAssignment.objects.filter(
+            user=self,
+            permission__codename__in=permission_candidates(codename),
+            permission__is_active=True,
+        ).exists()
+
+
+class PermissionDefinition(models.Model):
+    """A registered, assignable ERP capability."""
+
+    module = models.CharField(max_length=80)
+    codename = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=150)
+    description = models.CharField(max_length=500, blank=True)
+    operation = models.CharField(max_length=20)
+    is_sensitive = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["module", "name"]
+
+    def __str__(self):
+        return f"{self.module}: {self.name}"
+
+
+class PermissionAssignment(models.Model):
+    """An individual manager's explicit permission grant."""
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="erp_permission_assignments"
+    )
+    permission = models.ForeignKey(
+        PermissionDefinition, on_delete=models.PROTECT, related_name="assignments"
+    )
+    granted_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="permission_grants"
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "permission"], name="unique_user_erp_permission"
+            )
+        ]
+
+
+class PermissionTemplate(models.Model):
+    """A reusable permission set; applying it copies, rather than links, grants."""
+
+    name = models.CharField(max_length=120, unique=True)
+    description = models.CharField(max_length=500, blank=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="permission_templates"
+    )
+    permissions = models.ManyToManyField(
+        PermissionDefinition, related_name="templates", blank=True
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+
+class PermissionAudit(models.Model):
+    """Immutable history of permission administration actions."""
+
+    class Action(models.TextChoices):
+        GRANT = "grant", "Granted"
+        REVOKE = "revoke", "Revoked"
+        TEMPLATE_ASSIGN = "template_assign", "Template assigned"
+        SYNCHRONIZE = "synchronize", "Synchronized"
+
+    actor = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="permission_audits"
+    )
+    target_user = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="permission_changes"
+    )
+    permission = models.ForeignKey(
+        PermissionDefinition,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="permission_audits",
+    )
+    template = models.ForeignKey(
+        PermissionTemplate,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="assignment_audits",
+    )
+    action = models.CharField(max_length=30, choices=Action.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    details = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)

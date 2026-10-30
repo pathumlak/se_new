@@ -11,9 +11,23 @@ def current_role(request):
     """
     user = getattr(request, "user", None)
     role = getattr(user, "role", None) if user and user.is_authenticated else None
+    from .permissions import PERMISSION_REGISTRY
+    permissions = (
+        {row[1] for row in PERMISSION_REGISTRY}
+        if role == "super_admin"
+        else {
+            assignment.permission.codename
+            for assignment in user.erp_permission_assignments.select_related("permission").filter(
+                permission__is_active=True
+            )
+        }
+        if user and user.is_authenticated
+        else set()
+    )
     return {
         "current_role": role,
         "is_super_admin": role == "super_admin",
+        "erp_permissions": permissions,
     }
 
 

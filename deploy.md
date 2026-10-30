@@ -1,119 +1,78 @@
-echo "=== CREATING DEPLOY SCRIPT ===" && \
-cat > /var/www/senovka_erp/deploy.sh << 'EOF'
-#!/bin/bash
-set -e
+# Deploying Senovka ERP
 
-echo "======================================"
-echo " Senovka ERP Deploy Script"
-echo " $(date)"
-echo "======================================"
+Run the deployment as a user that can update the application checkout and
+manage the `senovka_erp` and `nginx` services (for example, with `sudo`
+configured for those commands).
+
+Do not run `makemigrations` on the server. Create and review migrations
+locally, commit them, and deploy them with `migrate`.
+
+## Deployment script
+
+Save this as `/var/www/senovka_erp/deploy.sh` and make it executable:
+
+```bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 PROJECT_DIR="/var/www/senovka_erp"
-VENV="$PROJECT_DIR/venv/bin"
+VENV_DIR="$PROJECT_DIR/venv"
+SERVICE="senovka_erp"
 
-cd $PROJECT_DIR
+cd "$PROJECT_DIR"
 
-echo ""
-echo ">>> Pulling latest code from GitHub..."
-git pull origin main
+if [[ ! -d .git || ! -x "$VENV_DIR/bin/python" ]]; then
+    echo "Missing Git checkout or virtual environment in $PROJECT_DIR" >&2
+    exit 1
+fi
 
-echo ""
-echo ">>> Activating virtualenv and installing requirements..."
-source $VENV/activate
-pip install -r requirements.txt --quiet
+echo "Updating source..."
+git pull --ff-only origin main
 
-echo ""
-echo ">>> Running migrations..."
-python manage.py migrate --noinput
+echo "Installing dependencies..."
+"$VENV_DIR/bin/python" -m pip install --requirement requirements.txt
 
-echo ""
-echo ">>> Collecting static files..."
-python manage.py collectstatic --noinput
+echo "Checking Django configuration..."
+"$VENV_DIR/bin/python" manage.py check
 
-echo ""
-echo ">>> Fixing permissions..."
-chown -R www-data:www-data $PROJECT_DIR
-chown www-data:www-data $PROJECT_DIR/db.sqlite3 2>/dev/null || true
+echo "Applying committed migrations..."
+"$VENV_DIR/bin/python" manage.py migrate --noinput
 
-echo ""
-echo ">>> Restarting Gunicorn..."
-systemctl restart senovka_erp
-sleep 3
+echo "Collecting static files..."
+"$VENV_DIR/bin/python" manage.py collectstatic --noinput
 
-echo ""
-echo ">>> Reloading Nginx..."
-systemctl reload nginx
+echo "Restarting application service..."
+sudo systemctl restart "$SERVICE"
+sudo systemctl is-active --quiet "$SERVICE"
 
-echo ""
-echo ">>> Checking service status..."
-systemctl status senovka_erp --no-pager
-
-echo ""
-echo "======================================"
-echo " Deploy complete!"
-echo "======================================"
-EOF
-
-chmod +x /var/www/senovka_erp/deploy.sh && \
-
-echo "" && \
-echo "=== FINAL SYSTEM CHECK ===" && \
-echo "--- Gunicorn service ---" && \
-systemctl status senovka_erp --no-pager && \
-echo "" && \
-echo "--- Nginx service ---" && \
-systemctl status nginx --no-pager && \
-echo "" && \
-echo "--- Socket file ---" && \
-ls -la /run/senovka/senovka_erp.sock && \
-echo "" && \
-echo "--- SSL Certificate ---" && \
-certbot certificates 2>/dev/null | grep -E "Domains|Expiry" && \
-echo "" && \
-echo "--- Disk usage ---" && \
-df -h / && \
-echo "" && \
-echo "=====================================" && \
-echo " SENOVKA ERP IS FULLY DEPLOYED" && \
-echo " https://senovkaplastics.cloud" && \
-echo " Login: admin / admin123" && \
-echo " Login: manager / manager123" && \
-echo "=====================================" && \
-echo "" && \
-echo "=== TO DEPLOY FUTURE UPDATES RUN ===" && \
-echo " bash /var/www/senovka_erp/deploy.sh" && \
-echo ""
-
-
-
-git pull origin main        
-pip install -r requirements 
-python manage.py migrate    
-python manage.py collectstatic 
-chown www-data             
-systemctl restart senovka_erp 
-systemctl reload nginx      
-
-
-
-git config --global --add safe.directory /var/www/senovka_erp
-cd /var/www/senovka_erp/senovka_erp# git config --global --add safe.directory /var/www/senovka_erp
-cd /var/www/senovka_erp/senovka_erp# git pull
-python manage.py seed_users
-source /var/www/senovka_erp/venv/bin/activate
-systemctl restart erp
-
-
-
-ok
-
-
-cd /var/www/senovka_erp && \
-git pull origin main && \
-source venv/bin/activate && \
-pip install -r requirements.txt && \
-python manage.py makemigrations && \
-python manage.py migrate && \
-python manage.py collectstatic --no-input && \
-sudo systemctl restart senovka_erp && \
+echo "Reloading Nginx..."
 sudo systemctl reload nginx
+sudo systemctl is-active --quiet nginx
+
+echo "Deployment completed successfully."
+```
+
+```bash
+sudo install --mode=0755 /path/to/deploy.sh /var/www/senovka_erp/deploy.sh
+sudo /var/www/senovka_erp/deploy.sh
+```
+
+The script stops at the first failed command. It uses `git pull --ff-only` so
+an unexpected server-side commit or branch divergence cannot be silently
+overwritten. Keep the checkout and virtual environment writable by the
+deployment user; do not use `chown -R` as part of every deployment.
+
+## Preparing a schema change
+
+From a development checkout:
+
+```bash
+python manage.py makemigrations
+python manage.py migrate
+git add core/migrations/
+git commit -m "Add database migration"
+git push origin main
+```
+
+The deployment script applies the committed migration after the new code and
+dependencies are installed.
