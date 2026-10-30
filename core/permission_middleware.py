@@ -13,7 +13,7 @@ class ERPPermissionMiddleware(MiddlewareMixin):
         url_name = getattr(match, "url_name", None)
         permission = permission_for_url(url_name)
         user = getattr(request, "user", None)
-        public_names = {"landing", "notification_dismiss", "profile"}
+        public_names = {"landing", "notification_dismiss", "profile", "login", "logout"}
         admin_only_prefixes = (
             "/users/",
             "/settings/user-management/",

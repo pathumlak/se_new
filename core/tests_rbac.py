@@ -72,6 +72,21 @@ class ManagerPermissionTests(TestCase):
         self.assertEqual(self.client.get("/users/").status_code, 403)
         self.assertEqual(self.client.get("/db-console/").status_code, 403)
 
+    def test_manager_can_log_out_and_log_back_in(self):
+        response = self.client.post("/logout/")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/")
+        self.assertFalse(response.wsgi_request.user.is_authenticated)
+
+        response = self.client.get("/login/")
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            "/login/",
+            {"username": "manager", "password": "password"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/dashboard/")
+
     def test_all_core_business_routes_have_permission_mapping(self):
         names = []
 
