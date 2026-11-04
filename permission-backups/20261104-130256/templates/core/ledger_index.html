@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Customer Ledger · Senovka Plastics{% endblock %}
+{% block header %}Customer Ledger{% endblock %}
+
+{% block content %}
+
+<!-- Picker -->
+<div class="mb-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+  {% comment %}
+  A plain GET form: choosing a customer loads their ledger with or without
+  JavaScript. The script below only removes the need to press the button.
+  {% endcomment %}
+  <form method="get" id="pick-form">
+    <label for="customer" class="mb-1.5 block text-sm font-medium text-slate-700">
+      Customer
+    </label>
+
+    <div class="flex flex-col gap-2 sm:flex-row">
+      <select id="customer" name="customer"
+              class="block w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
+                     text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">Select a customer…</option>
+        {% for customer in customers %}
+          <option value="{{ customer.pk }}">
+            {{ customer.name }} (Balance: {{ customer.balance|floatformat:2|intcomma }})
+          </option>
+        {% endfor %}
+      </select>
+
+      <button type="submit" id="pick-go"
+              class="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        View ledger
+      </button>
+    </div>
+
+    <p class="mt-1.5 text-xs text-slate-400">
+      A negative balance is what the customer owes us.
+    </p>
+  </form>
+</div>
+
+<!-- At a glance -->
+<div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <h2 class="text-base font-semibold text-slate-900">All accounts</h2>
+
+  <form method="get" role="search" class="flex gap-2">
+    <div class="relative">
+      <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+        </svg>
+      </span>
+      <input type="search" name="q" value="{{ query }}" placeholder="Search customers…"
+             class="block w-64 rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900
+                    placeholder:text-slate-400 shadow-sm
+                    focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Search
+    </button>
+    {% if query %}
+      <a href="{% url 'core:ledger_index' %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </form>
+</div>
+
+{% if query %}
+  <p class="mb-3 text-sm text-slate-500">
+    {{ customers|length }} result{{ customers|length|pluralize }}
+    <span class="text-slate-400">of {{ total_count }} customers</span>
+  </p>
+{% endif %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Ledger</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for customer in customers %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3">
+              <a href="{% url 'core:customer_ledger' customer.pk %}" class="font-medium text-slate-900 hover:underline">
+                {{ customer.name }}
+              </a>
+              {% if customer.is_supplier %}
+                <span class="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                  Supplier
+                </span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if customer.phone %}{{ customer.phone }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+
+            {# Negative means they owe us, positive means we owe them. #}
+            <td class="whitespace-nowrap px-4 py-3 text-right font-medium
+                       {% if customer.balance < 0 %}text-rose-600
+                       {% elif customer.balance > 0 %}text-emerald-600
+                       {% else %}text-slate-400{% endif %}">
+              {{ customer.balance|floatformat:2|intcomma }}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <a href="{% url 'core:customer_ledger' customer.pk %}"
+                 class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                View
+              </a>
+              <a href="{% url 'core:customer_ledger_pdf' customer.pk %}" target="_blank"
+                 class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                PDF
+              </a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" class="px-4 py-12 text-center">
+              {% if query %}
+                <p class="text-sm text-slate-500">No customers match that search.</p>
+                <a href="{% url 'core:ledger_index' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Clear search
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No customers yet.</p>
+                <a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Create the first one
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const select = document.getElementById('customer');
+    const form = document.getElementById('pick-form');
+    if (!select || !form) return;
+
+    // Selecting loads the ledger straight away. The button stays for anyone
+    // without JavaScript, and for keyboard users part-way through a selection.
+    select.addEventListener('change', function () {
+      if (select.value) form.submit();
+    });
+  })();
+</script>
+{% endblock %}

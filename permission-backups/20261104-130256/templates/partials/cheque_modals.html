@@ -1,0 +1,102 @@
+
+{% if is_super_admin %}
+<!-- ====================== Delete modal ====================== -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start gap-4">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0">
+        <h3 id="delete-modal-title" class="text-base font-semibold text-slate-900">
+          Delete cheque <span id="delete-modal-cheque"></span>?
+        </h3>
+        <p class="mt-1 text-sm text-slate-600">
+          <span id="delete-modal-customer" class="font-semibold text-slate-900"></span>
+          ·
+          <span id="delete-modal-amount" class="font-semibold text-slate-900"></span>
+        </p>
+
+        <p id="delete-modal-effect" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+        <p class="mt-2 text-xs text-slate-500">
+          The payment that recorded this cheque goes with it. For a cheque that
+          came back, mark it returned instead — that keeps the history.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" id="delete-modal-cancel"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </button>
+      <form method="post" id="delete-modal-form" data-keep-position>
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Delete cheque
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ====================== Returned-cheque modal ====================== -->
+<div id="bounce-modal"
+     class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="bounce-modal-title">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <form method="post" id="bounce-modal-form" data-keep-position>
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+      <div class="flex items-start gap-4">
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h3 id="bounce-modal-title" class="text-base font-semibold text-slate-900">
+            Mark cheque <span id="bounce-modal-cheque"></span> as Returned
+          </h3>
+          <p class="mt-1 text-sm text-slate-600">
+            <span id="bounce-modal-customer" class="font-semibold text-slate-900"></span>
+            ·
+            <span id="bounce-modal-amount" class="font-semibold text-slate-900"></span>
+          </p>
+
+          <p id="bounce-modal-effect" class="mt-3 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"></p>
+
+          <div class="mt-4">
+            <label for="bounce_new_date" class="mb-1.5 block text-sm font-medium text-slate-700">
+              New expected date <span class="text-rose-500">*</span>
+            </label>
+            <input type="date" id="bounce_new_date" name="bounce_new_date" required
+                   class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                          focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+            <p class="mt-1.5 text-xs text-slate-400">When the customer has agreed to re-present it.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" id="bounce-modal-cancel"
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cancel
+        </button>
+        <button type="submit"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+          Mark Returned
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

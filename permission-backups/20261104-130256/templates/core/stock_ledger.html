@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Stock Ledger · {{ product.name }} · Senovka Plastics{% endblock %}
+{% block header %}Stock Ledger{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div class="min-w-0">
+    <a href="{% url 'core:product_list' %}"
+       class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+      </svg>
+      Products
+    </a>
+
+    <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ product.name }}</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      {{ product.category.name }}{% if product.size %} · {{ product.size }}{% endif %}
+    </p>
+  </div>
+
+  <div class="flex shrink-0 flex-wrap items-center gap-3">
+    <button type="button" id="open-adjust"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+            title="Set the shelf to an exact stock quantity">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16"/>
+      </svg>
+      Adjust Stock
+    </button>
+
+    <div class="text-right">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current stock</p>
+      <p class="text-2xl font-semibold
+                {% if current_stock < 0 %}text-rose-600
+                {% elif current_stock == 0 %}text-rose-500
+                {% elif current_stock <= low_stock_threshold %}text-amber-600
+                {% else %}text-emerald-600{% endif %}">
+        {{ current_stock|floatformat:"-3" }}
+      </p>
+    </div>
+  </div>
+</div>
+
+{% if ledger_mismatch %}
+  <div class="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+    <strong>Warning:</strong> The ledger's closing balance ({{ closing_balance|floatformat:"-3" }})
+    does not match the current stock ({{ current_stock|floatformat:"-3" }}). A stock move
+    may have happened outside the app. A manual production correction can bring them back into line.
+  </div>
+{% endif %}
+
+<!-- Summary -->
+<div class="mb-2 flex items-center gap-2">
+  <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Figures for</span>
+  <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200">
+    {{ period.label }}
+  </span>
+</div>
+<div class="mb-5 grid gap-3 sm:grid-cols-5">
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Opening</p>
+    <p class="mt-1 text-lg font-semibold text-slate-900">{{ opening_balance|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">Balance carried into the period</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total produced / received</p>
+    <p class="mt-1 text-lg font-semibold text-emerald-700">{{ total_produced|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">In this period</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total sold</p>
+    <p class="mt-1 text-lg font-semibold text-rose-700">{{ total_sold|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">In this period</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total oversold</p>
+    <p class="mt-1 text-lg font-semibold text-rose-600">{{ total_oversold|floatformat:"-3" }}</p>
+    <p class="mt-0.5 text-[11px] text-slate-400">Sold with no stock behind it — not counted as production</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Closing</p>
+    <p class="mt-1 text-lg font-semibold
+              {% if closing_balance < 0 %}text-rose-600
+              {% elif closing_balance == 0 %}text-rose-500
+              {% else %}text-slate-900{% endif %}">
+      {{ closing_balance|floatformat:"-3" }}
+    </p>
+    <p class="mt-0.5 text-[11px] text-slate-400">
+      {% if period.is_all_time %}Matches current shelf{% else %}Balance at period end{% endif %}
+    </p>
+  </div>
+</div>
+
+<!-- Period filter: a single month, a custom date range, or all time. Providing
+     a From/To range overrides the month picker (the server gives it priority),
+     so leaving month blank while filling the dates does what you'd expect. -->
+<form method="get" class="no-print mb-4 flex flex-wrap items-end gap-2 text-sm">
+  <div>
+    <label for="month" class="mb-1 block text-xs font-medium text-slate-500">Month</label>
+    <input type="month" id="month" name="month"
+           value="{% if period.mode == 'month' %}{{ month_filter.param }}{% endif %}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <span class="pb-2 text-xs text-slate-400">or range</span>
+
+  <div>
+    <label for="from_date" class="mb-1 block text-xs font-medium text-slate-500">From</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1 block text-xs font-medium text-slate-500">To</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <button type="submit"
+          class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+    Apply
+  </button>
+  <a href="{% url 'core:stock_ledger' product.pk %}"
+     class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+    This month
+  </a>
+  <a href="?month=all"
+     class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+    All time
+  </a>
+  <span class="ml-1 text-xs text-slate-400">Showing: {{ period.label }}</span>
+
+  {# Excel link forwards exactly the window in view. #}
+  <a href="{% url 'core:stock_ledger_excel' product.pk %}{% if period.mode == 'month' %}?month={{ month_filter.param }}{% elif period.mode == 'all' %}?month=all{% elif period.mode == 'range' %}?{% if from_date %}from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if from_date and to_date %}&{% endif %}{% if to_date %}to_date={{ to_date|date:'Y-m-d' }}{% endif %}{% endif %}"
+     class="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+    <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    Download Excel
+  </a>
+</form>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- Ledger -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Production</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Total</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Sales</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill number</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+          <tr class="hover:bg-slate-50
+                     {% if row.kind == 'opening' %}bg-slate-50 italic
+                     {% elif row.kind == 'oversale' %}bg-rose-50/60
+                     {% elif row.kind == 'production' %}border-l-4 border-emerald-400
+                     {% elif row.kind == 'supplier' %}border-l-4 border-sky-400
+                     {% elif row.kind == 'return' %}border-l-4 border-violet-400 bg-violet-50/40
+                     {% elif row.kind == 'sale' and row.oversale_qty %}border-l-4 border-rose-500 bg-rose-50/60
+                     {% elif row.kind == 'sale' %}border-l-4 border-rose-300
+                     {% elif row.kind == 'adjust_up' %}border-l-4 border-amber-400 bg-amber-50/40
+                     {% elif row.kind == 'adjust_down' %}border-l-4 border-amber-500 bg-amber-50/40
+                     {% endif %}">
+            <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ row.date|date:"j M Y" }}</td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
+                       {% if row.kind == 'oversale' %}text-rose-700
+                       {% elif row.kind == 'adjust_up' %}text-amber-700
+                       {% elif row.kind == 'return' %}text-violet-700
+                       {% else %}text-emerald-700{% endif %}">
+              {% if row.adjustment_pk %}
+                {% if row.production is not None %}
+                  Set to {{ row.adj_target|floatformat:"-3" }}
+                  <span class="block text-[10px] font-normal text-slate-400">change +{{ row.production|floatformat:"-3" }}</span>
+                {% endif %}
+              {% elif row.production is not None %}
+                +{{ row.production|floatformat:"-3" }}
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right text-slate-500">
+              {% if row.total is not None %}{{ row.total|floatformat:"-3" }}{% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-medium
+                       {% if row.kind == 'adjust_down' %}text-amber-700{% else %}text-rose-700{% endif %}">
+              {% if row.adjustment_pk %}
+                {% if row.sales is not None %}
+                  Set to {{ row.adj_target|floatformat:"-3" }}
+                  <span class="block text-[10px] font-normal text-slate-400">change −{{ row.sales|floatformat:"-3" }}</span>
+                {% endif %}
+              {% elif row.sales is not None %}
+                −{{ row.sales|floatformat:"-3" }}
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-right font-semibold
+                       {% if row.balance < 0 %}text-rose-600
+                       {% elif row.balance == 0 %}text-slate-400
+                       {% else %}text-slate-900{% endif %}">
+              {{ row.balance|floatformat:"-3" }}
+            </td>
+
+            <td class="px-4 py-2.5 text-slate-800">
+              {{ row.customer }}
+              {% if row.oversale_qty %}
+                <span class="ml-1 inline-block rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700"
+                      title="{{ row.oversale_qty|floatformat:'-3' }} of this sale had no stock on hand and took the balance negative">
+                  Oversold {{ row.oversale_qty|floatformat:"-3" }}
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="whitespace-nowrap px-4 py-2.5 text-slate-500">
+              {% if row.return_pk %}
+                <a href="{% url 'core:customer_return_detail' row.return_pk %}"
+                   class="font-medium text-violet-700 hover:underline">
+                  {{ row.bill_number }}
+                </a>
+              {% elif row.bill_pk %}
+                <a href="{% url 'core:bill_detail' row.bill_pk %}"
+                   class="font-medium text-slate-700 hover:underline">
+                  {{ row.bill_number }}
+                </a>
+              {% elif row.adjustment_pk %}
+                <span class="font-medium text-amber-700">{{ row.bill_number }}</span>
+                {% if is_super_admin %}
+                  <button type="button"
+                          class="js-adj-edit ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 hover:bg-amber-50"
+                          data-action="{% url 'core:stock_adjust_edit' row.adjustment_pk %}"
+                          data-target="{{ row.adj_target|floatformat:'-3' }}"
+                          data-date="{{ row.adj_date|date:'Y-m-d' }}"
+                          data-reason="{{ row.adj_reason }}"
+                          title="Edit this adjustment">
+                    Edit
+                  </button>
+                  <button type="button"
+                          class="js-adj-delete ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 hover:bg-rose-50"
+                          data-action="{% url 'core:stock_adjust_delete' row.adjustment_pk %}"
+                          data-label="{{ row.customer }}"
+                          title="Remove this adjustment">
+                    Delete
+                  </button>
+                {% endif %}
+              {% else %}
+                {{ row.bill_number }}
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
+              No stock movement in this period.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="mt-3 text-xs text-slate-400">
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 align-middle"></span> Production ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400 align-middle"></span> Supplier receipt ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 align-middle"></span> Sale ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500 align-middle"></span> Oversold sale (balance went negative) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-100 align-middle"></span> Oversale (auto, historical) ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400 align-middle"></span> Manual adjustment ·
+  <span class="inline-block h-2.5 w-2.5 rounded-sm bg-violet-400 align-middle"></span> Customer return
+</p>
+
+<!-- ============================ ADJUST STOCK MODAL ============================ -->
+<div id="adjust-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="adjust-title">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 id="adjust-title" class="text-base font-semibold text-slate-900">Adjust stock</h3>
+        <p class="mt-0.5 text-xs text-slate-500">
+          {{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}
+          — currently <span class="font-semibold text-slate-800">{{ current_stock|floatformat:"-3" }}</span> on shelf.
+        </p>
+      </div>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form method="post" id="adjust-form" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4"
+          data-create-action="{% url 'core:stock_adjust_create' product.pk %}">
+      {% csrf_token %}
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="a-date" class="mb-1 block text-xs font-medium text-slate-600">Adjustment date</label>
+          <input type="date" id="a-date" name="adjustment_date" required
+                 value="{{ month_filter.start|date:'Y-m-d' }}"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+        <div>
+          <label for="a-qty" class="mb-1 block text-xs font-medium text-slate-600">
+            Set stock to <span class="text-[10px] font-normal text-slate-400">(exact target quantity)</span>
+          </label>
+          <input type="number" step="0.001" id="a-qty" name="qty" required placeholder="e.g. 500 or -500"
+                 class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        </div>
+      </div>
+
+      <div>
+        <label for="a-reason" class="mb-1 block text-xs font-medium text-slate-600">Reason</label>
+        <input type="text" id="a-reason" name="reason" required maxlength="500"
+               placeholder="e.g. Physical count found 500 units on shelf"
+               class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </div>
+
+      <div id="a-preview" class="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        Enter a quantity above to see the new shelf figure.
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" id="adjust-submit" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
+          Save adjustment
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============================ DELETE MODAL (adjustments) ============================ -->
+{% if is_super_admin %}
+<div id="adj-del-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Remove adjustment</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <span id="adj-del-label" class="font-semibold text-slate-900"></span>?
+      The ledger re-flows without it and the shelf figure updates to match.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="adj-del-form" method="post">
+        {% csrf_token %}
+        <button type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const TODAY = new Date().toISOString().slice(0, 10);
+    const CURRENT_STOCK = parseFloat("{{ current_stock|floatformat:'-3' }}") || 0;
+
+    const modal = document.getElementById('adjust-modal');
+    const qtyEl = document.getElementById('a-qty');
+    const dateEl = document.getElementById('a-date');
+    const reasonEl = document.getElementById('a-reason');
+    const preview = document.getElementById('a-preview');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+        if (!m.classList.contains('hidden')) close(m);
+      });
+    });
+
+    function fmt(n) {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+    }
+
+    function refreshPreview() {
+      const raw = qtyEl.value;
+      if (raw === '' || raw === '-' || isNaN(parseFloat(raw))) {
+        preview.textContent = 'Enter the target stock quantity above to see the change.';
+        preview.className = 'rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500';
+        return;
+      }
+      const target = parseFloat(raw);
+      const delta = Math.round((target - CURRENT_STOCK) * 1000) / 1000;
+      const sign = delta >= 0 ? '+' : '−';
+      const absDelta = Math.abs(delta);
+      if (delta === 0) {
+        preview.textContent = 'Stock is already ' + fmt(CURRENT_STOCK) + ' — no change would occur.';
+        preview.className = 'rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800';
+        return;
+      }
+      preview.innerHTML =
+        'Set shelf to <strong>' + fmt(target) + '</strong>' +
+        ' <span class="text-slate-400">(was ' + fmt(CURRENT_STOCK) + ', change: ' + sign + fmt(absDelta) + ')</span>';
+      preview.className = 'rounded-lg px-3 py-2 text-sm ' +
+        (target < 0 ? 'bg-rose-50 text-rose-800' :
+         delta > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800');
+    }
+
+    const form = document.getElementById('adjust-form');
+    const title = document.getElementById('adjust-title');
+    const submit = document.getElementById('adjust-submit');
+    const CREATE_ACTION = form.dataset.createAction;
+
+    document.getElementById('open-adjust').addEventListener('click', function () {
+      form.action = CREATE_ACTION;
+      title.textContent = 'Adjust stock';
+      submit.textContent = 'Save adjustment';
+      dateEl.value = TODAY;
+      qtyEl.value = '';
+      reasonEl.value = '';
+      refreshPreview();
+      open(modal);
+      setTimeout(function () { qtyEl.focus(); }, 30);
+    });
+    qtyEl.addEventListener('input', refreshPreview);
+
+    // Adjustment edit (super-admin): same modal, retargeted and prefilled with
+    // the target the row was set to, so the operator edits the exact figure.
+    document.querySelectorAll('.js-adj-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        form.action = btn.dataset.action;
+        title.textContent = 'Edit adjustment';
+        submit.textContent = 'Update adjustment';
+        dateEl.value = btn.dataset.date || TODAY;
+        qtyEl.value = btn.dataset.target || '';
+        reasonEl.value = btn.dataset.reason || '';
+        refreshPreview();
+        open(modal);
+        setTimeout(function () { qtyEl.focus(); }, 30);
+      });
+    });
+
+    // Adjustment delete (super-admin)
+    const delModal = document.getElementById('adj-del-modal');
+    if (delModal) {
+      const delForm = document.getElementById('adj-del-form');
+      const delLabel = document.getElementById('adj-del-label');
+      document.querySelectorAll('.js-adj-delete').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          delForm.action = btn.dataset.action;
+          delLabel.textContent = '“' + btn.dataset.label + '”';
+          open(delModal);
+        });
+      });
+    }
+  })();
+</script>
+{% endblock %}

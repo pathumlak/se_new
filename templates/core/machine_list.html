@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Machines · Senovka Plastics{% endblock %}
@@ -9,7 +10,7 @@
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
   <p class="text-sm text-slate-500">
     The machines on the production floor. "Not working today" is set on the
-    <a href="{% url 'core:daily_run' %}" class="font-medium text-slate-900 hover:underline">daily run log</a>,
+    {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}" class="font-medium text-slate-900 hover:underline">daily run log</a>{% endpermitted %},
     not here — this list is for machines that exist at all.
   </p>
   <button type="button" id="open-create"
@@ -51,21 +52,21 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <button type="button"
+              {% permitted 'machine_edit' %}<button type="button"
                       class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       data-action="{% url 'core:machine_edit' m.pk %}"
                       data-name="{{ m.name }}"
                       data-notes="{{ m.notes }}"
                       data-active="{{ m.is_active|yesno:'1,' }}">
                 Edit
-              </button>
-              <button type="button"
+              </button>{% endpermitted %}
+              {% permitted 'machine_delete' %}<button type="button"
                       class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                       data-action="{% url 'core:machine_delete' m.pk %}"
                       data-label="{{ m.name }}"
                       {% if m.run_count %}data-blocked="1"{% endif %}>
                 Delete
-              </button>
+              </button>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
@@ -89,7 +90,7 @@
         </svg>
       </button>
     </div>
-    <form id="form-form" method="post" action="{% url 'core:machine_create' %}" class="mt-4 space-y-4">
+    {% permitted 'machine_create' 'POST' %}<form id="form-form" method="post" action="{% url 'core:machine_create' %}" class="mt-4 space-y-4">
       {% csrf_token %}
       <div>
         <label for="m-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
@@ -110,7 +111,7 @@
         <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
         <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 

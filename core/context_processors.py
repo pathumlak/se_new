@@ -11,19 +11,9 @@ def current_role(request):
     """
     user = getattr(request, "user", None)
     role = getattr(user, "role", None) if user and user.is_authenticated else None
-    from .permissions import PERMISSION_REGISTRY
-    permissions = (
-        {row[1] for row in PERMISSION_REGISTRY}
-        if role == "super_admin"
-        else {
-            assignment.permission.codename
-            for assignment in user.erp_permission_assignments.select_related("permission").filter(
-                permission__is_active=True
-            )
-        }
-        if user and user.is_authenticated
-        else set()
-    )
+    from .permissions import PERMISSION_REGISTRY, permission_candidates
+    grants = set(user.erp_permission_assignments.filter(permission__is_active=True).values_list("permission__codename", flat=True)) if role else set()
+    permissions = {row[1] for row in PERMISSION_REGISTRY if role == "super_admin" or grants.intersection(permission_candidates(row[1]))}
     return {
         "current_role": role,
         "is_super_admin": role == "super_admin",
@@ -38,7 +28,7 @@ def cash_drawer_balance(request):
     without touching the database.
     """
     user = getattr(request, "user", None)
-    if not (user and user.is_authenticated):
+    if not (user and user.is_authenticated and user.has_erp_permission("cash_drawer.view")):
         return {"cash_balance": None}
 
     # Deferred for the same reason as the import in `notifications` below:
@@ -71,6 +61,9 @@ def notifications(request):
         warning_days=CHEQUE_WARNING_DAYS,
         order_followup_days=ORDER_FOLLOWUP_DAYS,
     )
+    from django.urls import resolve
+    from .permissions import can_access
+    visible = [item for item in visible if can_access(user, resolve(item["url"]).url_name)]
     return {
         "notifications": visible,
         "notification_count": len(visible),

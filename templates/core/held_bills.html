@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Held Bills · Senovka Plastics{% endblock %}
@@ -11,14 +12,14 @@
     Drafts parked mid-entry. Recalling one opens the bill form pre-filled
     with everything that was typed; saving finishes the sale as normal.
   </p>
-  <a href="{% url 'core:bill_create' %}"
+  {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}"
      class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
             text-sm font-semibold text-white hover:bg-slate-800">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
     </svg>
     New Bill
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -50,18 +51,18 @@
             <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ held.updated_at|date:"j M Y, g:i a" }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <div class="flex justify-end gap-1">
-                <a href="{% url 'core:held_bill_recall' held.pk %}"
+                {% permitted 'held_bill_recall' 'GET' %}<a href="{% url 'core:held_bill_recall' held.pk %}"
                    class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
                   Recall
-                </a>
-                <form method="post" action="{% url 'core:held_bill_delete' held.pk %}"
+                </a>{% endpermitted %}
+                {% permitted 'held_bill_delete' 'POST' %}<form method="post" action="{% url 'core:held_bill_delete' held.pk %}"
                       onsubmit="return confirm('Drop this held bill?');">
                   {% csrf_token %}
                   <button type="submit"
                           class="rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
                     Drop
                   </button>
-                </form>
+                </form>{% endpermitted %}
               </div>
             </td>
           </tr>
@@ -69,7 +70,7 @@
           <tr>
             <td colspan="6" class="px-4 py-12 text-center text-sm text-slate-500">
               No held bills. Start one from
-              <a href="{% url 'core:bill_create' %}" class="font-medium text-slate-900 hover:underline">Make Bill</a>
+              {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}" class="font-medium text-slate-900 hover:underline">Make Bill</a>{% endpermitted %}
               and use the Hold button.
             </td>
           </tr>

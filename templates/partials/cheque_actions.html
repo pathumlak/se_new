@@ -1,19 +1,20 @@
+{% load erp_access %}
 {% load humanize %}
 
 <div class="flex justify-end gap-1">
   {% if cheque.status != 'deposited' %}
-    <form method="post" action="{% url 'core:cheque_deposit' cheque.pk %}" data-keep-position>
+    {% permitted 'cheque_deposit' 'POST' %}<form method="post" action="{% url 'core:cheque_deposit' cheque.pk %}" data-keep-position>
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
       <button type="submit"
               class="rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
         Deposited
       </button>
-    </form>
+    </form>{% endpermitted %}
   {% endif %}
 
   {% if cheque.status != 'held' %}
-    <form method="post" action="{% url 'core:cheque_hold' cheque.pk %}" data-keep-position>
+    {% permitted 'cheque_hold' 'POST' %}<form method="post" action="{% url 'core:cheque_hold' cheque.pk %}" data-keep-position>
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
       <input type="date" name="maturity_date" value="{{ cheque.maturity_date|date:'Y-m-d' }}"
@@ -23,11 +24,11 @@
               class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
         Hold
       </button>
-    </form>
+    </form>{% endpermitted %}
   {% endif %}
 
   {% if cheque.status != 'bounced' %}
-    <button type="button"
+    {% permitted 'cheque_bounce' %}<button type="button"
             data-bounce-url="{% url 'core:cheque_bounce' cheque.pk %}"
             data-cheque="{{ cheque.cheque_no }}"
             data-customer="{{ cheque.customer.name }}"
@@ -37,17 +38,17 @@
             data-issued="{% if cheque.is_issued %}yes{% else %}no{% endif %}"
             class="js-bounce rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
       Returned
-    </button>
+    </button>{% endpermitted %}
   {% endif %}
 
-  <a href="{% url 'core:cheque_edit' cheque.pk %}?next={{ request.get_full_path|urlencode }}"
+  {% permitted 'cheque_edit' 'GET' %}<a href="{% url 'core:cheque_edit' cheque.pk %}?next={{ request.get_full_path|urlencode }}"
      class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
     Edit
-  </a>
+  </a>{% endpermitted %}
 
-  {% if is_super_admin and cheque.status != 'deposited' %}
+  {% if user|can_task:'cheque_delete' and cheque.status != 'deposited' %}
     {# Deposited cheques are in the bank; the server refuses those too. #}
-    <button type="button"
+    {% permitted 'cheque_delete' %}<button type="button"
             data-delete-url="{% url 'core:cheque_delete' cheque.pk %}"
             data-cheque="{{ cheque.cheque_no }}"
             data-customer="{{ cheque.customer.name }}"
@@ -56,6 +57,6 @@
             data-issued="{% if cheque.is_issued %}yes{% else %}no{% endif %}"
             class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
       Delete
-    </button>
+    </button>{% endpermitted %}
   {% endif %}
 </div>

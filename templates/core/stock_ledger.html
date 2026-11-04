@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Stock Ledger · {{ product.name }} · Senovka Plastics{% endblock %}
@@ -9,13 +10,13 @@
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
-    <a href="{% url 'core:product_list' %}"
+    {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Products
-    </a>
+    </a>{% endpermitted %}
 
     <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ product.name }}</h2>
     <p class="mt-1 text-sm text-slate-500">
@@ -24,14 +25,14 @@
   </div>
 
   <div class="flex shrink-0 flex-wrap items-center gap-3">
-    <button type="button" id="open-adjust"
+    {% permitted 'stock_adjust_create' %}<button type="button" id="open-adjust"
             class="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
             title="Set the shelf to an exact stock quantity">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16"/>
       </svg>
       Adjust Stock
-    </button>
+    </button>{% endpermitted %}
 
     <div class="text-right">
       <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current stock</p>
@@ -127,10 +128,10 @@
           class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
     Apply
   </button>
-  <a href="{% url 'core:stock_ledger' product.pk %}"
+  {% permitted 'stock_ledger' 'GET' %}<a href="{% url 'core:stock_ledger' product.pk %}"
      class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
     This month
-  </a>
+  </a>{% endpermitted %}
   <a href="?month=all"
      class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
     All time
@@ -138,13 +139,13 @@
   <span class="ml-1 text-xs text-slate-400">Showing: {{ period.label }}</span>
 
   {# Excel link forwards exactly the window in view. #}
-  <a href="{% url 'core:stock_ledger_excel' product.pk %}{% if period.mode == 'month' %}?month={{ month_filter.param }}{% elif period.mode == 'all' %}?month=all{% elif period.mode == 'range' %}?{% if from_date %}from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if from_date and to_date %}&{% endif %}{% if to_date %}to_date={{ to_date|date:'Y-m-d' }}{% endif %}{% endif %}"
+  {% permitted 'stock_ledger_excel' 'GET' %}<a href="{% url 'core:stock_ledger_excel' product.pk %}{% if period.mode == 'month' %}?month={{ month_filter.param }}{% elif period.mode == 'all' %}?month=all{% elif period.mode == 'range' %}?{% if from_date %}from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if from_date and to_date %}&{% endif %}{% if to_date %}to_date={{ to_date|date:'Y-m-d' }}{% endif %}{% endif %}"
      class="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
     <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
     </svg>
     Download Excel
-  </a>
+  </a>{% endpermitted %}
 </form>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
@@ -229,19 +230,19 @@
 
             <td class="whitespace-nowrap px-4 py-2.5 text-slate-500">
               {% if row.return_pk %}
-                <a href="{% url 'core:customer_return_detail' row.return_pk %}"
+                {% permitted 'customer_return_detail' 'GET' %}<a href="{% url 'core:customer_return_detail' row.return_pk %}"
                    class="font-medium text-violet-700 hover:underline">
                   {{ row.bill_number }}
-                </a>
+                </a>{% endpermitted %}
               {% elif row.bill_pk %}
-                <a href="{% url 'core:bill_detail' row.bill_pk %}"
+                {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' row.bill_pk %}"
                    class="font-medium text-slate-700 hover:underline">
                   {{ row.bill_number }}
-                </a>
+                </a>{% endpermitted %}
               {% elif row.adjustment_pk %}
                 <span class="font-medium text-amber-700">{{ row.bill_number }}</span>
-                {% if is_super_admin %}
-                  <button type="button"
+                {% if user|can_task:'stock_adjust_edit' or user|can_task:'stock_adjust_delete' %}
+                  {% permitted 'stock_adjust_edit' %}<button type="button"
                           class="js-adj-edit ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 hover:bg-amber-50"
                           data-action="{% url 'core:stock_adjust_edit' row.adjustment_pk %}"
                           data-target="{{ row.adj_target|floatformat:'-3' }}"
@@ -249,14 +250,14 @@
                           data-reason="{{ row.adj_reason }}"
                           title="Edit this adjustment">
                     Edit
-                  </button>
-                  <button type="button"
+                  </button>{% endpermitted %}
+                  {% permitted 'stock_adjust_delete' %}<button type="button"
                           class="js-adj-delete ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 hover:bg-rose-50"
                           data-action="{% url 'core:stock_adjust_delete' row.adjustment_pk %}"
                           data-label="{{ row.customer }}"
                           title="Remove this adjustment">
                     Delete
-                  </button>
+                  </button>{% endpermitted %}
                 {% endif %}
               {% else %}
                 {{ row.bill_number }}
@@ -305,7 +306,7 @@
       </button>
     </div>
 
-    <form method="post" id="adjust-form" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4"
+    {% permitted 'stock_adjust_create|stock_adjust_edit' 'POST' %}<form method="post" id="adjust-form" action="{% url 'core:stock_adjust_create' product.pk %}" class="mt-4 space-y-4"
           data-create-action="{% url 'core:stock_adjust_create' product.pk %}">
       {% csrf_token %}
 
@@ -342,12 +343,12 @@
           Save adjustment
         </button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 
 <!-- ============================ DELETE MODAL (adjustments) ============================ -->
-{% if is_super_admin %}
+{% if user|can_task:'stock_adjust_edit' or user|can_task:'stock_adjust_delete' %}
 <div id="adj-del-modal"
      class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
      role="dialog" aria-modal="true">

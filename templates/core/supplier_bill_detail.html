@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Supplier Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
@@ -9,13 +10,13 @@
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
-    <a href="{% url 'core:supplier_bill_list' %}"
+    {% permitted 'supplier_bill_list' 'GET' %}<a href="{% url 'core:supplier_bill_list' %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Supplier Bills
-    </a>
+    </a>{% endpermitted %}
 
     <h2 class="mt-2 text-xl font-semibold text-slate-900">Supplier Bill #{{ bill.pk }}</h2>
     <p class="mt-1 text-sm text-slate-500">{{ bill.bill_date|date:"j M Y" }}</p>
@@ -36,22 +37,22 @@
   </div>
 
   <div class="flex shrink-0 flex-wrap gap-2">
-    <a href="{% url 'core:customer_ledger' bill.supplier.pk %}"
+    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' bill.supplier.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Supplier Ledger
-    </a>
+    </a>{% endpermitted %}
     {% if bill.status != 'cancelled' and bill.status != 'draft' and bill.remaining_balance > 0 %}
-      <a href="{% url 'core:supplier_bill_pay' bill.pk %}"
+      {% permitted 'supplier_bill_pay' 'GET' %}<a href="{% url 'core:supplier_bill_pay' bill.pk %}"
          class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
         Make Payment
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
-    <a href="{% url 'core:supplier_bill_edit' bill.pk %}"
+    {% permitted 'supplier_bill_edit' 'GET' %}<a href="{% url 'core:supplier_bill_edit' bill.pk %}"
        class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       Edit
-    </a>
-    {% if is_super_admin %}
-      <button type="button"
+    </a>{% endpermitted %}
+    {% if user|can_task:'supplier_bill_delete' %}
+      {% permitted 'supplier_bill_delete' %}<button type="button"
               data-delete-url="{% url 'core:supplier_bill_delete' bill.pk %}"
               data-bill="Supplier bill #{{ bill.pk }}"
               data-supplier="{{ bill.supplier.name }}"
@@ -59,7 +60,7 @@
               data-items="{{ bill.item_count }}"
               class="js-delete rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
         Delete
-      </button>
+      </button>{% endpermitted %}
     {% endif %}
   </div>
 </div>
@@ -150,9 +151,9 @@
       <h3 class="text-sm font-semibold text-slate-900">Supplier</h3>
 
       <p class="mt-3 truncate text-base font-semibold text-slate-900">
-        <a href="{% url 'core:customer_detail' bill.supplier.pk %}" class="hover:underline">
+        {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' bill.supplier.pk %}" class="hover:underline">
           {{ bill.supplier.name }}
-        </a>
+        </a>{% endpermitted %}
       </p>
       <dl class="mt-2 space-y-1 text-sm">
         <div class="flex gap-2">
@@ -189,16 +190,16 @@
         </p>
       </div>
 
-      <a href="{% url 'core:customer_ledger' bill.supplier.pk %}"
+      {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' bill.supplier.pk %}"
          class="mt-4 block rounded-lg border border-slate-300 px-3 py-2 text-center text-sm font-medium
                 text-slate-700 hover:bg-slate-50">
         View ledger
-      </a>
+      </a>{% endpermitted %}
     </div>
   </div>
 </div>
 
-{% if is_super_admin %}
+{% if user|can_task:'supplier_bill_delete' %}
   {% include "core/_supplier_bill_delete_modal.html" %}
 {% endif %}
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Record Production · Senovka Plastics{% endblock %}
@@ -91,9 +92,9 @@ the usual ones without stopping anyone typing something else.
           <tr>
             <td colspan="6" class="px-4 py-12 text-center">
               <p class="text-sm text-slate-500">No active products.</p>
-              <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+              {% permitted 'product_create' 'GET' %}<a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                 Create one first
-              </a>
+              </a>{% endpermitted %}
             </td>
           </tr>
         {% endfor %}
@@ -113,10 +114,10 @@ the usual ones without stopping anyone typing something else.
     </p>
     <div class="flex items-center justify-end gap-2">
       <p id="save-note" class="mr-1 text-xs" role="status"></p>
-      <a href="{% url 'core:production_list' %}"
+      {% permitted 'production_list' 'GET' %}<a href="{% url 'core:production_list' %}"
          class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
         Cancel
-      </a>
+      </a>{% endpermitted %}
       <button type="button" id="save" disabled
               class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
                      transition hover:bg-slate-800 disabled:opacity-50">

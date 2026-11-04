@@ -1,3 +1,4 @@
+{% load erp_access %}
 {% load static humanize %}
 <!DOCTYPE html>
 <html lang="en" class="h-full">
@@ -408,254 +409,254 @@
 
       <div class="nav-section-label">Main</div>
 
-      {% if 'dashboard.view' in erp_permissions %}<a href="{% url 'core:dashboard' %}" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
+      {% if 'dashboard.view' in erp_permissions %}{% permitted 'dashboard' 'GET' %}<a href="{% url 'core:dashboard' %}" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.955-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
         </svg>
         Dashboard
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      {% if 'products.view' in erp_permissions %}<a href="{% url 'core:product_list' %}" class="nav-link {% if active == 'product_list' %}active{% endif %}">
+      {% if 'products.view' in erp_permissions %}{% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}" class="nav-link {% if active == 'product_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
         </svg>
         Products
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      <a href="{% url 'core:product_list' %}?view=stock" class="nav-link {% if active == 'stock_ledger_index' %}active{% endif %}">
+      {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}?view=stock" class="nav-link {% if active == 'stock_ledger_index' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5m.75-9l3-3 2.148 2.148A12.061 12.061 0 0116.5 7.605"/>
         </svg>
         Stock Ledgers
-      </a>
+      </a>{% endpermitted %}
 
-      {% if 'customers.view' in erp_permissions %}<a href="{% url 'core:customer_list' %}" class="nav-link {% if active == 'customer_list' %}active{% endif %}">
+      {% if 'customers.view' in erp_permissions %}{% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}" class="nav-link {% if active == 'customer_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
         </svg>
         Customers
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      <a href="{% url 'core:customer_contacts' %}" class="nav-link {% if active == 'customer_contacts' %}active{% endif %}">
+      {% permitted 'customer_contacts' 'GET' %}<a href="{% url 'core:customer_contacts' %}" class="nav-link {% if active == 'customer_contacts' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
         </svg>
         Customer Details
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:customer_list' %}?kind=suppliers" class="nav-link {% if active == 'supplier_list' %}active{% endif %}">
+      {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}?kind=suppliers" class="nav-link {% if active == 'supplier_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9-1.5h10.5m-10.5 0V6.75a1.5 1.5 0 011.5-1.5h9.75a1.5 1.5 0 011.5 1.5v10.5m0 0h1.5a1.5 1.5 0 011.5 1.5v.75m-3 0a1.5 1.5 0 003 0m-3 0V15m0 3.75h-3"/>
         </svg>
         Suppliers
-      </a>
+      </a>{% endpermitted %}
 
       <div class="nav-section-label">Billing</div>
 
-      {% if 'billing.create' in erp_permissions %}<a href="{% url 'core:bill_create' %}" class="nav-link {% if active == 'bill_create' %}active{% endif %}">
+      {% if 'billing.create' in erp_permissions %}{% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}" class="nav-link {% if active == 'bill_create' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
         Make Bill
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      {% if 'billing.view' in erp_permissions %}<a href="{% url 'core:bill_list' %}" class="nav-link {% if active == 'bill_list' %}active{% endif %}">
+      {% if 'billing.view' in erp_permissions %}{% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="nav-link {% if active == 'bill_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zM3.75 12h.007v.008H3.75V12zm0 5.25h.007v.008H3.75v-.008z"/>
         </svg>
         Bill List
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      <a href="{% url 'core:held_bill_list' %}" class="nav-link {% if active == 'held_bill_list' %}active{% endif %}">
+      {% permitted 'held_bill_list' 'GET' %}<a href="{% url 'core:held_bill_list' %}" class="nav-link {% if active == 'held_bill_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/>
         </svg>
         Held Bills
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:customer_return_list' %}" class="nav-link {% if active == 'customer_return_list' or active == 'customer_return_create' or active == 'customer_return_detail' %}active{% endif %}">
+      {% permitted 'customer_return_list' 'GET' %}<a href="{% url 'core:customer_return_list' %}" class="nav-link {% if active == 'customer_return_list' or active == 'customer_return_create' or active == 'customer_return_detail' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"/>
         </svg>
         Return Items
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:cheque_list' %}" class="nav-link {% if active == 'cheque_list' %}active{% endif %}">
+      {% permitted 'cheque_list' 'GET' %}<a href="{% url 'core:cheque_list' %}" class="nav-link {% if active == 'cheque_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9zM6 15h4.5"/>
         </svg>
         Cheques
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:cheque_maturity_soon' %}" class="nav-link {% if active == 'cheque_maturity_soon' %}active{% endif %}">
+      {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}" class="nav-link {% if active == 'cheque_maturity_soon' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
         Maturity Soon
-      </a>
+      </a>{% endpermitted %}
 
       <div class="nav-section-label">Finance</div>
 
-      <a href="{% url 'core:cash_drawer' %}" class="nav-link {% if active == 'cash_drawer' %}active{% endif %}">
+      {% permitted 'cash_drawer' 'GET' %}<a href="{% url 'core:cash_drawer' %}" class="nav-link {% if active == 'cash_drawer' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
         </svg>
         Cash Drawer
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:supplier_bill_list' %}" class="nav-link {% if active == 'supplier_bill_list' %}active{% endif %}">
+      {% permitted 'supplier_bill_list' 'GET' %}<a href="{% url 'core:supplier_bill_list' %}" class="nav-link {% if active == 'supplier_bill_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12"/>
         </svg>
         Supplier Bills
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:ledger_index' %}" class="nav-link {% if active == 'ledger_index' %}active{% endif %}">
+      {% permitted 'ledger_index' 'GET' %}<a href="{% url 'core:ledger_index' %}" class="nav-link {% if active == 'ledger_index' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
         </svg>
         Customer Ledger
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:sales_report' %}" class="nav-link {% if active == 'sales_report' %}active{% endif %}">
+      {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="nav-link {% if active == 'sales_report' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
         </svg>
         Sales Report
-      </a>
+      </a>{% endpermitted %}
 
       <div class="nav-section-label">Operations</div>
 
-      <a href="{% url 'core:production_list' %}" class="nav-link {% if active == 'production_list' %}active{% endif %}">
+      {% permitted 'production_list' 'GET' %}<a href="{% url 'core:production_list' %}" class="nav-link {% if active == 'production_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12M3 3l1.5 1.5M15 3l1.5 1.5"/>
         </svg>
         Production
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:daily_run' %}" class="nav-link {% if active == 'daily_run' or active == 'daily_run_history' %}active{% endif %}">
+      {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}" class="nav-link {% if active == 'daily_run' or active == 'daily_run_history' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
         Daily Run
-      </a>
+      </a>{% endpermitted %}
 
-      {% if is_super_admin %}
-      <a href="{% url 'core:machine_list' %}" class="nav-link {% if active == 'machine_list' %}active{% endif %}">
+      {% if user.is_authenticated %}
+      {% permitted 'machine_list' 'GET' %}<a href="{% url 'core:machine_list' %}" class="nav-link {% if active == 'machine_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/>
         </svg>
         Machines
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
       {% endif %}
 
-      {% if 'petty_cash.view' in erp_permissions %}<a href="{% url 'core:petty_cash' %}" class="nav-link {% if active == 'petty_cash' %}active{% endif %}">
+      {% if 'petty_cash.view' in erp_permissions %}{% permitted 'petty_cash' 'GET' %}<a href="{% url 'core:petty_cash' %}" class="nav-link {% if active == 'petty_cash' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"/>
         </svg>
         Petty Cash
-      </a>{% endif %}
+      </a>{% endpermitted %}{% endif %}
 
-      <a href="{% url 'core:material_purchase_list' %}" class="nav-link {% if active == 'material_purchase_list' %}active{% endif %}">
+      {% permitted 'material_purchase_list' 'GET' %}<a href="{% url 'core:material_purchase_list' %}" class="nav-link {% if active == 'material_purchase_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
         </svg>
         Material Purchasing
-      </a>
+      </a>{% endpermitted %}
 
-      {% if is_super_admin %}
-      <a href="{% url 'core:material_list' %}" class="nav-link {% if active == 'material_list' %}active{% endif %}">
+      {% if user.is_authenticated %}
+      {% permitted 'material_list' 'GET' %}<a href="{% url 'core:material_list' %}" class="nav-link {% if active == 'material_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z"/>
         </svg>
         Materials
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:material_supplier_list' %}" class="nav-link {% if active == 'material_supplier_list' %}active{% endif %}">
+      {% permitted 'material_supplier_list' 'GET' %}<a href="{% url 'core:material_supplier_list' %}" class="nav-link {% if active == 'material_supplier_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349m-16.5 11.65V9.35m0 0a3.001 3.001 0 003.75-.615A2.993 2.993 0 009.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 002.25 1.016c.896 0 1.7-.393 2.25-1.016a3.001 3.001 0 003.75.614m-16.5 0a3.004 3.004 0 01-.621-4.72L4.318 3.44A1.5 1.5 0 015.378 3h13.243a1.5 1.5 0 011.06.44l1.19 1.189a3 3 0 01-.621 4.72m-13.5 8.65h3.75a.75.75 0 00.75-.75V13.5a.75.75 0 00-.75-.75H6.75a.75.75 0 00-.75.75v3.75c0 .415.336.75.75.75z"/>
         </svg>
         Material Suppliers
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
       {% endif %}
 
-      <a href="{% url 'core:order_list' %}" class="nav-link {% if active == 'order_list' %}active{% endif %}">
+      {% permitted 'order_list' 'GET' %}<a href="{% url 'core:order_list' %}" class="nav-link {% if active == 'order_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z"/>
         </svg>
         Order Book
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:vehicle_trip_list' %}" class="nav-link {% if active == 'vehicle_trip_list' %}active{% endif %}">
+      {% permitted 'vehicle_trip_list' 'GET' %}<a href="{% url 'core:vehicle_trip_list' %}" class="nav-link {% if active == 'vehicle_trip_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9-1.5h10.5m-10.5 0V6.75a1.5 1.5 0 011.5-1.5h9.75a1.5 1.5 0 011.5 1.5v10.5m0 0h1.5a1.5 1.5 0 011.5 1.5v.75m-3 0a1.5 1.5 0 003 0m-3 0V15m0 3.75h-3m-9-9h9M12 12h.008v.008H12V12z"/>
         </svg>
         Vehicle Tracker
-      </a>
+      </a>{% endpermitted %}
 
-      {% if is_super_admin %}
-      <a href="{% url 'core:vehicle_list' %}" class="nav-link {% if active == 'vehicle_list' %}active{% endif %}">
+      {% if user.is_authenticated %}
+      {% permitted 'vehicle_list' 'GET' %}<a href="{% url 'core:vehicle_list' %}" class="nav-link {% if active == 'vehicle_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM18.75 18.75a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM3 8.25h13.5m1.5 4.5h3a.75.75 0 01.75.75v3a.75.75 0 01-.75.75h-.75M3 12.75V15a2.25 2.25 0 002.25 2.25M3 12.75V6a1.5 1.5 0 011.5-1.5h11.25a1.5 1.5 0 011.5 1.5v6.75"/>
         </svg>
         Vehicles
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:rider_list' %}" class="nav-link {% if active == 'rider_list' %}active{% endif %}">
+      {% permitted 'rider_list' 'GET' %}<a href="{% url 'core:rider_list' %}" class="nav-link {% if active == 'rider_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
         </svg>
         Riders
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
       {% endif %}
 
-      {% if is_super_admin %}
-      <div class="nav-section-label">Admin</div>
+      {% if user.is_authenticated %}
+      <div class="nav-section-label">Settings</div>
 
-      <a href="{% url 'core:user_list' %}" class="nav-link {% if active|slice:':5' == 'user_' %}active{% endif %}">
+      {% permitted 'user_list' 'GET' %}<a href="{% url 'core:user_list' %}" class="nav-link {% if active|slice:':5' == 'user_' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
         </svg>
         Users
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:manager_permissions' %}" class="nav-link {% if active == 'manager_permissions' %}active{% endif %}">
+      {% permitted 'manager_permissions' 'GET' %}<a href="{% url 'core:manager_permissions' %}" class="nav-link {% if active == 'manager_permissions' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75a3 3 0 100-6 3 3 0 000 6z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 01-.12 1.35l1.12.87-1.5 2.6-1.32-.54a7.5 7.5 0 01-2.34 1.35L15 19.05h-3l-.34-1.42a7.5 7.5 0 01-2.34-1.35L8 16.82l-1.5-2.6 1.12-.87A7.5 7.5 0 017.5 12c0-.46.04-.91.12-1.35L6.5 9.78 8 7.18l1.32.54a7.5 7.5 0 012.34-1.35L12 4.95h3l.34 1.42a7.5 7.5 0 012.34 1.35L19 7.18l1.5 2.6-1.12.87c.08.44.12.89.12 1.35z"/>
         </svg>
         Manager Permissions
-      </a>
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:category_list' %}" class="nav-link {% if active == 'category_list' %}active{% endif %}">
+      {% permitted 'category_list' 'GET' %}<a href="{% url 'core:category_list' %}" class="nav-link {% if active == 'category_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/>
         </svg>
         Categories
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:audit_log_list' %}" class="nav-link {% if active == 'audit_log_list' %}active{% endif %}">
+      {% permitted 'audit_log_list' 'GET' %}<a href="{% url 'core:audit_log_list' %}" class="nav-link {% if active == 'audit_log_list' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z"/>
         </svg>
         Activity Log
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
 
-      <a href="{% url 'core:billing_settings' %}" class="nav-link {% if active == 'billing_settings' %}active{% endif %}">
+      {% permitted 'billing_settings' 'GET' %}<a href="{% url 'core:billing_settings' %}" class="nav-link {% if active == 'billing_settings' %}active{% endif %}">
         <svg class="nav-icon h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.806.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"/>
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
         </svg>
         Billing Settings
-        <span class="ml-auto rounded-md bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400">Admin</span>
-      </a>
+        
+      </a>{% endpermitted %}
       {% endif %}
 
       {% block sidebar_nav %}{% endblock %}
@@ -663,7 +664,7 @@
 
     <!-- Sidebar footer: user identity (links to own profile) -->
     <div class="shrink-0 px-3 py-3" style="border-top:1px solid rgba(255,255,255,0.05)">
-      <a href="{% url 'core:profile' %}"
+      {% permitted 'profile' 'GET' %}<a href="{% url 'core:profile' %}"
          class="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition"
          title="Open your profile — change your password here">
         <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-xs font-bold text-blue-400 uppercase">
@@ -676,7 +677,7 @@
         <svg class="h-3.5 w-3.5 shrink-0 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
         </svg>
-      </a>
+      </a>{% endpermitted %}
     </div>
   </aside>
 
@@ -701,7 +702,7 @@
 
       <div class="ml-auto flex items-center gap-2.5">
         {% if cash_balance is not None %}
-          <a href="{% url 'core:cash_drawer' %}"
+          {% permitted 'cash_drawer' 'GET' %}<a href="{% url 'core:cash_drawer' %}"
              class="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold
                     {% if cash_balance < 0 %}bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200
                     {% else %}bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200{% endif %}"
@@ -710,7 +711,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9v8.25A2.25 2.25 0 004.5 19.5h15a2.25 2.25 0 002.25-2.25V9M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V9m-19.5 0h19.5M6 15h4.5"/>
             </svg>
             Rs {{ cash_balance|floatformat:2|intcomma }}
-          </a>
+          </a>{% endpermitted %}
         {% endif %}
 
         {% if current_role %}
@@ -808,7 +809,7 @@
             {% if notification_count %}
               <div class="border-t border-slate-100 px-4 py-2 flex items-center justify-between bg-slate-50">
                 <p class="text-[10px] text-slate-500">Dismisses last 3 days</p>
-                <a href="{% url 'core:dashboard' %}" class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Open dashboard →</a>
+                {% permitted 'dashboard' 'GET' %}<a href="{% url 'core:dashboard' %}" class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Open dashboard →</a>{% endpermitted %}
               </div>
             {% endif %}
           </div>

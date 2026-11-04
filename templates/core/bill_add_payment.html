@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Record payment · Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
@@ -8,7 +9,7 @@
 <div class="max-w-2xl">
 
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:bill_detail' bill.pk %}" class="hover:text-slate-900">Bill #{{ bill.bill_number|default:bill.pk }}</a>
+    {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}" class="hover:text-slate-900">Bill #{{ bill.bill_number|default:bill.pk }}</a>{% endpermitted %}
     <span class="text-slate-300">/</span>
     <span class="text-slate-700">Record payment</span>
   </nav>
@@ -24,11 +25,11 @@
     <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
       <p class="text-sm text-slate-700">
         Against
-        <a href="{% url 'core:bill_detail' bill.pk %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ bill.bill_number|default:bill.pk }}</a>
+        {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ bill.bill_number|default:bill.pk }}</a>{% endpermitted %}
         for
-        <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-semibold text-slate-900 hover:underline">
+        {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-semibold text-slate-900 hover:underline">
           {{ bill.customer.name }}
-        </a>
+        </a>{% endpermitted %}
       </p>
       <dl class="mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
         <div class="flex gap-2"><dt class="text-slate-500">Bill total</dt><dd class="font-medium text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</dd></div>
@@ -132,10 +133,10 @@
       </div>
 
       <div class="mt-7 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
-        <a href="{% url 'core:bill_detail' bill.pk %}"
+        {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}"
            class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Cancel
-        </a>
+        </a>{% endpermitted %}
         <button type="submit"
                 class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           Record payment

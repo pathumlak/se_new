@@ -1,3 +1,4 @@
+{% load erp_access %}
 {% load humanize %}
 {% comment %}
 The supplier bill form, shared by supplier_bill_create.html and
@@ -175,10 +176,10 @@ spanning lines, it isn't stripped and renders onto the page as text.
     </p>
     <div class="flex items-center justify-end gap-2">
       <p id="save-note" class="mr-1 text-xs" role="status"></p>
-      <a href="{% url 'core:supplier_bill_list' %}"
+      {% permitted 'supplier_bill_list' 'GET' %}<a href="{% url 'core:supplier_bill_list' %}"
          class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
         Cancel
-      </a>
+      </a>{% endpermitted %}
       <button type="button" id="save-bill" disabled
               class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white
                      transition hover:bg-slate-800 disabled:opacity-50">

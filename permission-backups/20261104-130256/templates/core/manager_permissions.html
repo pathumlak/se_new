@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Manager Permissions{% endblock %}
+{% block header %}Manager Permissions{% endblock %}
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-[220px_1fr]">
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 class="mb-3 text-sm font-semibold text-slate-900">Managers</h2>
+    <input id="manager-search" class="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search managers">
+    <div class="space-y-1">
+      {% for manager in managers %}
+      <a data-manager href="{% url 'core:manager_permissions_for_user' manager.pk %}"
+         class="block rounded-lg px-3 py-2 text-sm {% if selected.pk == manager.pk %}bg-slate-900 text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+        {{ manager.username }}
+      </a>
+      {% empty %}<p class="text-sm text-slate-500">No active managers.</p>{% endfor %}
+    </div>
+  </section>
+  {% if selected %}
+  <section>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div><h2 class="text-lg font-semibold text-slate-900">{{ selected.username }}</h2>
+      <p class="text-sm text-slate-500">{{ assigned|length }} permissions granted</p></div>
+      <a href="{% url 'core:permission_templates' %}" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium">Permission templates</a>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input id="permission-search" class="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search permissions">
+      <div class="space-y-4">
+        {% for module, permissions in permission_groups %}
+        <div class="permission-module rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 class="font-semibold text-slate-900">{{ module }}</h3>
+            <button type="button" class="module-toggle text-xs font-medium text-blue-600">Select all</button>
+          </div>
+          <div class="grid gap-2 p-4 sm:grid-cols-2">
+            {% for permission in permissions %}
+            <label class="permission-row flex items-start gap-3 rounded-lg p-2 hover:bg-slate-50" data-search="{{ permission.name|lower }} {{ permission.codename }}">
+              <input type="checkbox" name="permissions" value="{{ permission.codename }}" {% if permission.codename in assigned %}checked{% endif %} class="mt-1 module-permission">
+              <span><span class="block text-sm font-medium text-slate-800">{{ permission.name }}</span><span class="block text-xs text-slate-500">{{ permission.description }}</span></span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <button class="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Save permissions</button>
+    </form>
+    <div class="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h3 class="mb-3 font-semibold text-slate-900">Recent changes</h3>
+      {% for audit in permission_audits %}<p class="border-b border-slate-100 py-2 text-sm text-slate-600">{{ audit.created_at|date:"j M Y, g:i a" }} — {{ audit.get_action_display }} {{ audit.permission.name|default:"template" }} by {{ audit.actor.username }}</p>{% empty %}<p class="text-sm text-slate-500">No permission changes yet.</p>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+</div>
+<script>
+document.getElementById('manager-search')?.addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('[data-manager]').forEach(x => x.hidden = !x.textContent.toLowerCase().includes(q));
+});
+document.getElementById('permission-search')?.addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.permission-row').forEach(x => x.hidden = !x.dataset.search.includes(q));
+});
+document.querySelectorAll('.module-toggle').forEach(button => button.addEventListener('click', function () {
+  const boxes = this.closest('.permission-module').querySelectorAll('input');
+  const checked = [...boxes].every(x => x.checked);
+  boxes.forEach(x => x.checked = !checked);
+  this.textContent = checked ? 'Select all' : 'Deselect all';
+}));
+</script>
+{% endblock %}

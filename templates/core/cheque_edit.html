@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Edit cheque {{ cheque.cheque_no }} · Senovka Plastics{% endblock %}
@@ -24,9 +25,9 @@
     {# The cheque belongs to a payment on a bill; it can't be moved to someone else. #}
     <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
       <p class="text-sm text-slate-700">
-        From <a href="{% url 'core:customer_detail' cheque.customer.pk %}" class="font-semibold text-slate-900 hover:underline">{{ cheque.customer.name }}</a>
+        From {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' cheque.customer.pk %}" class="font-semibold text-slate-900 hover:underline">{{ cheque.customer.name }}</a>{% endpermitted %}
         {% if cheque.payment.bill_id %}
-          against <a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ cheque.payment.bill.bill_number|default:cheque.payment.bill_id }}</a>
+          against {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' cheque.payment.bill_id %}" class="font-semibold text-slate-900 hover:underline">Bill #{{ cheque.payment.bill.bill_number|default:cheque.payment.bill_id }}</a>{% endpermitted %}
         {% endif %}
       </p>
       <p class="mt-0.5 text-xs text-slate-500">

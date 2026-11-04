@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 
 {% block title %}{% if is_edit %}Edit {{ product }}{% else %}New Product{% endif %} · Senovka Plastics{% endblock %}
 {% block header %}{% if is_edit %}Edit Product{% else %}New Product{% endif %}{% endblock %}
@@ -8,7 +9,7 @@
 
   <!-- Breadcrumb -->
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:product_list' %}" class="hover:text-slate-900">Products</a>
+    {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}" class="hover:text-slate-900">Products</a>{% endpermitted %}
     <span class="text-slate-300">/</span>
     <span class="text-slate-700">{% if is_edit %}{{ product }}{% else %}New{% endif %}</span>
   </nav>
@@ -112,10 +113,10 @@
       </div>
 
       <div class="mt-7 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
-        <a href="{% url 'core:product_list' %}"
+        {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}"
            class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Cancel
-        </a>
+        </a>{% endpermitted %}
         <button type="submit"
                 class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           {% if is_edit %}Save changes{% else %}Create product{% endif %}

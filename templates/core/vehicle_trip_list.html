@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Vehicle Trips · Senovka Plastics{% endblock %}
@@ -48,16 +49,16 @@
       Apply
     </button>
     {% if is_filtered %}
-      <a href="{% url 'core:vehicle_trip_list' %}?month=all"
+      {% permitted 'vehicle_trip_list' 'GET' %}<a href="{% url 'core:vehicle_trip_list' %}?month=all"
          class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
         Clear
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
 
-    <a href="{% url 'core:vehicle_trip_pdf' %}?month={{ month_filter.param }}{% if selected_vehicle %}&vehicle={{ selected_vehicle }}{% endif %}{% if selected_rider %}&rider={{ selected_rider }}{% endif %}"
+    {% permitted 'vehicle_trip_pdf' 'GET' %}<a href="{% url 'core:vehicle_trip_pdf' %}?month={{ month_filter.param }}{% if selected_vehicle %}&vehicle={{ selected_vehicle }}{% endif %}{% if selected_rider %}&rider={{ selected_rider }}{% endif %}"
        class="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
       Export PDF
-    </a>
+    </a>{% endpermitted %}
     <button type="button" id="open-create"
             class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -135,7 +136,7 @@
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-500">{{ trip.added_by.username }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <button type="button"
+              {% permitted 'vehicle_trip_edit' %}<button type="button"
                       class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       data-action="{% url 'core:vehicle_trip_edit' trip.pk %}"
                       data-date="{{ trip.trip_date|date:'Y-m-d' }}"
@@ -147,13 +148,13 @@
                       data-end-km="{{ trip.end_km|stringformat:'.2f' }}"
                       data-purpose="{{ trip.purpose }}">
                 Edit
-              </button>
-              <button type="button"
+              </button>{% endpermitted %}
+              {% permitted 'vehicle_trip_delete' %}<button type="button"
                       class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                       data-action="{% url 'core:vehicle_trip_delete' trip.pk %}"
                       data-label="{{ trip.vehicle.name }} · {{ trip.km|floatformat:2 }}km · {{ trip.trip_date|date:'j M Y' }}">
                 Delete
-              </button>
+              </button>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
@@ -235,7 +236,7 @@
       </button>
     </div>
 
-    <form id="trip-form" method="post" action="{% url 'core:vehicle_trip_create' %}" class="mt-4 space-y-4">
+    {% permitted 'vehicle_trip_create' 'POST' %}<form id="trip-form" method="post" action="{% url 'core:vehicle_trip_create' %}" class="mt-4 space-y-4">
       {% csrf_token %}
       <div class="grid gap-3 sm:grid-cols-2">
         <div>
@@ -288,7 +289,7 @@
         <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
         <button type="submit" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Save</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 

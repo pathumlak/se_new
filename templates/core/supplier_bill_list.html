@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Supplier Bills · Senovka Plastics{% endblock %}
@@ -47,10 +48,10 @@
       </button>
 
       {% if is_filtered %}
-        <a href="{% url 'core:supplier_bill_list' %}"
+        {% permitted 'supplier_bill_list' 'GET' %}<a href="{% url 'core:supplier_bill_list' %}"
            class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
           Clear
-        </a>
+        </a>{% endpermitted %}
       {% endif %}
     </div>
 
@@ -58,15 +59,15 @@
 
 
   <div class="flex flex-col gap-2 sm:flex-row">
-    <a href="{% url 'core:supplier_bill_list_excel' %}?from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&supplier={{ selected_supplier|default_if_none:'' }}&status={{ status }}"
+    {% permitted 'supplier_bill_list_excel' 'GET' %}<a href="{% url 'core:supplier_bill_list_excel' %}?from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&supplier={{ selected_supplier|default_if_none:'' }}&status={{ status }}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
       <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
       </svg>
       Download Excel
-    </a>
+    </a>{% endpermitted %}
 
-    <a href="{% url 'core:supplier_bill_create' %}"
+    {% permitted 'supplier_bill_create' 'GET' %}<a href="{% url 'core:supplier_bill_create' %}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
               text-sm font-semibold text-white hover:bg-slate-800">
 
@@ -75,7 +76,7 @@
       </svg>
 
       New Supplier Bill
-    </a>
+    </a>{% endpermitted %}
   </div>
 
 </div>
@@ -133,12 +134,12 @@
 
           <td class="whitespace-nowrap px-4 py-3">
 
-            <a href="{% url 'core:supplier_bill_detail' bill.pk %}"
+            {% permitted 'supplier_bill_detail' 'GET' %}<a href="{% url 'core:supplier_bill_detail' bill.pk %}"
                class="font-medium text-slate-900 hover:underline">
 
               {{ bill.bill_date|date:"j M Y" }}
 
-            </a>
+            </a>{% endpermitted %}
 
             <span class="block text-xs text-slate-400">
               #{{ bill.pk }}
@@ -149,12 +150,12 @@
 
           <td class="whitespace-nowrap px-4 py-3">
 
-            <a href="{% url 'core:customer_detail' bill.supplier.pk %}"
+            {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' bill.supplier.pk %}"
                class="text-slate-900 hover:underline">
 
               {{ bill.supplier.name }}
 
-            </a>
+            </a>{% endpermitted %}
 
           </td>
 
@@ -195,37 +196,37 @@
             <div class="flex justify-end gap-1">
 
 
-              <a href="{% url 'core:supplier_bill_detail' bill.pk %}"
+              {% permitted 'supplier_bill_detail' 'GET' %}<a href="{% url 'core:supplier_bill_detail' bill.pk %}"
                  class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
 
                 View
 
-              </a>
+              </a>{% endpermitted %}
 
 
               {% if bill.status != 'cancelled' and bill.status != 'draft' and bill.remaining_balance > 0 %}
 
-              <a href="{% url 'core:supplier_bill_pay' bill.pk %}"
+              {% permitted 'supplier_bill_pay' 'GET' %}<a href="{% url 'core:supplier_bill_pay' bill.pk %}"
                  class="rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
 
                 Pay
 
-              </a>
+              </a>{% endpermitted %}
 
               {% endif %}
 
 
-              <a href="{% url 'core:supplier_bill_edit' bill.pk %}"
+              {% permitted 'supplier_bill_edit' 'GET' %}<a href="{% url 'core:supplier_bill_edit' bill.pk %}"
                  class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
 
                 Edit
 
-              </a>
+              </a>{% endpermitted %}
 
 
-              {% if is_super_admin %}
+              {% if user|can_task:'supplier_bill_delete' %}
 
-              <button type="button"
+              {% permitted 'supplier_bill_delete' %}<button type="button"
                       data-delete-url="{% url 'core:supplier_bill_delete' bill.pk %}"
                       data-bill="Supplier bill #{{ bill.pk }}"
                       data-supplier="{{ bill.supplier.name }}"
@@ -235,7 +236,7 @@
 
                 Delete
 
-              </button>
+              </button>{% endpermitted %}
 
               {% endif %}
 
@@ -262,12 +263,12 @@
               </p>
 
 
-              <a href="{% url 'core:supplier_bill_list' %}"
+              {% permitted 'supplier_bill_list' 'GET' %}<a href="{% url 'core:supplier_bill_list' %}"
                  class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
 
                 Clear filters
 
-              </a>
+              </a>{% endpermitted %}
 
 
             {% else %}
@@ -277,12 +278,12 @@
               </p>
 
 
-              <a href="{% url 'core:supplier_bill_create' %}"
+              {% permitted 'supplier_bill_create' 'GET' %}<a href="{% url 'core:supplier_bill_create' %}"
                  class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
 
                 Record the first one
 
-              </a>
+              </a>{% endpermitted %}
 
 
             {% endif %}
@@ -306,7 +307,7 @@
 </div>
 
 
-{% if is_super_admin %}
+{% if user|can_task:'supplier_bill_delete' %}
   {% include "core/_supplier_bill_delete_modal.html" %}
 {% endif %}
 

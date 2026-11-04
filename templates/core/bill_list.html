@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Bills · Senovka Plastics{% endblock %}
@@ -90,34 +91,34 @@
         Filter
       </button>
       {% if is_filtered %}
-        <a href="{% url 'core:bill_list' %}"
+        {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}"
            class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
           Clear
-        </a>
+        </a>{% endpermitted %}
       {% endif %}
       {% if not month_filter.is_all_time %}
         <a href="?month=all" class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">All Months</a>
       {% else %}
-        <a href="{% url 'core:bill_list' %}" class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">Current Month</a>
+        {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">Current Month</a>{% endpermitted %}
       {% endif %}
     </div>
   </form>
 
   <div class="flex flex-col gap-2 sm:flex-row">
-    <a href="{% url 'core:bill_list_excel' %}?month={{ month_filter.param }}&from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&customer={{ selected_customer|default_if_none:'' }}&payment_type={{ payment_type }}&status={{ status }}&q={{ query|urlencode }}"
+    {% permitted 'bill_list_excel' 'GET' %}<a href="{% url 'core:bill_list_excel' %}?month={{ month_filter.param }}&from_date={{ from_date|date:'Y-m-d' }}&to_date={{ to_date|date:'Y-m-d' }}&customer={{ selected_customer|default_if_none:'' }}&payment_type={{ payment_type }}&status={{ status }}&q={{ query|urlencode }}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
       <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
       </svg>
       Download Excel
-    </a>
-    <a href="{% url 'core:bill_create' %}"
+    </a>{% endpermitted %}
+    {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
       </svg>
       New Bill
-    </a>
+    </a>{% endpermitted %}
   </div>
 </div>
 
@@ -126,7 +127,7 @@
   {% if not month_filter.is_all_time %}
     <a href="?month=all" class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">All Months</a>
   {% else %}
-    <a href="{% url 'core:bill_list' %}" class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">Back to Current Month</a>
+    {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">Back to Current Month</a>{% endpermitted %}
   {% endif %}
 </div>
 
@@ -153,18 +154,18 @@
         {% for bill in bills %}
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3">
-              <a href="{% url 'core:bill_detail' bill.pk %}" class="font-medium text-slate-900 hover:underline">
+              {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}" class="font-medium text-slate-900 hover:underline">
                 #{{ bill.bill_number|default:bill.pk }}
-              </a>
+              </a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
             <td class="whitespace-nowrap px-4 py-3">
               {% if bill.is_walk_in %}
                 <span class="italic text-slate-600">{{ bill.walk_in_name }}</span>
               {% else %}
-                <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="text-slate-900 hover:underline">
+                {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' bill.customer.pk %}" class="text-slate-900 hover:underline">
                   {{ bill.customer.name }}
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
@@ -192,17 +193,17 @@
 
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <div class="flex justify-end gap-1">
-                <a href="{% url 'core:bill_detail' bill.pk %}"
+                {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   View
-                </a>
+                </a>{% endpermitted %}
                 
-                <a href="{% url 'core:bill_edit' bill.pk %}"
+                {% permitted 'bill_edit' 'GET' %}<a href="{% url 'core:bill_edit' bill.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
-                </a>
-                {% if is_super_admin %}
-                  <button type="button"
+                </a>{% endpermitted %}
+                {% if user|can_task:'bill_delete' %}
+                  {% permitted 'bill_delete' %}<button type="button"
                           data-delete-url="{% url 'core:bill_delete' bill.pk %}"
                           data-bill="Bill #{{ bill.bill_number|default:bill.pk }}"
                           data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
@@ -210,7 +211,7 @@
                           data-reverses="{{ bill.reverses }}"
                           class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
                     Delete
-                  </button>
+                  </button>{% endpermitted %}
                 {% endif %}
               </div>
             </td>
@@ -220,14 +221,14 @@
             <td colspan="9" class="px-4 py-12 text-center">
               {% if is_filtered %}
                 <p class="text-sm text-slate-500">No bills match your filters.</p>
-                <a href="{% url 'core:bill_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Clear filters
-                </a>
+                </a>{% endpermitted %}
               {% else %}
                 <p class="text-sm text-slate-500">No bills yet.</p>
-                <a href="{% url 'core:bill_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Make the first one
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
           </tr>
@@ -237,7 +238,7 @@
   </div>
 </div>
 
-{% if is_super_admin %}
+{% if user|can_task:'bill_delete' %}
   {% include "core/_bill_delete_modal.html" %}
 {% endif %}
 {% endblock %}

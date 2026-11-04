@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Order Production Check · Senovka Plastics{% endblock %}
@@ -9,13 +10,13 @@
 <!-- =========================== HEADER + FILTERS =========================== -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div>
-    <a href="{% url 'core:order_list' %}"
+    {% permitted 'order_list' 'GET' %}<a href="{% url 'core:order_list' %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Order Book
-    </a>
+    </a>{% endpermitted %}
     <h2 class="mt-2 text-xl font-semibold text-slate-900">Production check</h2>
     <p class="mt-1 text-sm text-slate-500">
       What each product has been ordered for versus what's on the shelf. Rows the
@@ -45,8 +46,8 @@
       Apply
     </button>
     {% if scope != 'sent' or query %}
-      <a href="{% url 'core:order_production_check' %}"
-         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>
+      {% permitted 'order_production_check' 'GET' %}<a href="{% url 'core:order_production_check' %}"
+         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>{% endpermitted %}
     {% endif %}
   </form>
 </div>
@@ -101,9 +102,9 @@
                      {% elif row.status == 'short' %}border-l-4 border-amber-400
                      {% endif %}">
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-              <a href="{% url 'core:stock_ledger' row.product_id %}" class="hover:underline" title="Open stock ledger">
+              {% permitted 'stock_ledger' 'GET' %}<a href="{% url 'core:stock_ledger' row.product_id %}" class="hover:underline" title="Open stock ledger">
                 {{ row.name }}
-              </a>
+              </a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">
               {% if row.size %}{{ row.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
@@ -228,10 +229,10 @@
               class="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
         Copy message
       </button>
-      <a href="{% url 'core:production_create' %}" target="_blank" rel="noopener"
+      {% permitted 'production_create' 'GET' %}<a href="{% url 'core:production_create' %}" target="_blank" rel="noopener"
          class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
         Open Production →
-      </a>
+      </a>{% endpermitted %}
       <button type="button" class="js-close rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
         Done
       </button>

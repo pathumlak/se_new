@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Order Book · Senovka Plastics{% endblock %}
@@ -39,25 +40,25 @@
       Apply
     </button>
     {% if is_filtered %}
-      <a href="{% url 'core:order_list' %}?month=all"
-         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>
+      {% permitted 'order_list' 'GET' %}<a href="{% url 'core:order_list' %}?month=all"
+         class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">Clear</a>{% endpermitted %}
     {% endif %}
 
-    <!-- <a href="{% url 'core:order_production_check' %}"
+    <!-- {% permitted 'order_production_check' 'GET' %}<a href="{% url 'core:order_production_check' %}"
        class="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
        title="See everything that's ordered against current stock, across all open quotations">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
       </svg>
       All-orders check
-    </a> -->
-    <a href="{% url 'core:order_create' %}"
+    </a>{% endpermitted %} -->
+    {% permitted 'order_create' 'GET' %}<a href="{% url 'core:order_create' %}"
        class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
       </svg>
       New Quotation
-    </a>
+    </a>{% endpermitted %}
   </form>
 </div>
 
@@ -109,7 +110,7 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-              <a href="{% url 'core:order_detail' order.pk %}" class="hover:underline">{{ order.reference_no }}</a>
+              {% permitted 'order_detail' 'GET' %}<a href="{% url 'core:order_detail' order.pk %}" class="hover:underline">{{ order.reference_no }}</a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ order.order_date|date:"j M Y" }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-900">{{ order.display_customer }}</td>
@@ -129,33 +130,33 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <a href="{% url 'core:order_detail' order.pk %}"
-                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+              {% permitted 'order_detail' 'GET' %}<a href="{% url 'core:order_detail' order.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>{% endpermitted %}
               {# A delivered or cancelled quotation is history; the others can still be changed. #}
               {% if order.status != 'delivered' and order.status != 'cancelled' %}
-                <a href="{% url 'core:order_edit' order.pk %}"
-                   class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Edit</a>
-                <button type="button"
+                {% permitted 'order_edit' 'GET' %}<a href="{% url 'core:order_edit' order.pk %}"
+                   class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Edit</a>{% endpermitted %}
+                {% permitted 'order_set_status' %}<button type="button"
                         data-status-url="{% url 'core:order_set_status' order.pk 'cancelled' %}"
                         data-ref="{{ order.reference_no }}"
                         data-customer="{{ order.display_customer }}"
-                        class="js-order-cancel rounded-md px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50">Cancel</button>
+                        class="js-order-cancel rounded-md px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50">Cancel</button>{% endpermitted %}
               {% endif %}
-              <a href="{% url 'core:order_pdf' order.pk %}"
-                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">PDF</a>
-              {% if is_super_admin %}
-                <button type="button"
+              {% permitted 'order_pdf' 'GET' %}<a href="{% url 'core:order_pdf' order.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">PDF</a>{% endpermitted %}
+              {% if user|can_task:'order_delete' %}
+                {% permitted 'order_delete' %}<button type="button"
                         data-delete-url="{% url 'core:order_delete' order.pk %}"
                         data-ref="{{ order.reference_no }}"
                         data-customer="{{ order.display_customer }}"
-                        class="js-order-delete rounded-md px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">Delete</button>
+                        class="js-order-delete rounded-md px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">Delete</button>{% endpermitted %}
               {% endif %}
             </td>
           </tr>
         {% empty %}
           <tr>
             <td colspan="8" class="px-4 py-12 text-center text-sm text-slate-500">
-              {% if is_filtered %}No quotations match these filters.{% else %}No quotations yet — <a href="{% url 'core:order_create' %}" class="font-medium text-slate-900 hover:underline">create the first one</a>.{% endif %}
+              {% if is_filtered %}No quotations match these filters.{% else %}No quotations yet — {% permitted 'order_create' 'GET' %}<a href="{% url 'core:order_create' %}" class="font-medium text-slate-900 hover:underline">create the first one</a>{% endpermitted %}.{% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -306,7 +307,7 @@
   </div>
 </div>
 
-{% if is_super_admin %}
+{% if user|can_task:'order_delete' %}
 <div id="order-delete-modal"
      class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"
      role="dialog" aria-modal="true" aria-labelledby="order-delete-title">

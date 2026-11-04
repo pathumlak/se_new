@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Return Items · Senovka Plastics{% endblock %}
@@ -7,13 +8,13 @@
 {% block content %}
 
 <div class="mb-4">
-  <a href="{% url 'core:customer_return_list' %}"
+  {% permitted 'customer_return_list' 'GET' %}<a href="{% url 'core:customer_return_list' %}"
      class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
     </svg>
     Back to Return Items List
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 <form method="post" id="return-form" novalidate>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Edit Supplier Bill #{{ bill.pk }} · Senovka Plastics{% endblock %}
@@ -13,7 +14,7 @@
     </svg>
     <div class="min-w-0">
       <p class="text-sm font-medium text-amber-900">
-        Editing <a href="{% url 'core:supplier_bill_detail' bill.pk %}" class="underline">Supplier bill #{{ bill.pk }}</a>
+        Editing {% permitted 'supplier_bill_detail' 'GET' %}<a href="{% url 'core:supplier_bill_detail' bill.pk %}" class="underline">Supplier bill #{{ bill.pk }}</a>{% endpermitted %}
         from {{ bill.bill_date|date:"j M Y" }}
       </p>
       <p class="mt-1 text-xs text-amber-800">

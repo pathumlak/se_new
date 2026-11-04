@@ -37,7 +37,8 @@ from django.utils.formats import date_format
 from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_POST
 
-from .decorators import super_admin_required
+from .decorators import super_admin_required, task_permission_required
+from .permissions import ASSIGNABLE_CODES, with_required_views, permission_candidates
 from .notifications import dismiss as dismiss_notification
 from .utils import get_month_filter
 from .forms import (
@@ -527,12 +528,13 @@ def user_list(request):
 def manager_permissions(request, user_pk=None):
     managers = User.objects.filter(role=User.Role.MANAGER, is_active=True).order_by("username")
     selected = get_object_or_404(managers, pk=user_pk) if user_pk else managers.first()
-    definitions = PermissionDefinition.objects.filter(is_active=True)
+    definitions = PermissionDefinition.objects.filter(is_active=True, codename__in=ASSIGNABLE_CODES)
     if selected and request.method == "POST":
         requested = set(request.POST.getlist("permissions"))
         valid = set(definitions.values_list("codename", flat=True))
-        requested &= valid
+        requested = with_required_views(requested & valid)
         with transaction.atomic():
+            User.objects.select_for_update().get(pk=selected.pk)
             existing = set(
                 PermissionAssignment.objects.filter(user=selected).values_list(
                     "permission__codename", flat=True
@@ -563,6 +565,7 @@ def manager_permissions(request, user_pk=None):
             "permission__codename", flat=True
         )
     ) if selected else set()
+    assigned = {code for code in ASSIGNABLE_CODES if assigned.intersection(permission_candidates(code))}
     grouped = {}
     for definition in definitions:
         grouped.setdefault(definition.module, []).append(definition)
@@ -581,20 +584,22 @@ def permission_templates(request):
         name = request.POST.get("name", "").strip()
         if not name:
             messages.error(request, "Template name is required.")
+        elif PermissionTemplate.objects.filter(name=name).exists():
+            messages.error(request, "A template with that name already exists.")
         else:
             template = PermissionTemplate.objects.create(
                 name=name, description=request.POST.get("description", ""),
                 created_by=request.user,
             )
             selected = PermissionDefinition.objects.filter(
-                codename__in=request.POST.getlist("permissions"), is_active=True
+                codename__in=with_required_views(set(request.POST.getlist("permissions")) & ASSIGNABLE_CODES), is_active=True
             )
             template.permissions.set(selected)
             messages.success(request, f"Template '{name}' created.")
             return redirect("core:permission_templates")
     return render(request, "core/permission_templates.html", {
         "templates": templates,
-        "permission_definitions": PermissionDefinition.objects.filter(is_active=True),
+        "permission_definitions": PermissionDefinition.objects.filter(is_active=True, codename__in=ASSIGNABLE_CODES),
         "managers": User.objects.filter(role=User.Role.MANAGER, is_active=True),
     })
 
@@ -603,9 +608,11 @@ def permission_templates(request):
 @super_admin_required
 def permission_template_assign(request, template_pk):
     template = get_object_or_404(PermissionTemplate, pk=template_pk)
-    target = get_object_or_404(User, pk=request.POST.get("manager"), role=User.Role.MANAGER)
+    target = get_object_or_404(User, pk=request.POST.get("manager"), role=User.Role.MANAGER, is_active=True)
     with transaction.atomic():
-        for definition in template.permissions.filter(is_active=True):
+        User.objects.select_for_update().get(pk=target.pk)
+        codes = with_required_views(set(template.permissions.values_list("codename", flat=True)) & ASSIGNABLE_CODES)
+        for definition in PermissionDefinition.objects.filter(is_active=True, codename__in=codes):
             assignment, created = PermissionAssignment.objects.get_or_create(
                 user=target, permission=definition,
                 defaults={"granted_by": request.user},
@@ -945,7 +952,7 @@ def audit_log_delete_month(request):
 # Super-admin only. Singleton row edited in place — no create/list/delete.
 
 
-@super_admin_required
+@task_permission_required
 def billing_settings(request):
     """Edit the company header/footer printed on every bill.
 
@@ -981,7 +988,7 @@ def billing_settings(request):
 # Super-admin only. Managers are redirected to the dashboard with an error.
 
 
-@super_admin_required
+@task_permission_required
 def category_list(request):
     query = request.GET.get("q", "").strip()
 
@@ -1008,7 +1015,7 @@ def category_list(request):
     )
 
 
-@super_admin_required
+@task_permission_required
 def category_create(request):
     form = CategoryForm(request.POST or None)
 
@@ -1024,7 +1031,7 @@ def category_create(request):
     )
 
 
-@super_admin_required
+@task_permission_required
 def category_update(request, pk):
     category = get_object_or_404(Category, pk=pk)
     form = CategoryForm(request.POST or None, instance=category)
@@ -1042,7 +1049,7 @@ def category_update(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def category_delete(request, pk):
     category = get_object_or_404(Category, pk=pk)
     name = category.name
@@ -1191,7 +1198,7 @@ def product_update(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def product_delete(request, pk):
     product = get_object_or_404(Product, pk=pk)
     label = str(product)
@@ -1947,7 +1954,7 @@ def stock_adjust_create(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def stock_adjust_edit(request, pk):
     """Change an existing adjustment's target, date or reason.
 
@@ -1989,7 +1996,7 @@ def stock_adjust_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def stock_adjust_delete(request, pk):
     """Remove an adjustment and re-flow the ledger without it.
 
@@ -3043,7 +3050,7 @@ def _reverse_adjustment(customer, adjustment_type, amount):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def customer_adjustment_create(request, pk):
     customer = get_object_or_404(Customer, pk=pk)
     form = CustomerBalanceAdjustmentForm(request.POST)
@@ -3069,7 +3076,7 @@ def customer_adjustment_create(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def customer_adjustment_edit(request, pk, adjustment_pk):
     customer = get_object_or_404(Customer, pk=pk)
     adjustment = get_object_or_404(
@@ -3100,7 +3107,7 @@ def customer_adjustment_edit(request, pk, adjustment_pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def customer_adjustment_delete(request, pk, adjustment_pk):
     customer = get_object_or_404(Customer, pk=pk)
     adjustment = get_object_or_404(
@@ -3118,7 +3125,8 @@ def customer_adjustment_delete(request, pk, adjustment_pk):
 @login_required
 def customer_create(request):
     form = CustomerForm(
-        request.POST or None, is_super_admin=_is_super_admin(request.user)
+        request.POST or None, is_super_admin=_is_super_admin(request.user),
+        allow_balance=request.user.has_erp_permission("balances.opening_edit")
     )
 
     if request.method == "POST" and form.is_valid():
@@ -3140,6 +3148,7 @@ def customer_update(request, pk):
         request.POST or None,
         instance=customer,
         is_super_admin=_is_super_admin(request.user),
+        allow_balance=request.user.has_erp_permission("balances.opening_edit"),
     )
 
     if request.method == "POST" and form.is_valid():
@@ -3856,7 +3865,7 @@ def customer_payment_edit(request, pk, payment_pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def customer_delete(request, pk):
     customer = get_object_or_404(_customers(), pk=pk)
     name = customer.name
@@ -4739,6 +4748,12 @@ def _write_bill(bill, user, payload):
         _check_credit_limit(customer, total, parts, user)
 
     paid = parts["paid"]
+    if customer is not None and customer.balance > ZERO and not user.has_erp_permission("balances.use"):
+        raise BillError("You do not have permission to use the customer's existing credit.")
+    if parts["type"] in {Bill.PaymentType.PARTIAL, Bill.PaymentType.PARTIAL_CASH, Bill.PaymentType.PARTIAL_CHEQUE} and not user.has_erp_permission("billing.partial_payments"):
+        raise BillError("You do not have permission to record partial payments.")
+    if paid > ZERO and not user.has_erp_permission("payments.create"):
+        raise BillError("You do not have permission to record customer payments.")
     if paid >= total:
         status = Bill.Status.PAID
     elif paid > ZERO:
@@ -5052,6 +5067,9 @@ def bill_add_payment(request, pk):
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data
         amount = data["amount"]
+        if amount < bill.remaining_balance and not request.user.has_erp_permission("billing.partial_payments"):
+            form.add_error("amount", "You do not have permission to record a partial payment.")
+            return render(request, "core/bill_add_payment.html", {"form": form, "bill": bill})
 
         # Shape the payload _record_payments expects. Only one leg is ever
         # populated on this form — cash OR one cheque — so the other side is
@@ -5263,6 +5281,12 @@ def customer_settle(request, pk):
         account = data.get("cash_account") or ""
         cheques = form.parsed_cheques
         total_paid = data["_total_paid"]
+        if total_paid < max(total_owed, -customer.balance) and not request.user.has_erp_permission("billing.partial_payments"):
+            form.add_error(None, "You do not have permission to record a partial payment.")
+            return render(request, "core/customer_settle.html", {
+                "customer": customer, "form": form, "outstanding_bills": outstanding,
+                "total_owed": total_owed, "account_choices": CASH_ACCOUNT_CHOICES,
+            })
 
         # Settlement is allowed whenever the operator wants to record a
         # payment — no bills is fine (the payment sits as detached against
@@ -5590,7 +5614,7 @@ def bill_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def bill_delete(request, pk):
     bill = get_object_or_404(Bill.objects.select_related("customer"), pk=pk)
     label = f"Bill #{bill.bill_number or bill.pk}"
@@ -6177,7 +6201,7 @@ def cheque_bounce(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def cheque_delete(request, pk):
     """Remove a cheque that should never have been recorded.
 
@@ -6855,7 +6879,7 @@ def _cash_drawer_page(
 
     # Only a super admin can see/submit the adjust modal, so there is nothing
     # to build for anyone else.
-    if adjust_form is None and _is_super_admin(request.user):
+    if adjust_form is None and request.user.has_erp_permission("cash_drawer.edit"):
         adjust_form = CashDrawerAdjustForm(
             initial={"adjustment_date": timezone.localdate()},
             balance_as_of=_cash_drawer_balance_as_of,
@@ -7183,7 +7207,7 @@ def cash_drawer_insert(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def cash_drawer_adjust(request):
     """Correct the drawer to match a physical cash count.
 
@@ -7788,7 +7812,7 @@ def supplier_bill_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def supplier_bill_delete(request, pk):
     bill = get_object_or_404(SupplierBill.objects.select_related("supplier"), pk=pk)
     label = f"Supplier bill #{bill.pk}"
@@ -8254,7 +8278,7 @@ def production_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def production_delete(request, pk):
     entry = get_object_or_404(
         ProductionEntry.objects.select_related("product"), pk=pk
@@ -9294,7 +9318,7 @@ def petty_cash_pdf(request):
 # Product.
 
 
-@super_admin_required
+@task_permission_required
 def material_supplier_list(request):
     suppliers = (
         MaterialSupplier.objects.annotate(
@@ -9314,7 +9338,7 @@ def material_supplier_list(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_supplier_create(request):
     form = MaterialSupplierForm(request.POST)
     if not form.is_valid():
@@ -9327,7 +9351,7 @@ def material_supplier_create(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_supplier_edit(request, pk):
     supplier = get_object_or_404(MaterialSupplier, pk=pk)
     form = MaterialSupplierForm(request.POST, instance=supplier)
@@ -9341,7 +9365,7 @@ def material_supplier_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_supplier_delete(request, pk):
     supplier = get_object_or_404(
         MaterialSupplier.objects.annotate(
@@ -9369,7 +9393,7 @@ def material_supplier_delete(request, pk):
     return redirect("core:material_supplier_list")
 
 
-@super_admin_required
+@task_permission_required
 def material_list(request):
     materials = (
         Material.objects.annotate(
@@ -9390,7 +9414,7 @@ def material_list(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_create(request):
     form = MaterialForm(request.POST)
     if not form.is_valid():
@@ -9403,7 +9427,7 @@ def material_create(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_edit(request, pk):
     material = get_object_or_404(Material, pk=pk)
     form = MaterialForm(request.POST, instance=material)
@@ -9417,7 +9441,7 @@ def material_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_delete(request, pk):
     material = get_object_or_404(
         Material.objects.annotate(
@@ -9662,7 +9686,7 @@ def material_purchase_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def material_purchase_delete(request, pk):
     purchase = get_object_or_404(MaterialPurchase, pk=pk)
     label = f"Purchase #{purchase.pk} · {purchase.supplier.name}"
@@ -9783,7 +9807,7 @@ def _month_km_for(qs, month_filter, group_field, name_field):
 # ---- Vehicles (super-admin CRUD) ----
 
 
-@super_admin_required
+@task_permission_required
 def vehicle_list(request):
     month_filter = get_month_filter(request)
     trips_this_month = month_filter.apply(
@@ -9811,7 +9835,7 @@ def vehicle_list(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def vehicle_create(request):
     form = VehicleForm(request.POST)
     if not form.is_valid():
@@ -9824,7 +9848,7 @@ def vehicle_create(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def vehicle_edit(request, pk):
     vehicle = get_object_or_404(Vehicle, pk=pk)
     form = VehicleForm(request.POST, instance=vehicle)
@@ -9838,7 +9862,7 @@ def vehicle_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def vehicle_delete(request, pk):
     vehicle = get_object_or_404(
         Vehicle.objects.annotate(trip_count=Count("trips", distinct=True)), pk=pk
@@ -9862,7 +9886,7 @@ def vehicle_delete(request, pk):
 # ---- Riders (super-admin CRUD) ----
 
 
-@super_admin_required
+@task_permission_required
 def rider_list(request):
     month_filter = get_month_filter(request)
     trips_this_month = month_filter.apply(VehicleTrip.objects.all(), field="trip_date")
@@ -9888,7 +9912,7 @@ def rider_list(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def rider_create(request):
     form = RiderForm(request.POST)
     if not form.is_valid():
@@ -9901,7 +9925,7 @@ def rider_create(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def rider_edit(request, pk):
     rider = get_object_or_404(Rider, pk=pk)
     form = RiderForm(request.POST, instance=rider)
@@ -9915,7 +9939,7 @@ def rider_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def rider_delete(request, pk):
     rider = get_object_or_404(
         Rider.objects.annotate(trip_count=Count("trips", distinct=True)), pk=pk
@@ -10321,7 +10345,7 @@ def order_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def order_delete(request, pk):
     order = get_object_or_404(Order, pk=pk)
     ref = order.reference_no
@@ -11294,7 +11318,7 @@ def order_production_check_data(request):
 # ---- Machines master (super-admin CRUD) ----
 
 
-@super_admin_required
+@task_permission_required
 def machine_list(request):
     machines = (
         Machine.objects.annotate(run_count=Count("daily_runs", distinct=True))
@@ -11313,7 +11337,7 @@ def machine_list(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def machine_create(request):
     form = MachineForm(request.POST)
     if not form.is_valid():
@@ -11326,7 +11350,7 @@ def machine_create(request):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def machine_edit(request, pk):
     machine = get_object_or_404(Machine, pk=pk)
     form = MachineForm(request.POST, instance=machine)
@@ -11340,7 +11364,7 @@ def machine_edit(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def machine_delete(request, pk):
     machine = get_object_or_404(
         Machine.objects.annotate(run_count=Count("daily_runs", distinct=True)),
@@ -12254,7 +12278,7 @@ def customer_return_detail(request, pk):
 
 
 @require_POST
-@super_admin_required
+@task_permission_required
 def customer_return_delete(request, pk):
     """Undo a return: take its credit back off the customer and its restocked
     lines back off the shelf, then remove it."""

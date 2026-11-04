@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Activity Log · Senovka Plastics{% endblock %}
@@ -256,7 +257,7 @@
       </div>
     </div>
 
-    <form method="post" action="{% url 'core:audit_log_delete_month' %}" id="delmonth-form" class="mt-6 flex justify-end gap-2">
+    {% permitted 'audit_log_delete_month' 'POST' %}<form method="post" action="{% url 'core:audit_log_delete_month' %}" id="delmonth-form" class="mt-6 flex justify-end gap-2">
       {% csrf_token %}
       <input type="hidden" name="month" id="delmonth-input">
       <button type="button" id="delmonth-cancel"
@@ -267,7 +268,7 @@
               class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
         Delete forever
       </button>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 

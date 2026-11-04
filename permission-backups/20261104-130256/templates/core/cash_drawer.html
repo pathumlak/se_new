@@ -1,0 +1,1075 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Cash Drawer · Senovka Plastics{% endblock %}
+{% block header %}Cash Drawer{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Stat cards ── */
+  .drawer-stat {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+    position: relative;
+    overflow: hidden;
+    transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .drawer-stat:hover {
+    box-shadow: 0 4px 16px rgba(15,23,42,0.10);
+    transform: translateY(-1px);
+  }
+  .drawer-stat::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 14px 14px 0 0;
+  }
+  .drawer-stat.strip-blue::before    { background: linear-gradient(90deg,#3b82f6,#60a5fa); }
+  .drawer-stat.strip-emerald::before { background: linear-gradient(90deg,#10b981,#34d399); }
+  .drawer-stat.strip-violet::before  { background: linear-gradient(90deg,#8b5cf6,#a78bfa); }
+
+  /* ── Info callout ── */
+  .info-callout {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.6;
+  }
+
+  /* ── Filter bar ── */
+  .filter-input {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: #0f172a;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    outline: none;
+  }
+  .filter-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  }
+
+  /* ── Log table ── */
+  .log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .log-table thead th {
+    background: #f8fafc;
+    padding: 10px 16px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .log-table thead th.text-right { text-align: right; }
+  .log-table tbody tr { border-bottom: 1px solid #f8fafc; transition: background 0.1s; }
+  .log-table tbody tr:hover { background: #f8fafc; }
+  .log-table tbody td { padding: 12px 16px; vertical-align: middle; }
+  .log-table tfoot td { padding: 12px 16px; }
+  .log-table tfoot { background: #f8fafc; border-top: 2px solid #e2e8f0; }
+
+  /* ── "Opening balance" pinned row ── */
+  .opening-row td { background: #f1f5f9; font-size: 11px; color: #64748b; padding: 8px 16px; }
+
+  /* ── In / Out amounts ── */
+  .amt-in  { color: #059669; font-weight: 600; }
+  .amt-out { color: #e11d48; font-weight: 600; }
+  .amt-neg { color: #e11d48; font-weight: 700; }
+
+  /* ── Edited badge ── */
+  .badge-edited {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 600;
+    background: #fef9c3;
+    color: #854d0e;
+    border: 1px solid #fde68a;
+    cursor: help;
+  }
+
+  /* ── Bill link ── */
+  .bill-link {
+    font-weight: 600;
+    color: #1e40af;
+    text-decoration: none;
+    transition: color 0.12s;
+  }
+  .bill-link:hover { color: #1d4ed8; text-decoration: underline; }
+
+  /* ── Row action buttons ── */
+  .btn-row-edit {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #475569;
+    background: transparent;
+    border: 1px solid #e2e8f0;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .btn-row-edit:hover { background: #f1f5f9; color: #0f172a; border-color: #cbd5e1; }
+
+  .btn-row-delete {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e11d48;
+    background: transparent;
+    border: 1px solid #fecdd3;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .btn-row-delete:hover { background: #fff1f2; color: #be123c; }
+
+  /* ── Modal shared ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: flex-start; justify-content: center;
+    background: rgba(15,23,42,0.6);
+    backdrop-filter: blur(4px);
+    padding: 48px 16px 16px;
+    overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%; max-width: 440px;
+    box-shadow: 0 20px 60px rgba(15,23,42,0.22), 0 0 0 1px rgba(15,23,42,0.06);
+    animation: modalIn 0.18s ease;
+  }
+  @keyframes modalIn {
+    from { opacity:0; transform:translateY(10px) scale(0.98); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+  }
+  .modal-title {
+    font-size: 15px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em;
+  }
+  .modal-sub {
+    font-size: 12px; color: #64748b; margin-top: 3px;
+  }
+  .modal-close-btn {
+    background: none; border: none; cursor: pointer;
+    color: #94a3b8; padding: 4px; border-radius: 6px;
+    transition: color 0.12s, background 0.12s;
+  }
+  .modal-close-btn:hover { color: #0f172a; background: #f1f5f9; }
+
+  /* ── Form fields inside modals ── */
+  .form-label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: #374151; margin-bottom: 5px; letter-spacing: 0.01em;
+  }
+  .form-label .req { color: #f43f5e; margin-left: 2px; }
+  .form-label .opt { font-weight: 400; color: #94a3b8; font-size: 11px; margin-left: 4px; }
+  .form-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .form-error { font-size: 11px; color: #e11d48; margin-top: 4px; }
+  .form-divider { border-top: 1px solid #f1f5f9; padding-top: 16px; margin-top: 4px; }
+
+  /* Style Django-rendered inputs inside modals */
+  #out-modal input, #out-modal select, #out-modal textarea,
+  #insert-modal input, #insert-modal select, #insert-modal textarea,
+  #adjust-modal input, #adjust-modal select, #adjust-modal textarea,
+  #edit-modal input, #edit-modal select, #edit-modal textarea {
+    width: 100%;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #0f172a;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    font-family: inherit;
+  }
+  #out-modal input:focus, #out-modal select:focus, #out-modal textarea:focus,
+  #insert-modal input:focus, #insert-modal select:focus, #insert-modal textarea:focus,
+  #adjust-modal input:focus, #adjust-modal select:focus, #adjust-modal textarea:focus,
+  #edit-modal input:focus, #edit-modal select:focus, #edit-modal textarea:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  }
+
+  /* Emerald submit button for the Insert modal to distinguish it visually
+     from the withdrawal one. */
+  .btn-modal-insert {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #059669; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-insert:hover { background: #047857; }
+
+  /* ── Modal buttons ── */
+  .btn-modal-cancel {
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .btn-modal-cancel:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+
+  .btn-modal-primary {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #1e40af; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-primary:hover { background: #1d4ed8; }
+
+  .btn-modal-danger {
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700;
+    border: none; background: #e11d48; color: #fff; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-modal-danger:hover { background: #be123c; }
+
+  /* ── Delete modal warning box ── */
+  .delete-detail-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: #475569;
+    line-height: 1.6;
+    margin-top: 14px;
+  }
+
+  /* ── "From Bill" tag ── */
+  .from-bill-tag {
+    display: inline-flex; align-items: center;
+    font-size: 10px; font-weight: 600; color: #64748b;
+    background: #f1f5f9; border: 1px solid #e2e8f0;
+    padding: 2px 8px; border-radius: 99px;
+  }
+
+  /* ── Record button ── */
+  .btn-record {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: 10px;
+    font-size: 13px; font-weight: 700;
+    background: #1e40af; color: #fff; border: none; cursor: pointer;
+    box-shadow: 0 1px 3px rgba(30,64,175,0.25);
+    transition: background 0.12s, box-shadow 0.12s, transform 0.1s;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+  .btn-record:hover { background: #1d4ed8; box-shadow: 0 4px 12px rgba(30,64,175,0.3); transform: translateY(-1px); }
+
+  /* ── Filter buttons ── */
+  .btn-filter {
+    padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid #e2e8f0; background: #fff; color: #475569; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .btn-filter:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+
+  .btn-clear {
+    padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    color: #64748b; text-decoration: none; transition: color 0.12s;
+    display: flex; align-items: center;
+  }
+  .btn-clear:hover { color: #0f172a; }
+
+  /* ── Empty state ── */
+  .empty-state { padding: 48px 20px; text-align: center; }
+  .empty-state p { font-size: 13px; color: #94a3b8; }
+  .empty-state a { color: #3b82f6; font-weight: 600; text-decoration: none; }
+  .empty-state a:hover { text-decoration: underline; }
+
+  /* ═══════════════ DARK THEME ═══════════════
+     This page carries its own component classes (not Tailwind utilities),
+     so the app-wide dark overrides in base.html don't reach them. Remap
+     each surface here. Coloured accents (amount in/out, strip gradients,
+     primary/emerald/danger buttons) are left as-is — they read fine on a
+     dark card. */
+  html.dark .drawer-stat { background: #161f33; border-color: #29344c; }
+  html.dark .drawer-stat:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.45); }
+
+  html.dark .info-callout {
+    background: #131b2c; border-color: #29344c; color: #94a3b8;
+    border-left-color: #3b82f6;
+  }
+
+  html.dark .filter-input,
+  html.dark #out-modal input, html.dark #out-modal select, html.dark #out-modal textarea,
+  html.dark #insert-modal input, html.dark #insert-modal select, html.dark #insert-modal textarea,
+  html.dark #adjust-modal input, html.dark #adjust-modal select, html.dark #adjust-modal textarea,
+  html.dark #edit-modal input, html.dark #edit-modal select, html.dark #edit-modal textarea {
+    background: #0f1728; color: #e2e8f0; border-color: #34425c;
+  }
+  html.dark .filter-input::placeholder { color: #64748b; }
+
+  html.dark .log-table thead th {
+    background: #131b2c; color: #7c889b; border-bottom-color: #222f47;
+  }
+  html.dark .log-table tbody tr { border-bottom-color: #222f47; }
+  html.dark .log-table tbody tr:hover { background: #1b2740; }
+  html.dark .log-table tfoot { background: #131b2c; border-top-color: #29344c; }
+  html.dark .opening-row td { background: #1b2740; color: #94a3b8; }
+
+  html.dark .bill-link { color: #93c5fd; }
+  html.dark .bill-link:hover { color: #bfdbfe; }
+  html.dark .from-bill-tag { background: #223049; border-color: #34425c; color: #94a3b8; }
+
+  html.dark .badge-edited { background: #2a2410; color: #fcd34d; border-color: #665315; }
+
+  html.dark .btn-row-edit { color: #cbd5e1; border-color: #34425c; }
+  html.dark .btn-row-edit:hover { background: #1b2740; color: #f1f5f9; border-color: #475569; }
+  html.dark .btn-row-delete { color: #fb7185; border-color: #6b2733; }
+  html.dark .btn-row-delete:hover { background: #2c1416; color: #fecdd3; }
+
+  html.dark .modal-box { background: #161f33; box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(148,163,184,0.12); }
+  html.dark .modal-title { color: #f1f5f9; }
+  html.dark .modal-sub { color: #94a3b8; }
+  html.dark .modal-close-btn:hover { color: #f1f5f9; background: #1b2740; }
+
+  html.dark .form-label { color: #cbd5e1; }
+  html.dark .form-divider { border-top-color: #222f47; }
+
+  html.dark .btn-modal-cancel { background: #0f1728; border-color: #34425c; color: #cbd5e1; }
+  html.dark .btn-modal-cancel:hover { background: #1b2740; border-color: #475569; color: #f1f5f9; }
+
+  html.dark .delete-detail-box { background: #131b2c; border-color: #29344c; color: #94a3b8; }
+
+  html.dark .btn-filter { background: #0f1728; border-color: #34425c; color: #cbd5e1; }
+  html.dark .btn-filter:hover { background: #1b2740; border-color: #475569; color: #f1f5f9; }
+  html.dark .btn-clear { color: #94a3b8; }
+  html.dark .btn-clear:hover { color: #f1f5f9; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ═══════════════ HEADER ROW: Balance + Action ═══════════════ -->
+<div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+
+  <!-- Main balance card -->
+  <div class="drawer-stat strip-blue lg:flex-1">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Current Drawer Balance</p>
+    <p class="text-[38px] font-extrabold tracking-tight leading-none {% if balance < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
+      Rs {{ balance|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-2 text-[11px] text-slate-400 leading-relaxed">
+      Cash taken in on bills, less what has been withdrawn or moved out.
+    </p>
+  </div>
+
+  <!-- Record buttons -->
+  <div class="flex flex-wrap items-start gap-2">
+    <button type="button" id="open-insert-form"
+            style="background:#059669;box-shadow:0 1px 3px rgba(5,150,105,0.25)"
+            class="btn-record hover:!bg-emerald-700">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Insert Cash
+    </button>
+    <button type="button" id="open-form" class="btn-record">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/>
+      </svg>
+      Record Transfer / Withdrawal
+    </button>
+    {% if is_super_admin %}
+      <button type="button" id="open-adjust-form"
+              style="background:#7c3aed;box-shadow:0 1px 3px rgba(124,58,237,0.25)"
+              class="btn-record hover:!bg-violet-700">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        Adjust Balance
+      </button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ═══════════════ BREAKDOWN STATS ═══════════════ -->
+<div class="mb-4 grid gap-4 sm:grid-cols-2">
+  <div class="drawer-stat strip-blue">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Physical Cash in Drawer</p>
+    <p class="text-2xl font-extrabold tracking-tight {% if balance < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
+      {{ balance|floatformat:2|intcomma }}
+    </p>
+    <p class="mt-1.5 text-[11px] text-slate-400">Notes and coins on hand.</p>
+  </div>
+
+  <div class="drawer-stat strip-emerald">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Senovka Acc</p>
+    <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
+    <p class="mt-1.5 text-[11px] text-slate-400">
+      {% if month_filter.is_all_time %}All time · bill payments only.{% else %}{{ month_filter.label }} · resets each month.{% endif %}
+    </p>
+  </div>
+
+</div>
+
+<!-- Info callout -->
+<div class="info-callout mb-5">
+  The account total tracks how much was transferred to the Senovka account
+  {% if month_filter.is_all_time %}across all time{% else %}in {{ month_filter.label }}{% endif %}
+  from bill payments. They reset to zero at the start of each month — pick another month above to see its total.
+  A transfer recorded on this page comes off the drawer and is named in the log below, but isn't counted in
+  those totals — the drawer has nowhere to record which account it went to.
+</div>
+
+<!-- ═══════════════ MONTH FILTER ═══════════════ -->
+<div class="mb-4 flex flex-wrap items-end gap-3">
+  <form method="get" class="flex flex-wrap items-end gap-2">
+    <div>
+      <label for="month" class="form-label">Month</label>
+      <input type="month" id="month" name="month"
+             value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+             class="filter-input">
+    </div>
+    <button type="submit" class="btn-filter">
+      <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591L15.75 12.5V18a.75.75 0 01-.362.643l-3.75 2.25A.75.75 0 0110.5 20.25V12.5L4.659 7.409A2.25 2.25 0 014 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z"/>
+      </svg>
+      Apply
+    </button>
+    <a href="?month=all" class="btn-clear">All time</a>
+    {% if is_filtered and not from_date and not to_date %}
+      <a href="{% url 'core:cash_drawer' %}" class="btn-clear">
+        <svg class="h-3.5 w-3.5 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+        Reset to this month
+      </a>
+    {% endif %}
+  </form>
+
+  <a href="{% url 'core:cash_drawer_excel' %}?month={{ month_filter.param }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}"
+     class="btn-filter"
+     style="border-color:#a7f3d0;background:#ecfdf5;color:#065f46"
+     title="Download the drawer log as an Excel sheet">
+    <svg class="inline h-3.5 w-3.5 mr-1 -mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
+    </svg>
+    Download Excel
+  </a>
+
+  <span class="text-xs text-slate-500">
+    Showing: <strong class="text-slate-800">{{ month_filter.label }}</strong>
+    {% if from_date or to_date %} · custom range{% endif %}
+  </span>
+
+  <!-- Client-side live search: filters the rows already on the page (reason,
+       bill #, customer, amount, type) without touching the running balance,
+       which depends on every prior row. Widen the range with the month
+       filter / All time first, then search within it. -->
+  <div class="relative" style="min-width:230px">
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+      </svg>
+    </span>
+    <input type="search" id="js-drawer-search" autocomplete="off"
+           placeholder="Search reason, bill #, customer, amount…"
+           class="filter-input" style="padding-left:32px;width:100%">
+  </div>
+</div>
+
+
+{% if carried_forward and not month_filter.is_all_time %}
+  <div class="mb-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-1.5 text-xs text-indigo-800">
+    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"/>
+    </svg>
+    Opening balance carried forward from earlier months:
+    <span class="font-semibold">Rs {{ carried_forward|floatformat:2|intcomma }}</span>
+  </div>
+{% endif %}
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- ═══════════════ TRANSACTION LOG ═══════════════ -->
+<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);">
+  <div class="overflow-x-auto">
+    <table class="log-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th class="text-right">In (+)</th>
+          <th class="text-right">Out (−)</th>
+          <th class="text-right">Running Balance</th>
+          <th class="text-right">Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for row in rows %}
+          <tr class="js-drawer-row"
+              data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% elif row.entry.bill.walk_in_name %}{{ row.entry.bill.walk_in_name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
+            <td class="whitespace-nowrap" style="color:#64748b">{{ row.entry.txn_date|date:"j M Y" }}</td>
+
+            <td>
+              {% if row.entry.bill_id %}
+                <a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
+                  Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}
+                </a>
+                {% if row.entry.bill.customer_id %}
+                  <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.customer.name }}</span>
+                {% elif row.entry.bill.walk_in_name %}
+                  <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.walk_in_name }}</span>
+                {% endif %}
+                {% if row.entry.reason %}
+                  <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px">{{ row.entry.reason }}</span>
+                {% endif %}
+              {% elif row.entry.reason %}
+                <span style="color:#0f172a;font-weight:500">{{ row.entry.reason }}</span>
+              {% else %}
+                <span style="color:#94a3b8">{{ row.entry.get_txn_type_display }}</span>
+              {% endif %}
+
+              {% if row.entry.edited_at %}
+                <span class="badge-edited"
+                      title="Edited {{ row.entry.edited_at|date:'j M Y, g:i a' }}{% if row.entry.edited_by %} by {{ row.entry.edited_by.username }}{% endif %}{% if row.entry.edit_reason %} — {{ row.entry.edit_reason }}{% endif %}">
+                  ✎ Edited
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="text-right whitespace-nowrap">
+              {% if row.is_in %}<span class="amt-in">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
+            </td>
+            <td class="text-right whitespace-nowrap">
+              {% if not row.is_in %}<span class="amt-out">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
+            </td>
+            <td class="text-right whitespace-nowrap font-bold {% if row.running < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
+              {{ row.running|floatformat:2|intcomma }}
+            </td>
+
+            <td class="text-right whitespace-nowrap">
+              {% if row.is_manual %}
+                <div style="display:flex;justify-content:flex-end;gap:6px">
+                  <button type="button"
+                          data-url="{% url 'core:cash_drawer_edit' row.entry.pk %}"
+                          data-date="{{ row.entry.txn_date|date:'Y-m-d' }}"
+                          data-type="{{ row.entry.txn_type }}"
+                          data-amount="{{ row.entry.amount }}"
+                          data-reason="{{ row.entry.reason }}"
+                          class="js-edit btn-row-edit">Edit</button>
+                  <button type="button"
+                          data-url="{% url 'core:cash_drawer_delete' row.entry.pk %}"
+                          data-date="{{ row.entry.txn_date|date:'j M Y' }}"
+                          data-type="{{ row.entry.get_txn_type_display }}"
+                          data-amount="{{ row.entry.amount|floatformat:2|intcomma }}"
+                          data-reason="{{ row.entry.reason }}"
+                          class="js-delete btn-row-delete">Delete</button>
+                </div>
+              {% else %}
+                <span class="from-bill-tag">From Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6">
+              <div class="empty-state">
+                {% if is_filtered %}
+                  <svg style="margin:0 auto 12px;display:block;color:#cbd5e1" class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803M10.5 7.5v3m0 0v3m0-3h3m-3 0H7.5"/>
+                  </svg>
+                  <p>No drawer activity in this date range.</p>
+                  <a href="{% url 'core:cash_drawer' %}" style="margin-top:8px;display:inline-block">Clear dates</a>
+                {% else %}
+                  <svg style="margin:0 auto 12px;display:block;color:#cbd5e1" class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
+                  </svg>
+                  <p>Nothing in the drawer log yet.</p>
+                  <p style="margin-top:4px;font-size:11px;color:#cbd5e1">Cash comes in when a bill is paid with it.</p>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+
+        {% if is_filtered and rows and not page_obj.has_next %}
+          <!-- The log now reads newest-first, so the oldest entries — and the
+               balance carried in from before them — land on the last page,
+               not the first. -->
+          <tr class="opening-row">
+            <td class="whitespace-nowrap">{% if from_date %}{{ from_date|date:"j M Y" }}{% endif %}</td>
+            <td colspan="3" style="font-weight:500">Opening balance — everything before this range</td>
+            <td class="text-right" style="font-weight:600;color:#475569">{{ opening|floatformat:2|intcomma }}</td>
+            <td></td>
+          </tr>
+        {% endif %}
+
+        <!-- Shown by JS when a search matches nothing on this page. -->
+        <tr id="js-drawer-noresults" style="display:none">
+          <td colspan="6">
+            <div class="empty-state">
+              <p>No rows on this page match your search.</p>
+              <p style="margin-top:4px;font-size:11px;color:#94a3b8">
+                Try widening the range with the month filter or “All time”, then search again.
+              </p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+
+      {% if rows %}
+        <tfoot>
+          <tr>
+            <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8">
+              Totals{% if is_filtered %} <span style="font-weight:400;text-transform:none;letter-spacing:0">(range shown)</span>{% endif %}
+            </td>
+            <td class="text-right whitespace-nowrap" style="font-weight:700;color:#059669;font-size:14px">{{ total_in|floatformat:2|intcomma }}</td>
+            <td class="text-right whitespace-nowrap" style="font-weight:700;color:#e11d48;font-size:14px">{{ total_out|floatformat:2|intcomma }}</td>
+            <td class="text-right whitespace-nowrap" style="font-size:16px;font-weight:800;{% if closing < 0 %}color:#e11d48{% else %}color:#0f172a{% endif %}">
+              {{ closing|floatformat:2|intcomma }}
+            </td>
+            <td></td>
+          </tr>
+        </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ RECORD MODAL ═══════════════════════ -->
+<div id="out-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="out-modal-title">
+  <div class="modal-box">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="out-modal-title" class="modal-title">Record transfer or withdrawal</h3>
+          <p class="modal-sub">Cash leaving the drawer. <strong>{{ balance|floatformat:2|intcomma }}</strong> is in it now.</p>
+        </div>
+        <button type="button" id="out-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ form.txn_date.id_for_label }}" class="form-label">{{ form.txn_date.label }}<span class="req">*</span></label>
+          {{ form.txn_date }}
+          {% for error in form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ form.kind.id_for_label }}" class="form-label">{{ form.kind.label }}<span class="req">*</span></label>
+          {{ form.kind }}
+          {% for error in form.kind.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ form.amount.id_for_label }}" class="form-label">{{ form.amount.label }}<span class="req">*</span></label>
+          {{ form.amount }}
+          {% for error in form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ form.reason.id_for_label }}" class="form-label">{{ form.reason.label }}<span class="opt">(optional)</span></label>
+          {{ form.reason }}
+          <p class="form-hint">Appears in the log next to the type.</p>
+          {% for error in form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="out-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary">Record</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ INSERT MODAL ═══════════════════════ -->
+<div id="insert-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="insert-modal-title">
+  <div class="modal-box">
+    <form method="post" action="{% url 'core:cash_drawer_insert' %}" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="insert-modal-title" class="modal-title">Insert cash into the drawer</h3>
+          <p class="modal-sub">Cash coming in — top-up, petty-cash return, or a physical correction. Drawer holds <strong>{{ balance|floatformat:2|intcomma }}</strong> now.</p>
+        </div>
+        <button type="button" id="insert-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if in_form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ in_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ in_form.txn_date.id_for_label }}" class="form-label">{{ in_form.txn_date.label }}<span class="req">*</span></label>
+          {{ in_form.txn_date }}
+          {% for error in in_form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.source.id_for_label }}" class="form-label">{{ in_form.source.label }}<span class="req">*</span></label>
+          {{ in_form.source }}
+          {% for error in in_form.source.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.amount.id_for_label }}" class="form-label">Amount<span class="req">*</span></label>
+          {{ in_form.amount }}
+          {% for error in in_form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ in_form.reason.id_for_label }}" class="form-label">{{ in_form.reason.label }}<span class="req">*</span></label>
+          {{ in_form.reason }}
+          <p class="form-hint">Why the cash was added. Appears in the log next to the source.</p>
+          {% for error in in_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="insert-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-insert">Insert</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+{% if is_super_admin %}
+<!-- ═══════════════════════ ADJUST BALANCE MODAL (super admin) ═══════════════════════ -->
+<div id="adjust-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="adjust-modal-title">
+  <div class="modal-box">
+    <form method="post" action="{% url 'core:cash_drawer_adjust' %}" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="adjust-modal-title" class="modal-title">Adjust drawer balance</h3>
+          <p class="modal-sub">Enter the date and what was actually counted. Drawer shows <strong>{{ balance|floatformat:2|intcomma }}</strong> now — the difference is written as a correction entry on that date.</p>
+        </div>
+        <button type="button" id="adjust-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if adjust_form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ adjust_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ adjust_form.adjustment_date.id_for_label }}" class="form-label">{{ adjust_form.adjustment_date.label }}<span class="req">*</span></label>
+          {{ adjust_form.adjustment_date }}
+          <p class="form-hint">The day the count was taken. The difference is measured against the drawer's balance at the end of that day.</p>
+          {% for error in adjust_form.adjustment_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ adjust_form.actual_amount.id_for_label }}" class="form-label">{{ adjust_form.actual_amount.label }}<span class="req">*</span></label>
+          {{ adjust_form.actual_amount }}
+          <p class="form-hint">What was physically counted in the drawer — not the amount to add or remove.</p>
+          {% for error in adjust_form.actual_amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ adjust_form.reason.id_for_label }}" class="form-label">{{ adjust_form.reason.label }}<span class="req">*</span></label>
+          {{ adjust_form.reason }}
+          <p class="form-hint">Kept on the correction entry in the log.</p>
+          {% for error in adjust_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="adjust-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary" style="background:#7c3aed" onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">Adjust</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ═══════════════════════ EDIT MODAL ═══════════════════════ -->
+<div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+  <div class="modal-box">
+    <form method="post" id="edit-modal-form" novalidate>
+      {% csrf_token %}
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
+        <div>
+          <h3 id="edit-modal-title" class="modal-title">Edit drawer entry</h3>
+          <p class="modal-sub">The running balance recalculates on every page load.</p>
+        </div>
+        <button type="button" id="edit-modal-close" class="modal-close-btn" aria-label="Close">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {% if edit_form.non_field_errors %}
+        <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px 14px;font-size:13px;color:#9f1239;margin-bottom:16px">
+          {{ edit_form.non_field_errors|join:" " }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <label for="{{ edit_form.txn_date.id_for_label }}" class="form-label">{{ edit_form.txn_date.label }}<span class="req">*</span></label>
+          {{ edit_form.txn_date }}
+          {% for error in edit_form.txn_date.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ edit_form.txn_type.id_for_label }}" class="form-label">{{ edit_form.txn_type.label }}<span class="req">*</span></label>
+          {{ edit_form.txn_type }}
+          {% for error in edit_form.txn_type.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ edit_form.amount.id_for_label }}" class="form-label">{{ edit_form.amount.label }}<span class="req">*</span></label>
+          {{ edit_form.amount }}
+          {% for error in edit_form.amount.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ edit_form.reason.id_for_label }}" class="form-label">{{ edit_form.reason.label }}</label>
+          {{ edit_form.reason }}
+          <p class="form-hint">{{ edit_form.reason.help_text }}</p>
+          {% for error in edit_form.reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div class="form-divider">
+          <label for="{{ edit_form.edit_reason.id_for_label }}" class="form-label">{{ edit_form.edit_reason.label }}<span class="req">*</span></label>
+          {{ edit_form.edit_reason }}
+          <p class="form-hint">Kept against the entry — shown on the Edited badge in the log.</p>
+          {% for error in edit_form.edit_reason.errors %}<p class="form-error">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:24px">
+        <button type="button" id="edit-modal-cancel" class="btn-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-modal-primary">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════ DELETE MODAL ═══════════════════════ -->
+<div id="delete-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+  <div class="modal-box">
+
+    <div style="display:flex;align-items:flex-start;gap:14px">
+      <span style="width:40px;height:40px;border-radius:50%;background:#fff1f2;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg class="h-5 w-5" style="color:#e11d48" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+      </span>
+      <div class="min-w-0 flex-1">
+        <h3 id="delete-modal-title" class="modal-title">Delete drawer entry?</h3>
+        <p style="font-size:13px;color:#475569;margin-top:6px">
+          <span id="delete-modal-type" style="font-weight:700;color:#0f172a"></span>
+          of <span id="delete-modal-amount" style="font-weight:700;color:#0f172a"></span>
+          on <span id="delete-modal-date" style="font-weight:700;color:#0f172a"></span>
+        </p>
+        <p id="delete-modal-reason-line" class="hidden" style="font-size:12px;color:#64748b;margin-top:3px">
+          "<span id="delete-modal-reason"></span>"
+        </p>
+      </div>
+    </div>
+
+    <div class="delete-detail-box">
+      <p>The drawer total is calculated from rows on every render. Once this row is gone it stops counting — nothing needs reversing separately.</p>
+      <p style="margin-top:6px;color:#e11d48;font-weight:600;font-size:11px">This cannot be undone.</p>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+      <button type="button" id="delete-modal-cancel" class="btn-modal-cancel">Cancel</button>
+      <form method="post" id="delete-modal-form" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="btn-modal-danger">Delete entry</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block extra_js %}
+<script id="edit-failed-url" type="application/json">
+  {% if edit_entry %}"{% url 'core:cash_drawer_edit' edit_entry.pk %}"{% else %}null{% endif %}
+</script>
+
+<script>
+/* ─── Live search over the drawer rows on this page ───────────────────────
+   Filters the loaded rows without a round-trip. The running-balance column
+   is left untouched — each visible row keeps the true drawer balance it
+   stood at, so hiding rows never makes the figures lie. Widen the date range
+   first (month filter / All time) to search a bigger set. */
+(function () {
+  const input = document.getElementById('js-drawer-search');
+  if (!input) return;
+  const rows = Array.prototype.slice.call(document.querySelectorAll('.js-drawer-row'));
+  const noResults = document.getElementById('js-drawer-noresults');
+
+  function apply() {
+    const term = input.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(function (row) {
+      const hay = row.dataset.search || '';
+      const match = !term || hay.indexOf(term) !== -1;
+      row.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
+    if (noResults) {
+      noResults.style.display = (term && shown === 0 && rows.length > 0) ? '' : 'none';
+    }
+  }
+  input.addEventListener('input', apply);
+})();
+
+/* ─── Shared modal helpers ─── */
+function openModal(el) {
+  el.classList.add('open');
+  const first = el.querySelector('input, select, textarea, button');
+  if (first) setTimeout(() => first.focus(), 50);
+}
+function closeModal(el, returnFocus) {
+  el.classList.remove('open');
+  if (returnFocus) returnFocus.focus();
+}
+function bindClose(modal, ...btns) {
+  btns.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => closeModal(modal));
+  });
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(modal);
+  });
+}
+
+/* ─── Record out ─── */
+(function () {
+  const modal = document.getElementById('out-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-form');
+  openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'out-modal-close', 'out-modal-cancel');
+  // Reopen if validation failed
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
+
+/* ─── Insert cash ─── */
+(function () {
+  const modal = document.getElementById('insert-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-insert-form');
+  if (openBtn) openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'insert-modal-close', 'insert-modal-cancel');
+  // Reopen if the server bounced the form back with errors.
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
+
+/* ─── Adjust balance (super admin) ─── */
+(function () {
+  const modal = document.getElementById('adjust-modal');
+  if (!modal) return;
+  const openBtn = document.getElementById('open-adjust-form');
+  if (openBtn) openBtn.addEventListener('click', () => openModal(modal));
+  bindClose(modal, 'adjust-modal-close', 'adjust-modal-cancel');
+  // Reopen if the server bounced the form back with errors.
+  if (modal.querySelector('.form-error')) openModal(modal);
+})();
+
+/* ─── Edit entry ─── */
+(function () {
+  const modal = document.getElementById('edit-modal');
+  if (!modal) return;
+  const form = document.getElementById('edit-modal-form');
+  function field(name) { return form.querySelector('[name="' + name + '"]'); }
+
+  document.querySelectorAll('.js-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      form.action = btn.dataset.url;
+      field('txn_date').value  = btn.dataset.date;
+      field('txn_type').value  = btn.dataset.type;
+      field('amount').value    = btn.dataset.amount;
+      field('reason').value    = btn.dataset.reason;
+      field('edit_reason').value = '';
+      openModal(modal);
+    });
+  });
+
+  bindClose(modal, 'edit-modal-close', 'edit-modal-cancel');
+
+  // Reopen on validation failure
+  const failedUrl = JSON.parse(document.getElementById('edit-failed-url').textContent);
+  if (failedUrl) { form.action = failedUrl; openModal(modal); }
+})();
+
+/* ─── Delete entry ─── */
+(function () {
+  const modal = document.getElementById('delete-modal');
+  if (!modal) return;
+  const form       = document.getElementById('delete-modal-form');
+  const typeEl     = document.getElementById('delete-modal-type');
+  const amountEl   = document.getElementById('delete-modal-amount');
+  const dateEl     = document.getElementById('delete-modal-date');
+  const reasonEl   = document.getElementById('delete-modal-reason');
+  const reasonLine = document.getElementById('delete-modal-reason-line');
+  let lastFocus = null;
+
+  document.querySelectorAll('.js-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      lastFocus = btn;
+      form.action      = btn.dataset.url;
+      typeEl.textContent   = btn.dataset.type;
+      amountEl.textContent = btn.dataset.amount;
+      dateEl.textContent   = btn.dataset.date;
+      const reason = btn.dataset.reason || '';
+      reasonEl.textContent = reason;
+      reasonLine.classList.toggle('hidden', reason === '');
+      openModal(modal);
+    });
+  });
+
+  document.getElementById('delete-modal-cancel').addEventListener('click', () => closeModal(modal, lastFocus));
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal, lastFocus); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(modal, lastFocus);
+  });
+})();
+</script>
+{% endblock %}

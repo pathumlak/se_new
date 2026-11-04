@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Riders · Senovka Plastics{% endblock %}
@@ -9,7 +10,7 @@
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
   <p class="text-sm text-slate-500">
     People who drive the vehicles. This-month km reads live off
-    <a href="{% url 'core:vehicle_trip_list' %}" class="font-medium text-slate-900 hover:underline">Vehicle Trips</a>.
+    {% permitted 'vehicle_trip_list' 'GET' %}<a href="{% url 'core:vehicle_trip_list' %}" class="font-medium text-slate-900 hover:underline">Vehicle Trips</a>{% endpermitted %}.
   </p>
   <button type="button" id="open-create"
           class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
@@ -52,20 +53,20 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <button type="button"
+              {% permitted 'rider_edit' %}<button type="button"
                       class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       data-action="{% url 'core:rider_edit' r.pk %}"
                       data-name="{{ r.name }}"
                       data-phone="{{ r.phone }}"
                       data-active="{{ r.is_active|yesno:'1,' }}">
                 Edit
-              </button>
-              <button type="button"
+              </button>{% endpermitted %}
+              {% permitted 'rider_delete' %}<button type="button"
                       class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                       data-action="{% url 'core:rider_delete' r.pk %}"
                       data-label="{{ r.name }}">
                 Delete
-              </button>
+              </button>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
@@ -89,7 +90,7 @@
         </svg>
       </button>
     </div>
-    <form id="form-form" method="post" action="{% url 'core:rider_create' %}" class="mt-4 space-y-4">
+    {% permitted 'rider_create' 'POST' %}<form id="form-form" method="post" action="{% url 'core:rider_create' %}" class="mt-4 space-y-4">
       {% csrf_token %}
       <div>
         <label for="r-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
@@ -109,7 +110,7 @@
         <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
         <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 

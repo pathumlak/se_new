@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}{% if is_edit %}Edit {{ customer.name }}{% else %}New Customer{% endif %} · Senovka Plastics{% endblock %}
@@ -9,10 +10,10 @@
 
   <!-- Breadcrumb -->
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:customer_list' %}" class="hover:text-slate-900">Customers</a>
+    {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}" class="hover:text-slate-900">Customers</a>{% endpermitted %}
     <span class="text-slate-300">/</span>
     {% if is_edit %}
-      <a href="{% url 'core:customer_detail' customer.pk %}" class="hover:text-slate-900">{{ customer.name }}</a>
+      {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' customer.pk %}" class="hover:text-slate-900">{{ customer.name }}</a>{% endpermitted %}
       <span class="text-slate-300">/</span>
       <span class="text-slate-700">Edit</span>
     {% else %}

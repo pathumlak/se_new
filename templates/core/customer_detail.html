@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}{{ customer.name }} · Senovka Plastics{% endblock %}
@@ -9,13 +10,13 @@
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
-    <a href="{% url 'core:customer_list' %}"
+    {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Customers
-    </a>
+    </a>{% endpermitted %}
 
     <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ customer.name }}</h2>
 
@@ -44,38 +45,38 @@
 
   <div class="flex shrink-0 flex-wrap gap-2">
     {% if customer.balance < 0 %}
-      <a href="{% url 'core:customer_settle' customer.pk %}"
+      {% permitted 'customer_settle' 'GET' %}<a href="{% url 'core:customer_settle' customer.pk %}"
          class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
          title="Record a lump payment against this customer's outstanding bills">
         Settle Balance
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
-    <a href="{% url 'core:customer_ledger' customer.pk %}"
+    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       View Ledger
-    </a>
-    <a href="{% url 'core:customer_prices' customer.pk %}"
+    </a>{% endpermitted %}
+    {% permitted 'customer_prices' 'GET' %}<a href="{% url 'core:customer_prices' customer.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Prices
-    </a>
-    <a href="{% url 'core:customer_update' customer.pk %}"
+    </a>{% endpermitted %}
+    {% permitted 'customer_update' 'GET' %}<a href="{% url 'core:customer_update' customer.pk %}"
        class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       Edit
-    </a>
-    {% if is_super_admin %}
+    </a>{% endpermitted %}
+    {% if user|can_task:'customer_delete' %}
       {% if customer.history_count %}
         <span class="cursor-not-allowed rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-300"
               title="Has trading history — deactivate instead of deleting.">
           Delete
         </span>
       {% else %}
-        <button type="button"
+        {% permitted 'customer_delete' %}<button type="button"
                 data-delete-url="{% url 'core:customer_delete' customer.pk %}"
                 data-name="{{ customer.name }}"
                 data-prices="{{ customer.custom_price_count }}"
                 class="js-delete rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
           Delete
-        </button>
+        </button>{% endpermitted %}
       {% endif %}
     {% endif %}
   </div>
@@ -170,9 +171,9 @@
       <div class="flex gap-3">
         <dt class="w-32 shrink-0 text-slate-500">Custom prices</dt>
         <dd class="text-slate-900">
-          <a href="{% url 'core:customer_prices' customer.pk %}" class="font-medium text-slate-900 hover:underline">
+          {% permitted 'customer_prices' 'GET' %}<a href="{% url 'core:customer_prices' customer.pk %}" class="font-medium text-slate-900 hover:underline">
             {{ customer.custom_price_count }}
-          </a>
+          </a>{% endpermitted %}
         </dd>
       </div>
     </dl>
@@ -186,7 +187,7 @@
   </div>
 </div>
 
-{% if is_super_admin %}
+{% if user|can_task:'customer_adjustment_create' %}
   <!-- Balance Adjustments (super admin only) -->
   <div class="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -243,7 +244,7 @@
                 <td class="px-4 py-3 text-slate-900">{{ adj.reason }}</td>
                 <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ adj.adjusted_by.username }}</td>
                 <td class="whitespace-nowrap px-4 py-3 text-right">
-                  <button type="button"
+                  {% permitted 'customer_adjustment_edit' %}<button type="button"
                           class="js-adj-edit rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                           data-id="{{ adj.pk }}"
                           data-date="{{ adj.adjustment_date|date:'Y-m-d' }}"
@@ -252,14 +253,14 @@
                           data-reason="{{ adj.reason }}"
                           data-action="{% url 'core:customer_adjustment_edit' customer.pk adj.pk %}">
                     Edit
-                  </button>
-                  <button type="button"
+                  </button>{% endpermitted %}
+                  {% permitted 'customer_adjustment_delete' %}<button type="button"
                           class="js-adj-delete ml-1 rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                           data-id="{{ adj.pk }}"
                           data-label="{{ adj.get_adjustment_type_display }} of {{ adj.amount|floatformat:2 }} on {{ adj.adjustment_date|date:'j M Y' }}"
                           data-action="{% url 'core:customer_adjustment_delete' customer.pk adj.pk %}">
                     Delete
-                  </button>
+                  </button>{% endpermitted %}
                 </td>
               </tr>
             {% empty %}
@@ -303,7 +304,7 @@
         </span>
       </p>
 
-      <form id="adjustment-form" method="post"
+      {% permitted 'customer_adjustment_create' 'POST' %}<form id="adjustment-form" method="post"
             action="{% url 'core:customer_adjustment_create' customer.pk %}"
             class="mt-4 space-y-4">
         {% csrf_token %}
@@ -351,7 +352,7 @@
             Save
           </button>
         </div>
-      </form>
+      </form>{% endpermitted %}
     </div>
   </div>
 
@@ -389,7 +390,7 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if is_super_admin %}
+{% if user|can_task:'customer_delete' %}
 <script>
   (function () {
     const CREATE_ACTION = "{% url 'core:customer_adjustment_create' customer.pk %}";

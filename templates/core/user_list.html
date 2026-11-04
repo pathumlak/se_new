@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 
 {% block title %}Users · Senovka Plastics{% endblock %}
 {% block header %}Users{% endblock %}
@@ -10,14 +11,14 @@
   <p class="text-sm text-slate-500">
     Staff accounts. There is no self-registration — every account is created here.
   </p>
-  <a href="{% url 'core:user_create' %}"
+  {% permitted 'user_create' 'GET' %}<a href="{% url 'core:user_create' %}"
      class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
             text-sm font-semibold text-white hover:bg-slate-800">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
     </svg>
     Create User
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
@@ -81,15 +82,15 @@
 
             <td class="whitespace-nowrap px-4 py-3 text-right">
               <div class="flex justify-end gap-1">
-                <a href="{% url 'core:user_edit' row.pk %}"
+                {% permitted 'user_edit' 'GET' %}<a href="{% url 'core:user_edit' row.pk %}"
                    class="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
-                </a>
+                </a>{% endpermitted %}
 
-                <a href="{% url 'core:user_set_password' row.pk %}"
+                {% permitted 'user_set_password' 'GET' %}<a href="{% url 'core:user_set_password' row.pk %}"
                    class="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Change Password
-                </a>
+                </a>{% endpermitted %}
 
                 {% comment %}
                 No deactivate button on your own row: user_deactivate refuses it
@@ -102,20 +103,20 @@
                     Deactivate
                   </span>
                 {% elif row.is_active %}
-                  <button type="button"
+                  {% permitted 'user_deactivate' %}<button type="button"
                           data-url="{% url 'core:user_deactivate' row.pk %}"
                           data-username="{{ row.username }}"
                           class="js-deactivate rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50">
                     Deactivate
-                  </button>
+                  </button>{% endpermitted %}
                 {% else %}
-                  <form method="post" action="{% url 'core:user_activate' row.pk %}" class="inline">
+                  {% permitted 'user_activate' 'POST' %}<form method="post" action="{% url 'core:user_activate' row.pk %}" class="inline">
                     {% csrf_token %}
                     <button type="submit"
                             class="rounded-md px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
                       Activate
                     </button>
-                  </form>
+                  </form>{% endpermitted %}
                 {% endif %}
 
                 {% comment %}
@@ -130,12 +131,12 @@
                     Delete
                   </span>
                 {% else %}
-                  <button type="button"
+                  {% permitted 'user_delete' %}<button type="button"
                           data-url="{% url 'core:user_delete' row.pk %}"
                           data-username="{{ row.username }}"
                           class="js-delete rounded-md px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50">
                     Delete
-                  </button>
+                  </button>{% endpermitted %}
                 {% endif %}
               </div>
             </td>
@@ -144,9 +145,9 @@
           <tr>
             <td colspan="6" class="px-4 py-12 text-center">
               <p class="text-sm text-slate-500">No users yet.</p>
-              <a href="{% url 'core:user_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+              {% permitted 'user_create' 'GET' %}<a href="{% url 'core:user_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                 Create the first one
-              </a>
+              </a>{% endpermitted %}
             </td>
           </tr>
         {% endfor %}

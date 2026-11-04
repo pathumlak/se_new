@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Return Items List · Senovka Plastics{% endblock %}
+{% block header %}Return Items List{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <div>
+    <h2 class="text-xl font-semibold text-slate-900">Customer returns</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      Goods sent back by customers. Each return is credited to the customer's balance;
+      every line except Damaged goes back into stock.
+    </p>
+  </div>
+
+  <form method="get" class="flex flex-wrap items-end gap-2 text-sm">
+    <div>
+      <label for="q" class="mb-1 block text-xs font-medium text-slate-500">Search</label>
+      <input type="search" id="q" name="q" value="{{ query }}" placeholder="RET no or customer"
+             class="w-44 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <div>
+      <label for="customer" class="mb-1 block text-xs font-medium text-slate-500">Customer</label>
+      <select id="customer" name="customer"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+        <option value="">All customers</option>
+        {% for c in customers %}
+          <option value="{{ c.pk }}" {% if customer_id == c.pk|stringformat:'s' %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="month" class="mb-1 block text-xs font-medium text-slate-500">Month</label>
+      <input type="month" id="month" name="month"
+             value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+             class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+    </div>
+    <button type="submit" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Apply</button>
+    <a href="{% url 'core:customer_return_list' %}?month=all"
+       class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">All time</a>
+    <a href="{% url 'core:customer_return_create' %}"
+       class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      Return Items
+    </a>
+  </form>
+</div>
+
+<div class="mb-4 grid gap-3 sm:grid-cols-2">
+  <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Returns · {{ month_filter.label }}</p>
+    <p class="mt-1 text-2xl font-semibold text-slate-900">{{ total_count }}</p>
+  </div>
+  <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Total credited to customers</p>
+    <p class="mt-1 text-2xl font-semibold text-violet-700">{{ total_value|floatformat:2|intcomma }}</p>
+  </div>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Return No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Items</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Back to stock</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Damaged</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Return value</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Balance after</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for ret in returns %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+              <a href="{% url 'core:customer_return_detail' ret.pk %}" class="hover:underline">{{ ret.reference_no }}</a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ ret.return_date|date:"j M Y" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-900">
+              <a href="{% url 'core:customer_ledger' ret.customer_id %}" class="hover:underline">{{ ret.customer.name }}</a>
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+              {% if ret.bill %}
+                <a href="{% url 'core:bill_detail' ret.bill_id %}" class="hover:underline">#{% if ret.bill.bill_number %}{{ ret.bill.bill_number|stringformat:"04d" }}{% else %}{{ ret.bill_id|stringformat:"04d" }}{% endif %}</a>
+              {% else %}
+                <span class="text-slate-300">—</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ ret.item_count }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-emerald-700">+{{ ret.restocked_qty|floatformat:"-3" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right {% if ret.damaged_qty %}text-rose-600{% else %}text-slate-300{% endif %}">{{ ret.damaged_qty|floatformat:"-3" }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">{{ ret.total_amount|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ ret.balance_after|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <a href="{% url 'core:customer_return_detail' ret.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="10" class="px-4 py-12 text-center text-sm text-slate-500">
+              No returns {% if is_filtered %}match these filters{% else %}recorded yet{% endif %}.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

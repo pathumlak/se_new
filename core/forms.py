@@ -322,10 +322,12 @@ class CustomerForm(forms.ModelForm):
             "credit_limit": "How much this customer may owe before new credit sales should be refused.",
         }
 
-    def __init__(self, *args, is_super_admin=False, **kwargs):
+    def __init__(self, *args, is_super_admin=False, allow_balance=False, **kwargs):
         super().__init__(*args, **kwargs)
         if not is_super_admin:
             del self.fields["credit_limit"]
+        if not (is_super_admin or allow_balance):
+            self.fields.pop("balance", None)
 
     def clean_name(self):
         """Collapse surrounding whitespace so ' Nimal ' and 'Nimal' don't read

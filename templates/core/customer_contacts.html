@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Customer Details - Senovka Plastics{% endblock %}
@@ -55,7 +56,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
   <div class="list-panel">
     <div class="list-panel-header">
       <h2>Customer Directory</h2>
-      <form method="get" action="{% url 'core:customer_contacts' %}">
+      {% permitted 'customer_contacts' 'GET' %}<form method="get" action="{% url 'core:customer_contacts' %}">
         {% if selected %}<input type="hidden" name="pk" value="{{ selected.pk }}">{% endif %}
         <div class="search-box">
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -63,11 +64,11 @@ textarea.field-input{resize:vertical;min-height:90px;}
           </svg>
           <input type="text" name="q" value="{{ query }}" placeholder="Name, phone or email..." autocomplete="off" id="search-input">
         </div>
-      </form>
+      </form>{% endpermitted %}
     </div>
     <div class="customer-list">
       {% for c in customers %}
-        <a href="{% url 'core:customer_contacts' %}?{% if query %}q={{ query }}&{% endif %}pk={{ c.pk }}"
+        {% permitted 'customer_contacts' 'GET' %}<a href="{% url 'core:customer_contacts' %}?{% if query %}q={{ query }}&{% endif %}pk={{ c.pk }}"
            class="customer-item {% if selected and selected.pk == c.pk %}sel{% endif %}">
           <div class="c-avatar">{{ c.name|first }}</div>
           <div style="min-width:0;flex:1">
@@ -75,7 +76,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
             <div class="c-meta">{% if c.phone %}{{ c.phone }}{% elif c.email %}{{ c.email }}{% else %}No contact info{% endif %}</div>
           </div>
           {% if c.is_supplier %}<span class="t-badge badge-s">Supp</span>{% endif %}
-        </a>
+        </a>{% endpermitted %}
       {% empty %}
         <div class="empty-list">No customers found.</div>
       {% endfor %}
@@ -105,7 +106,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
           Editing <strong>contact details only</strong>. Balance and account settings are in the full record.
         </div>
 
-        <form method="post" action="{% url 'core:customer_contacts' %}?{% if query %}q={{ query }}&{% endif %}pk={{ selected.pk }}">
+        {% permitted 'customer_contacts' 'POST' %}<form method="post" action="{% url 'core:customer_contacts' %}?{% if query %}q={{ query }}&{% endif %}pk={{ selected.pk }}">
           {% csrf_token %}
           <div class="field-group">
             <div>
@@ -154,11 +155,11 @@ textarea.field-input{resize:vertical;min-height:90px;}
               <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               Save Contact Details
             </button>
-            <a href="{% url 'core:customer_detail' selected.pk %}" style="font-size:12px;font-weight:600;color:#3b82f6;text-decoration:none">
+            {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' selected.pk %}" style="font-size:12px;font-weight:600;color:#3b82f6;text-decoration:none">
               Full Customer Record &rarr;
-            </a>
+            </a>{% endpermitted %}
           </div>
-        </form>
+        </form>{% endpermitted %}
 
         {% if selected.phone or selected.email or selected.address %}
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid #f1f5f9;display:flex;flex-wrap:wrap;gap:16px">

@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Cheques · Senovka Plastics{% endblock %}
+{% block header %}Cheques{% endblock %}
+
+{% block content %}
+
+{% include 'partials/cheque_tabs.html' %}
+
+<!-- Toolbar -->
+<form method="get" class="mb-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+  <div>
+    <label for="month" class="mb-1.5 block text-xs font-medium text-slate-600">Received month</label>
+    <input type="month" id="month" name="month"
+           value="{% if not month_filter.is_all_time %}{{ month_filter.param }}{% endif %}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  
+  {% if month_filter.is_all_time %}<input type="hidden" id="month-all" name="month" value="all">{% endif %}
+
+  <div>
+    <label for="sort" class="mb-1.5 block text-xs font-medium text-slate-600">Sort by</label>
+    <select id="sort" name="sort"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="received_desc" {% if sort == 'received_desc' %}selected{% endif %}>Received date (newest)</option>
+      <option value="received_asc"  {% if sort == 'received_asc' %}selected{% endif %}>Received date (oldest)</option>
+      <option value="customer"      {% if sort == 'customer' %}selected{% endif %}>Customer name (A–Z)</option>
+    </select>
+  </div>
+
+  <div>
+    <label for="status" class="mb-1.5 block text-xs font-medium text-slate-600">Status</label>
+    <select id="status" name="status"
+            class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">Any status</option>
+      {% for value, label in statuses %}
+        <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="customer" class="mb-1.5 block text-xs font-medium text-slate-600">Customer</label>
+    <select id="customer" name="customer"
+            class="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm
+                   focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      <option value="">All customers</option>
+      {% for customer in customers %}
+        <option value="{{ customer.pk }}" {% if customer.pk == selected_customer %}selected{% endif %}>
+          {{ customer.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="from_date" class="mb-1.5 block text-xs font-medium text-slate-600">Maturity from</label>
+    <input type="date" id="from_date" name="from_date" value="{{ from_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+  <div>
+    <label for="to_date" class="mb-1.5 block text-xs font-medium text-slate-600">Maturity to</label>
+    <input type="date" id="to_date" name="to_date" value="{{ to_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm
+                  focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+  </div>
+
+  <div class="flex gap-2">
+    <button type="submit"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      Filter
+    </button>
+    {% if is_filtered %}
+      <a href="{% url 'core:cheque_list' %}"
+         class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
+        Clear
+      </a>
+    {% endif %}
+  </div>
+
+  {# Excel download — forwards whatever filters are active right now #}
+  <a id="excel-download-btn"
+     href="{% url 'core:cheque_list_excel' %}"
+     class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round"
+            d="M12 16v-8m0 8l-3-3m3 3l3-3M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1"/>
+    </svg>
+    Download Excel
+  </a>
+</form>
+
+<!-- Scope line: what window you're looking at, quick jumps either side. -->
+<div class="mb-3 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+  <span class="font-medium text-slate-800">
+    Received: {{ month_filter.label }}
+  </span>
+  {# Every other filter rides along (customer, status, sort, maturity dates); only the month changes and the page resets. #}
+  {% if not month_filter.is_all_time %}
+    <a href="{% querystring month=month_filter.previous|date:'Y-m' page=None %}"
+       class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">← {{ month_filter.previous|date:'F Y' }}</a>
+    <a href="{% querystring month=month_filter.next|date:'Y-m' page=None %}"
+       class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">{{ month_filter.next|date:'F Y' }} →</a>
+    <a href="{% querystring month='all' page=None %}"
+       class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">All months</a>
+  {% else %}
+    <a href="{% querystring month=None page=None %}"
+       class="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">Back to this month</a>
+  {% endif %}
+</div>
+
+{% if not month_filter.is_all_time and today >= month_filter.start and today <= month_filter.end %}
+  <p class="mb-3 text-xs text-slate-500">
+    Also showing pending cheques received in earlier months that are overdue or due within
+    {{ warning_days }} days — tagged <span class="rounded bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-700">earlier month</span>.
+  </p>
+{% endif %}
+
+{% if maturity_summary.total %}
+  <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+    <p>
+      <span class="font-semibold">{{ maturity_summary.total }} pending cheque{{ maturity_summary.total|pluralize }}</span>
+      need{{ maturity_summary.total|pluralize:"s," }} attention:
+      {% if maturity_summary.overdue %}<span class="font-semibold text-rose-700">{{ maturity_summary.overdue }} overdue</span>{% endif %}
+      {% if maturity_summary.due_today %}· <span class="font-semibold">{{ maturity_summary.due_today }} due today</span>{% endif %}
+      {% if maturity_summary.soon %}· {{ maturity_summary.soon }} due within {{ warning_days }} days{% endif %}
+      {% if maturity_summary.earlier %}· {{ maturity_summary.earlier }} from earlier months{% endif %}
+    </p>
+    <span class="ml-auto flex gap-2">
+      <a href="{% url 'core:cheque_maturity_soon' %}"
+         class="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 ring-1 ring-inset ring-amber-300 hover:bg-amber-100">
+        Open Maturity Soon
+      </a>
+      <a href="{% url 'core:cheque_maturity_soon' %}?check=1"
+         class="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700">
+        Maturity Check
+      </a>
+    </span>
+  </div>
+{% endif %}
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<!-- Table. Cheques are grouped by (received date + customer): one customer's
+     same-day drop-off is a single block, whatever the individual maturity
+     dates are. The group header carries the shared received date + customer;
+     each row keeps its own cheque no, bill, maturity and status. -->
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Cheque No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bill No</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Bank</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Branch</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Maturity</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      {% for group in groups %}
+        <tbody class="divide-y divide-slate-100 border-t-2 border-slate-200">
+          {# Group header: shared received date + customer for the whole block. #}
+          <tr class="bg-slate-50/80">
+            <td colspan="8" class="px-4 py-2.5">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+                  <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/>
+                  </svg>
+                  {{ group.received_date|date:"j M Y" }}
+                </span>
+                <span class="text-slate-300">·</span>
+                <a href="{% url 'core:customer_detail' group.customer.pk %}"
+                   class="text-sm font-semibold text-slate-800 hover:underline">{{ group.customer.name }}</a>
+                {% if group.customer.is_supplier %}
+                  <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Issued</span>
+                {% endif %}
+                <span class="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                  {{ group.cheques|length }} cheque{{ group.cheques|length|pluralize }}
+                </span>
+                {% if group.due_count %}
+                  <span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                    {{ group.due_count }} due
+                  </span>
+                {% endif %}
+                <span class="ml-auto text-sm font-semibold text-slate-900">
+                  Rs {{ group.total|floatformat:2|intcomma }}
+                </span>
+              </div>
+            </td>
+          </tr>
+
+          {% for cheque in group.cheques %}
+            {# Pending and maturing: the row the operator is meant to act on today. #}
+            <tr class="{% if cheque.maturity_state == 'overdue' %}bg-rose-50 hover:bg-rose-100{% elif cheque.is_due_soon %}bg-amber-50 hover:bg-amber-100{% else %}hover:bg-slate-50{% endif %}">
+              <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+                {{ cheque.cheque_no }}
+                {% if cheque.is_earlier_month %}
+                  <span class="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700"
+                        title="Received {{ cheque.received_date|date:'j M Y' }}">earlier month</span>
+                {% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3">
+                {% if cheque.bill_ref %}
+                  <a href="{% url 'core:bill_detail' cheque.bill_ref %}"
+                     class="font-medium text-slate-700 hover:underline">#{{ cheque.bill_ref }}</a>
+                {% elif cheque.supplier_bill_ref %}
+                  <a href="{% url 'core:supplier_bill_detail' cheque.supplier_bill_ref %}"
+                     class="font-medium text-slate-700 hover:underline">#{{ cheque.supplier_bill_ref }}</a>
+                {% else %}
+                  <span class="text-slate-300">—</span>
+                {% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ cheque.bank_name }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-slate-600">
+                {% if cheque.branch %}{{ cheque.branch }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-slate-900">
+                {{ cheque.amount|floatformat:2|intcomma }}
+              </td>
+              <td class="whitespace-nowrap px-4 py-3">
+                {% include 'partials/cheque_maturity.html' %}
+              </td>
+
+              <td class="whitespace-nowrap px-4 py-3">
+                {% if cheque.status == 'pending' %}
+                  <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Pending</span>
+                {% elif cheque.status == 'deposited' %}
+                  <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Deposited</span>
+                {% elif cheque.status == 'bounced' %}
+                  <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">Returned</span>
+                {% else %}
+                  <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Held</span>
+                {% endif %}
+              </td>
+
+              <td class="whitespace-nowrap px-4 py-3 text-right">
+                {% include 'partials/cheque_actions.html' %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      {% empty %}
+        <tbody>
+          <tr>
+            <td colspan="8" class="px-4 py-12 text-center">
+              {% if is_filtered %}
+                <p class="text-sm text-slate-500">No cheques received in {{ month_filter.label }} match your filters.</p>
+                <a href="{% url 'core:cheque_list' %}?month=all" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                  Look across all months
+                </a>
+              {% else %}
+                <p class="text-sm text-slate-500">No cheques yet.</p>
+                <p class="mt-1 text-xs text-slate-400">Cheques appear here when a bill is paid with one.</p>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+{% include 'partials/cheque_modals.html' %}
+
+{% endblock %}
+
+{% block extra_js %}
+{% include 'partials/cheque_modals_js.html' %}
+<script>
+  // ---- keep the Excel download link in sync with the filter form ----
+  (function () {
+    const btn      = document.getElementById('excel-download-btn');
+    const BASE_URL = "{% url 'core:cheque_list_excel' %}";
+    const fields   = ['month', 'sort', 'status', 'customer', 'from_date', 'to_date'];
+
+    function syncHref() {
+      const params = new URLSearchParams();
+      fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el && el.value) params.set(id, el.value);
+      });
+      const monthAll = document.getElementById('month-all');
+      if (monthAll && !monthAll.disabled) params.set('month', 'all');
+      const qs = params.toString();
+      btn.href = BASE_URL + (qs ? '?' + qs : '');
+    }
+
+    // Choosing a month overrides "all months"; clearing the box goes back to it.
+    const monthEl  = document.getElementById('month');
+    const monthAll = document.getElementById('month-all');
+    if (monthEl && monthAll) {
+      monthEl.addEventListener('input', function () { monthAll.disabled = !!monthEl.value; });
+    }
+
+    fields.forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', syncHref);
+    });
+    syncHref(); // initialise on page load
+  })();
+</script>
+{% endblock %}

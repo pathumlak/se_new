@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load static %}
 
 {% block title %}Billing Settings · Senovka Plastics{% endblock %}
@@ -21,14 +22,14 @@
         </p>
       </div>
       {% if sample_bill_id %}
-        <a href="{% url 'core:bill_print' sample_bill_id %}?noprint=1" target="_blank"
+        {% permitted 'bill_print' 'GET' %}<a href="{% url 'core:bill_print' sample_bill_id %}?noprint=1" target="_blank"
            class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
           Preview latest bill
-        </a>
+        </a>{% endpermitted %}
       {% endif %}
     </div>
   </div>
@@ -156,10 +157,10 @@
 
     <!-- Sticky actions -->
     <div class="sticky bottom-4 z-10 flex justify-end gap-3 rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur">
-      <a href="{% url 'core:dashboard' %}"
+      {% permitted 'dashboard' 'GET' %}<a href="{% url 'core:dashboard' %}"
          class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
         Cancel
-      </a>
+      </a>{% endpermitted %}
       <button type="submit"
               class="rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-800">
         Save settings

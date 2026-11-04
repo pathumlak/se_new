@@ -5,7 +5,7 @@
 <div class="grid gap-6 lg:grid-cols-[220px_1fr]">
   <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
     <h2 class="mb-3 text-sm font-semibold text-slate-900">Managers</h2>
-    <input id="manager-search" class="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search managers">
+    <input id="manager-search" class="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" aria-label="Search managers" placeholder="Search managers">
     <div class="space-y-1">
       {% for manager in managers %}
       <a data-manager href="{% url 'core:manager_permissions_for_user' manager.pk %}"
@@ -22,9 +22,10 @@
       <p class="text-sm text-slate-500">{{ assigned|length }} permissions granted</p></div>
       <a href="{% url 'core:permission_templates' %}" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium">Permission templates</a>
     </div>
-    <form method="post">
+    <p class="mb-4 text-sm text-slate-600">Choose the tasks this manager can perform. Required view access is added when you save. “Manage” grants all tasks in that section. User administration, audit administration and the database console remain restricted to super admins.</p>
+    <form method="post" id="permissions-form">
       {% csrf_token %}
-      <input id="permission-search" class="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Search permissions">
+      <input id="permission-search" class="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" aria-label="Search permissions" placeholder="Search permissions">
       <div class="space-y-4">
         {% for module, permissions in permission_groups %}
         <div class="permission-module rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -43,7 +44,7 @@
         </div>
         {% endfor %}
       </div>
-      <button class="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Save permissions</button>
+      <button type="submit" class="sticky bottom-4 mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Save permissions</button>
     </form>
     <div class="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 class="mb-3 font-semibold text-slate-900">Recent changes</h3>
@@ -59,7 +60,8 @@ document.getElementById('manager-search')?.addEventListener('input', function ()
 });
 document.getElementById('permission-search')?.addEventListener('input', function () {
   const q = this.value.toLowerCase();
-  document.querySelectorAll('.permission-row').forEach(x => x.hidden = !x.dataset.search.includes(q));
+  document.querySelectorAll('.permission-row').forEach(x => { x.hidden = !x.dataset.search.includes(q); x.style.display = x.hidden ? 'none' : ''; });
+  document.querySelectorAll('.permission-module').forEach(x => x.hidden = ![...x.querySelectorAll('.permission-row')].some(row => !row.hidden));
 });
 document.querySelectorAll('.module-toggle').forEach(button => button.addEventListener('click', function () {
   const boxes = this.closest('.permission-module').querySelectorAll('input');

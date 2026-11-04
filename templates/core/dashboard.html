@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Dashboard · Senovka Plastics{% endblock %}
@@ -157,18 +158,18 @@
       <p class="mt-1 text-[12px] text-slate-400">{{ today|date:"l, d F Y" }} · Senovka Plastics ERP</p>
     </div>
     <div class="flex flex-wrap gap-2">
-      <a href="{% url 'core:bill_create' %}" class="hero-quick">
+      {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}" class="hero-quick">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
         New Bill
-      </a>
-      <a href="{% url 'core:cheque_list' %}" class="hero-quick">
+      </a>{% endpermitted %}
+      {% permitted 'cheque_list' 'GET' %}<a href="{% url 'core:cheque_list' %}" class="hero-quick">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9V6.75A2.25 2.25 0 014.5 4.5h15a2.25 2.25 0 012.25 2.25V17.25A2.25 2.25 0 0119.5 19.5h-15a2.25 2.25 0 01-2.25-2.25V9z"/></svg>
         Cheques
-      </a>
-      <a href="{% url 'core:sales_report' %}" class="hero-quick">
+      </a>{% endpermitted %}
+      {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="hero-quick">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
         Reports
-      </a>
+      </a>{% endpermitted %}
     </div>
   </div>
 </div>
@@ -176,7 +177,7 @@
 <!-- ═══════════════════ PRIMARY KPI CARDS ═══════════════════ -->
 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
-  <a href="{% url 'core:outstanding_report' %}" class="stat-card card-danger reveal">
+  {% permitted 'outstanding_report' 'GET' %}<a href="{% url 'core:outstanding_report' %}" class="stat-card card-danger reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Total Outstanding</p>
@@ -190,9 +191,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:bill_list' %}" class="stat-card card-success reveal">
+  {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="stat-card card-success reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Today's Sales</p>
@@ -206,9 +207,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:cash_drawer' %}" class="stat-card card-blue reveal">
+  {% permitted 'cash_drawer' 'GET' %}<a href="{% url 'core:cash_drawer' %}" class="stat-card card-blue reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Cash Drawer</p>
@@ -222,9 +223,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:cheque_maturity_soon' %}" class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} reveal {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
+  {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}" class="stat-card {% if maturing_count %}card-amber{% else %}card-blue{% endif %} reveal {% if maturing_count %}!bg-amber-50 !border-amber-200{% endif %}">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider {% if maturing_count %}text-amber-600{% else %}text-slate-400{% endif %} mb-2">Cheques Maturing</p>
@@ -238,13 +239,13 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 <!-- ═══════════════════ SECONDARY KPI CARDS ═══════════════════ -->
 <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
-  <a href="{% url 'core:product_list' %}?view=stock" class="stat-card {% if low_stock_count %}card-amber{% else %}card-blue{% endif %} reveal">
+  {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}?view=stock" class="stat-card {% if low_stock_count %}card-amber{% else %}card-blue{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Low Stock</p>
@@ -256,9 +257,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:product_list' %}" class="stat-card {% if out_of_stock_count %}card-danger{% else %}card-success{% endif %} reveal">
+  {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}" class="stat-card {% if out_of_stock_count %}card-danger{% else %}card-success{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Out of Stock</p>
@@ -270,9 +271,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:sales_report' %}" class="stat-card card-blue reveal">
+  {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="stat-card card-blue reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">{{ month_label }} Sales</p>
@@ -284,9 +285,9 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 
-  <a href="{% url 'core:sales_report' %}" class="stat-card {% if month_delta_pct >= 0 %}card-success{% else %}card-danger{% endif %} reveal">
+  {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="stat-card {% if month_delta_pct >= 0 %}card-success{% else %}card-danger{% endif %} reveal">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">vs Last Month</p>
@@ -304,7 +305,7 @@
       </span>
     </div>
     <svg class="stat-go h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 <!-- ═══════════════════ CHARTS ROW 1 ═══════════════════ -->
@@ -345,7 +346,7 @@
         <p class="chart-card-title">Revenue by Month</p>
         <p class="text-[11px] text-slate-400 mt-0.5">Last 6 months</p>
       </div>
-      <a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>
+      {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>{% endpermitted %}
     </div>
     <div class="chart-body" style="height:250px"><canvas id="monthlyRevenueChart"></canvas></div>
   </div>
@@ -371,7 +372,7 @@
       <p class="chart-card-title">Top Products</p>
       <p class="text-[11px] text-slate-400 mt-0.5">{{ month_label }} · by revenue</p>
     </div>
-    <a href="{% url 'core:sales_report' %}" class="section-link">Sales →</a>
+    {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="section-link">Sales →</a>{% endpermitted %}
   </div>
   <div class="chart-body" style="height:230px"><canvas id="topProductsChart"></canvas></div>
 </div>
@@ -384,12 +385,12 @@
       <svg class="h-3.5 w-3.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
     </span>
     <h2 class="text-[13px] font-semibold text-slate-800">Cheques maturing within {{ warning_days }} day{{ warning_days|pluralize }}</h2>
-    <a href="{% url 'core:cheque_maturity_soon' %}" class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>
+    {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}" class="text-[11px] font-semibold uppercase tracking-wide text-blue-500 hover:text-blue-700 ml-1">Manage</a>{% endpermitted %}
     <button type="button" id="dismiss-cheques" class="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition shadow-sm">Dismiss</button>
   </div>
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
     {% for cheque in maturing_cheques %}
-      <a href="{% url 'core:cheque_maturity_soon' %}" class="cheque-card">
+      {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}" class="cheque-card">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="truncate text-[13px] font-bold text-amber-900">Cheque #{{ cheque.cheque_no }}</p>
@@ -401,7 +402,7 @@
           <span class="text-[11px] text-amber-600">Matures {{ cheque.maturity_date|date:"d M Y" }}</span>
           <span class="rounded-full bg-amber-200 px-2.5 py-0.5 text-[10px] font-bold text-amber-900">{% if cheque.maturity_date == today %}Due today{% else %}in {{ cheque.maturity_date|timeuntil:today }}{% endif %}</span>
         </div>
-      </a>
+      </a>{% endpermitted %}
     {% endfor %}
   </div>
 </section>
@@ -413,7 +414,7 @@
     <div class="section-card">
       <div class="section-header">
         <h2 class="section-title">Recent Bills</h2>
-        <a href="{% url 'core:bill_list' %}" class="section-link">View all →</a>
+        {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}" class="section-link">View all →</a>{% endpermitted %}
       </div>
       <div class="overflow-x-auto">
         <table class="data-table min-w-full text-sm">
@@ -444,7 +445,7 @@
                 </td>
               </tr>
             {% empty %}
-              <tr><td colspan="5" class="px-5 py-12 text-center text-[13px] text-slate-400">No bills yet. <a href="{% url 'core:bill_create' %}" class="text-blue-500 font-medium hover:underline">Create one</a></td></tr>
+              <tr><td colspan="5" class="px-5 py-12 text-center text-[13px] text-slate-400">No bills yet. {% permitted 'bill_create' 'GET' %}<a href="{% url 'core:bill_create' %}" class="text-blue-500 font-medium hover:underline">Create one</a>{% endpermitted %}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -456,19 +457,19 @@
     <div class="section-card h-full">
       <div class="section-header">
         <h2 class="section-title">Top Outstanding</h2>
-        <a href="{% url 'core:ledger_index' %}" class="section-link">Ledger →</a>
+        {% permitted 'ledger_index' 'GET' %}<a href="{% url 'core:ledger_index' %}" class="section-link">Ledger →</a>{% endpermitted %}
       </div>
       <ul>
         {% for customer in top_customers %}
           <li class="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 transition" style="border-bottom:1px solid #f8fafc">
-            <a href="{% url 'core:customer_ledger' customer.pk %}" class="flex flex-1 items-center gap-3 min-w-0">
+            {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}" class="flex flex-1 items-center gap-3 min-w-0">
               <span class="rank-bubble {% if forloop.counter == 1 %}rank-1{% elif forloop.counter == 2 %}rank-2{% elif forloop.counter == 3 %}rank-3{% else %}rank-n{% endif %}">{{ forloop.counter }}</span>
               <div class="min-w-0 flex-1">
                 <p class="truncate text-[13px] font-semibold text-slate-800">{{ customer.name }}</p>
                 {% if customer.phone %}<p class="truncate text-[11px] text-slate-400">{{ customer.phone }}</p>{% endif %}
               </div>
               <p class="shrink-0 text-[13px] font-bold text-rose-600">Rs {{ customer.owed|floatformat:2|intcomma }}</p>
-            </a>
+            </a>{% endpermitted %}
           </li>
         {% empty %}
           <li class="px-5 py-12 text-center text-[13px] text-slate-400">No outstanding balances.</li>
@@ -487,7 +488,7 @@
           <h2 class="section-title">Low Stock</h2>
           <p class="text-[11px] text-slate-400 mt-0.5">Products at or below {{ low_stock_threshold|intcomma }}</p>
         </div>
-        <a href="{% url 'core:product_list' %}?view=stock" class="section-link">All stock →</a>
+        {% permitted 'product_list' 'GET' %}<a href="{% url 'core:product_list' %}?view=stock" class="section-link">All stock →</a>{% endpermitted %}
       </div>
       <ul>
         {% for product in low_stock_items %}
@@ -496,7 +497,7 @@
               <svg class="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
             </span>
             <div class="min-w-0 flex-1">
-              <a href="{% url 'core:product_prices' product.pk %}" class="text-[13px] font-semibold text-slate-800 hover:text-blue-600 truncate block">{{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}</a>
+              {% permitted 'product_prices' 'GET' %}<a href="{% url 'core:product_prices' product.pk %}" class="text-[13px] font-semibold text-slate-800 hover:text-blue-600 truncate block">{{ product.name }}{% if product.size %} · {{ product.size }}{% endif %}</a>{% endpermitted %}
               <p class="text-[11px] text-slate-400 mt-0.5">{{ product.qty|floatformat:"-3" }} left · reorder recommended</p>
             </div>
             <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Low</span>
@@ -519,7 +520,7 @@
           <h2 class="section-title">Top Sellers</h2>
           <p class="text-[11px] text-slate-400 mt-0.5">{{ month_label }} · by revenue</p>
         </div>
-        <a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>
+        {% permitted 'sales_report' 'GET' %}<a href="{% url 'core:sales_report' %}" class="section-link">Report →</a>{% endpermitted %}
       </div>
       <ul>
         {% for row in top_products %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Cheques · Senovka Plastics{% endblock %}
@@ -76,15 +77,15 @@
       Filter
     </button>
     {% if is_filtered %}
-      <a href="{% url 'core:cheque_list' %}"
+      {% permitted 'cheque_list' 'GET' %}<a href="{% url 'core:cheque_list' %}"
          class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
         Clear
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
   </div>
 
   {# Excel download — forwards whatever filters are active right now #}
-  <a id="excel-download-btn"
+  {% permitted 'cheque_list_excel' 'GET' %}<a id="excel-download-btn"
      href="{% url 'core:cheque_list_excel' %}"
      class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -92,7 +93,7 @@
             d="M12 16v-8m0 8l-3-3m3 3l3-3M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1"/>
     </svg>
     Download Excel
-  </a>
+  </a>{% endpermitted %}
 </form>
 
 <!-- Scope line: what window you're looking at, quick jumps either side. -->
@@ -132,14 +133,14 @@
       {% if maturity_summary.earlier %}· {{ maturity_summary.earlier }} from earlier months{% endif %}
     </p>
     <span class="ml-auto flex gap-2">
-      <a href="{% url 'core:cheque_maturity_soon' %}"
+      {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}"
          class="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 ring-1 ring-inset ring-amber-300 hover:bg-amber-100">
         Open Maturity Soon
-      </a>
-      <a href="{% url 'core:cheque_maturity_soon' %}?check=1"
+      </a>{% endpermitted %}
+      {% permitted 'cheque_maturity_soon' 'GET' %}<a href="{% url 'core:cheque_maturity_soon' %}?check=1"
          class="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700">
         Maturity Check
-      </a>
+      </a>{% endpermitted %}
     </span>
   </div>
 {% endif %}
@@ -178,8 +179,8 @@
                   {{ group.received_date|date:"j M Y" }}
                 </span>
                 <span class="text-slate-300">·</span>
-                <a href="{% url 'core:customer_detail' group.customer.pk %}"
-                   class="text-sm font-semibold text-slate-800 hover:underline">{{ group.customer.name }}</a>
+                {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' group.customer.pk %}"
+                   class="text-sm font-semibold text-slate-800 hover:underline">{{ group.customer.name }}</a>{% endpermitted %}
                 {% if group.customer.is_supplier %}
                   <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Issued</span>
                 {% endif %}
@@ -210,11 +211,11 @@
               </td>
               <td class="whitespace-nowrap px-4 py-3">
                 {% if cheque.bill_ref %}
-                  <a href="{% url 'core:bill_detail' cheque.bill_ref %}"
-                     class="font-medium text-slate-700 hover:underline">#{{ cheque.bill_ref }}</a>
+                  {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' cheque.bill_ref %}"
+                     class="font-medium text-slate-700 hover:underline">#{{ cheque.bill_ref }}</a>{% endpermitted %}
                 {% elif cheque.supplier_bill_ref %}
-                  <a href="{% url 'core:supplier_bill_detail' cheque.supplier_bill_ref %}"
-                     class="font-medium text-slate-700 hover:underline">#{{ cheque.supplier_bill_ref }}</a>
+                  {% permitted 'supplier_bill_detail' 'GET' %}<a href="{% url 'core:supplier_bill_detail' cheque.supplier_bill_ref %}"
+                     class="font-medium text-slate-700 hover:underline">#{{ cheque.supplier_bill_ref }}</a>{% endpermitted %}
                 {% else %}
                   <span class="text-slate-300">—</span>
                 {% endif %}
@@ -254,9 +255,9 @@
             <td colspan="8" class="px-4 py-12 text-center">
               {% if is_filtered %}
                 <p class="text-sm text-slate-500">No cheques received in {{ month_filter.label }} match your filters.</p>
-                <a href="{% url 'core:cheque_list' %}?month=all" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'cheque_list' 'GET' %}<a href="{% url 'core:cheque_list' %}?month=all" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Look across all months
-                </a>
+                </a>{% endpermitted %}
               {% else %}
                 <p class="text-sm text-slate-500">No cheques yet.</p>
                 <p class="mt-1 text-xs text-slate-400">Cheques appear here when a bill is paid with one.</p>

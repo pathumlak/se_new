@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Settle balance · {{ customer.name }} · Senovka Plastics{% endblock %}
@@ -8,9 +9,9 @@
 <div class="max-w-4xl">
 
   <nav class="mb-4 flex items-center gap-2 text-sm text-slate-500">
-    <a href="{% url 'core:customer_ledger' customer.pk %}" class="hover:text-slate-900">
+    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}" class="hover:text-slate-900">
       {{ customer.name }} · Ledger
-    </a>
+    </a>{% endpermitted %}
     <span class="text-slate-300">/</span>
     <span class="text-slate-700">Settle balance</span>
   </nav>
@@ -59,7 +60,7 @@
             {% for bill in outstanding_bills %}
               <tr>
                 <td class="whitespace-nowrap px-3 py-2 font-medium text-slate-800">
-                  <a href="{% url 'core:bill_detail' bill.pk %}" class="hover:underline">#{{ bill.bill_number|default:bill.pk }}</a>
+                  {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}" class="hover:underline">#{{ bill.bill_number|default:bill.pk }}</a>{% endpermitted %}
                 </td>
                 <td class="whitespace-nowrap px-3 py-2 text-slate-600">{{ bill.bill_date|date:"j M Y" }}</td>
                 <td class="whitespace-nowrap px-3 py-2 text-right text-slate-900">{{ bill.total_amount|floatformat:2|intcomma }}</td>
@@ -159,10 +160,10 @@
     </div>
 
     <div class="mt-6 flex items-center justify-end gap-2 border-t border-slate-200 pt-5">
-      <a href="{% url 'core:customer_ledger' customer.pk %}"
+      {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}"
          class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
         Cancel
-      </a>
+      </a>{% endpermitted %}
       <button type="submit"
               class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
         Record settlement

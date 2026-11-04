@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 
 {% block title %}Edit Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
 {% block header %}Edit Bill #{{ bill.bill_number|default:bill.pk }}{% endblock %}
@@ -6,13 +7,13 @@
 {% block content %}
 
 <div class="mx-auto max-w-xl">
-  <a href="{% url 'core:bill_detail' bill.pk %}"
+  {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}"
      class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
     </svg>
     Bill #{{ bill.bill_number|default:bill.pk }}
-  </a>
+  </a>{% endpermitted %}
 
   <h2 class="mt-2 text-xl font-semibold text-slate-900">Why is this bill being edited?</h2>
   <p class="mt-1 text-sm text-slate-500">
@@ -71,10 +72,10 @@
                 class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           Confirm and Continue
         </button>
-        <a href="{% url 'core:bill_detail' bill.pk %}"
+        {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' bill.pk %}"
            class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Cancel
-        </a>
+        </a>{% endpermitted %}
       </div>
     </form>
   </div>

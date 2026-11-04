@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 
 {% block title %}Prices · {{ customer.name }} · Senovka Plastics{% endblock %}
 {% block header %}Customer Prices{% endblock %}
@@ -7,13 +8,13 @@
 
 <!-- Customer summary -->
 <div class="mb-5 min-w-0">
-  <a href="{% url 'core:customer_list' %}"
+  {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}"
      class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
     </svg>
     Customers
-  </a>
+  </a>{% endpermitted %}
 
   <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">{{ customer.name }}</h2>
 
@@ -111,9 +112,9 @@
           <tr>
             <td colspan="6" class="px-5 py-12 text-center">
               <p class="text-sm text-slate-500">No products yet.</p>
-              <a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+              {% permitted 'product_create' 'GET' %}<a href="{% url 'core:product_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                 Create the first one
-              </a>
+              </a>{% endpermitted %}
             </td>
           </tr>
         {% endfor %}

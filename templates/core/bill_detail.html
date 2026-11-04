@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Bill #{{ bill.bill_number|default:bill.pk }} · Senovka Plastics{% endblock %}
@@ -88,13 +89,13 @@
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
-    <a href="{% url 'core:bill_list' %}"
+    {% permitted 'bill_list' 'GET' %}<a href="{% url 'core:bill_list' %}"
        class="no-print inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Bills
-    </a>
+    </a>{% endpermitted %}
 
     <h2 class="mt-2 text-xl font-semibold text-slate-900">Bill #{{ bill.bill_number|default:bill.pk }}</h2>
 
@@ -102,9 +103,9 @@
       {% if bill.is_walk_in %}
         <span class="font-medium italic text-slate-900">{{ bill.walk_in_name }} (walk-in)</span>
       {% else %}
-        <a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-medium text-slate-900 hover:underline">
+        {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' bill.customer.pk %}" class="font-medium text-slate-900 hover:underline">
           {{ bill.customer.name }}
-        </a>
+        </a>{% endpermitted %}
       {% endif %}
       <span class="text-slate-300">·</span>
       <span>{{ bill.bill_date|date:"j M Y" }}</span>
@@ -135,24 +136,24 @@
 
   <div class="no-print flex shrink-0 flex-wrap gap-2">
     {% if not bill.is_walk_in %}
-      <a href="{% url 'core:customer_ledger' bill.customer.pk %}"
+      {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' bill.customer.pk %}"
          class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
         Ledger
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
     
     {% if not bill.is_walk_in and bill.status != 'cancelled' and bill.remaining_balance > 0 %}
-      <a href="{% url 'core:bill_add_payment' bill.pk %}"
+      {% permitted 'bill_add_payment' 'GET' %}<a href="{% url 'core:bill_add_payment' bill.pk %}"
          class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
         Record Payment
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
-    <a href="{% url 'core:bill_edit' bill.pk %}"
+    {% permitted 'bill_edit' 'GET' %}<a href="{% url 'core:bill_edit' bill.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Edit
-    </a>
-    {% if is_super_admin %}
-      <button type="button"
+    </a>{% endpermitted %}
+    {% if user|can_task:'bill_delete' %}
+      {% permitted 'bill_delete' %}<button type="button"
               data-delete-url="{% url 'core:bill_delete' bill.pk %}"
               data-bill="Bill #{{ bill.bill_number|default:bill.pk }}"
               data-customer="{% if bill.is_walk_in %}{{ bill.walk_in_name }} (walk-in){% else %}{{ bill.customer.name }}{% endif %}"
@@ -160,12 +161,12 @@
               data-reverses="{{ reverses }}"
               class="js-delete rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
         Delete
-      </button>
+      </button>{% endpermitted %}
     {% endif %}
-    <a href="{% url 'core:bill_print' bill.pk %}" target="_blank" rel="noopener"
+    {% permitted 'bill_print' 'GET' %}<a href="{% url 'core:bill_print' bill.pk %}" target="_blank" rel="noopener"
        class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       Print
-    </a>
+    </a>{% endpermitted %}
   </div>
 </div>
 
@@ -189,11 +190,11 @@
               <tr>
                 <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
                   {{ item.clean_name }}
-                  <a href="{% url 'core:stock_ledger' item.product.pk %}"
+                  {% permitted 'stock_ledger' 'GET' %}<a href="{% url 'core:stock_ledger' item.product.pk %}"
                      class="no-print ml-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 hover:underline"
                      title="Open the stock ledger for {{ item.clean_name }}">
                     Stock
-                  </a>
+                  </a>{% endpermitted %}
                 </td>
                 <td class="whitespace-nowrap px-4 py-3 text-slate-600">
                   {% if item.product.size %}{{ item.product.size }}{% else %}<span class="text-slate-300">—</span>{% endif %}
@@ -517,7 +518,7 @@
     </div>
   </div>
 
-{% if is_super_admin %}
+{% if user|can_task:'bill_delete' %}
   {% include "core/_bill_delete_modal.html" %}
 {% endif %}
 {% endblock %}

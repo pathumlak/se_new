@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Customer Ledger · Senovka Plastics{% endblock %}
@@ -62,10 +63,10 @@
       Search
     </button>
     {% if query %}
-      <a href="{% url 'core:ledger_index' %}"
+      {% permitted 'ledger_index' 'GET' %}<a href="{% url 'core:ledger_index' %}"
          class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
         Clear
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
   </form>
 </div>
@@ -92,9 +93,9 @@
         {% for customer in customers %}
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3">
-              <a href="{% url 'core:customer_ledger' customer.pk %}" class="font-medium text-slate-900 hover:underline">
+              {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}" class="font-medium text-slate-900 hover:underline">
                 {{ customer.name }}
-              </a>
+              </a>{% endpermitted %}
               {% if customer.is_supplier %}
                 <span class="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
                   Supplier
@@ -114,14 +115,14 @@
             </td>
 
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <a href="{% url 'core:customer_ledger' customer.pk %}"
+              {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}"
                  class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                 View
-              </a>
-              <a href="{% url 'core:customer_ledger_pdf' customer.pk %}" target="_blank"
+              </a>{% endpermitted %}
+              {% permitted 'customer_ledger_pdf' 'GET' %}<a href="{% url 'core:customer_ledger_pdf' customer.pk %}" target="_blank"
                  class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                 PDF
-              </a>
+              </a>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
@@ -129,14 +130,14 @@
             <td colspan="4" class="px-4 py-12 text-center">
               {% if query %}
                 <p class="text-sm text-slate-500">No customers match that search.</p>
-                <a href="{% url 'core:ledger_index' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'ledger_index' 'GET' %}<a href="{% url 'core:ledger_index' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Clear search
-                </a>
+                </a>{% endpermitted %}
               {% else %}
                 <p class="text-sm text-slate-500">No customers yet.</p>
-                <a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'customer_create' 'GET' %}<a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Create the first one
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
           </tr>

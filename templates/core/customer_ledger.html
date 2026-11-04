@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Ledger · {{ customer.name }} · Senovka Plastics{% endblock %}
@@ -54,13 +55,13 @@
 <!-- Header -->
 <div class="no-print mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div class="min-w-0">
-    <a href="{% url 'core:customer_detail' customer.pk %}"
+    {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' customer.pk %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       {{ customer.name }}
-    </a>
+    </a>{% endpermitted %}
     <h2 class="mt-2 truncate text-xl font-semibold text-slate-900">Ledger</h2>
     <p class="mt-1 text-sm text-slate-500">
       {% if customer.phone %}{{ customer.phone }}{% else %}<span class="text-slate-300">No phone recorded</span>{% endif %}
@@ -70,18 +71,18 @@
   <div class="flex shrink-0 flex-wrap gap-2">
     
     {% if customer.balance < 0 %}
-      <a href="{% url 'core:customer_settle' customer.pk %}"
+      {% permitted 'customer_settle' 'GET' %}<a href="{% url 'core:customer_settle' customer.pk %}"
          class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m6-6H6"/>
         </svg>
         Settle Balance
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
-    <a href="{% url 'core:customer_prices' customer.pk %}"
+    {% permitted 'customer_prices' 'GET' %}<a href="{% url 'core:customer_prices' customer.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Prices
-    </a>
+    </a>{% endpermitted %}
     <button type="button" id="export-pdf"
             class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -155,10 +156,10 @@
             class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Apply
     </button>
-    <a href="{% url 'core:customer_ledger' customer.pk %}"
+    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}"
        class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
       This month
-    </a>
+    </a>{% endpermitted %}
     <a href="?month=all"
        class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
       All time
@@ -197,29 +198,29 @@
                      {% if row.edits %}border-l-4 border-amber-400 bg-amber-50/60{% elif row.is_adjustment %}border-l-4 border-sky-400 bg-sky-50/60{% endif %}">
             {% if edit_opening and row.is_opening %}
               <td colspan="6" class="px-5 py-3">
-                <form method="post" action="{% url 'core:customer_opening_balance_edit' customer.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
+                {% permitted 'customer_opening_balance_edit' 'POST' %}<form method="post" action="{% url 'core:customer_opening_balance_edit' customer.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
                   {% csrf_token %}
                   <label class="text-xs font-medium text-slate-600">Date{{ opening_form.opening_date }}</label>
                   <label class="text-xs font-medium text-slate-600">Opening Amount{{ opening_form.amount }}</label>
                   <label class="text-xs font-medium text-slate-600">Reason for Change{{ opening_form.reason }}</label>
                   <span class="flex items-center gap-2">
                     <button type="submit" class="rounded-md bg-slate-900 px-2.5 py-2 text-xs font-semibold text-white">Save</button>
-                    <a href="{% url 'core:customer_ledger' customer.pk %}" class="text-xs text-slate-500">Cancel</a>
+                    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}" class="text-xs text-slate-500">Cancel</a>{% endpermitted %}
                   </span>
-                </form>
+                </form>{% endpermitted %}
               </td>
             {% elif edit_payment and row.payment_pk == edit_payment.pk %}
               <td colspan="6" class="px-5 py-3">
-                <form method="post" action="{% url 'core:customer_payment_edit' customer.pk edit_payment.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
+                {% permitted 'customer_payment_edit' 'POST' %}<form method="post" action="{% url 'core:customer_payment_edit' customer.pk edit_payment.pk %}" class="grid gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
                   {% csrf_token %}
                   <label class="text-xs font-medium text-slate-600">Date{{ edit_form.paid_date }}</label>
                   <label class="text-xs font-medium text-slate-600">Amount{{ edit_form.amount }}</label>
                   <label class="text-xs font-medium text-slate-600">Reason for Change{{ edit_form.reason }}</label>
                   <span class="flex items-center gap-2">
                     <button type="submit" class="rounded-md bg-slate-900 px-2.5 py-2 text-xs font-semibold text-white">Save</button>
-                    <a href="{% url 'core:customer_ledger' customer.pk %}" class="text-xs text-slate-500">Cancel</a>
+                    {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}" class="text-xs text-slate-500">Cancel</a>{% endpermitted %}
                   </span>
-                </form>
+                </form>{% endpermitted %}
               </td>
             {% else %}
             <td class="whitespace-nowrap px-5 py-3 {% if row.is_note %}text-slate-400{% else %}text-slate-600{% endif %}">
@@ -235,7 +236,7 @@
                 <span class="inline-flex items-center gap-1.5">
                   <span class="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">Return</span>
                   Returned items
-                  <a href="{% url 'core:customer_return_detail' row.return_pk %}" class="font-medium text-violet-700 hover:underline">{{ row.return_ref }}</a>
+                  {% permitted 'customer_return_detail' 'GET' %}<a href="{% url 'core:customer_return_detail' row.return_pk %}" class="font-medium text-violet-700 hover:underline">{{ row.return_ref }}</a>{% endpermitted %}
                   {% if row.return_bill %}<span class="text-xs text-slate-500">· Bill {{ row.return_bill }}</span>{% endif %}
                 </span>
                 <ul class="mt-1 space-y-0.5 text-xs text-slate-500">
@@ -317,16 +318,16 @@
               {% elif row.payment_editable %}
                 <a href="?edit_payment={{ row.payment_pk }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
               {% elif row.bill_pk and row.remaining > 0 %}
-                <a href="{% url 'core:bill_add_payment' row.bill_pk %}"
+                {% permitted 'bill_add_payment' 'GET' %}<a href="{% url 'core:bill_add_payment' row.bill_pk %}"
                    class="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
                    title="Record a payment against Bill #{{ row.bill_number|default:row.bill_pk }} (outstanding: {{ row.remaining|floatformat:2|intcomma }})">
                   Pay
-                </a>
+                </a>{% endpermitted %}
               {% elif row.bill_pk %}
-                <a href="{% url 'core:bill_detail' row.bill_pk %}"
+                {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' row.bill_pk %}"
                    class="text-xs font-medium text-slate-400 hover:text-slate-700">
                   View
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
             {% endif %}

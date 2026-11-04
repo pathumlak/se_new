@@ -20,7 +20,7 @@ PERMISSION_REGISTRY = [
     ("Customer Management", "customers.create", "Create customers", "Create", False),
     ("Customer Management", "customers.edit", "Edit customers", "Edit", False),
     ("Customer Management", "customers.delete", "Delete customers", "Delete", True),
-    ("Customer Balances", "balances.view", "View customer balances", "View", False),
+    ("Customer Balances", "balances.view", "View customer ledgers", "View", False),
     ("Customer Balances", "balances.use", "Use existing balance in billing", "Manage", True),
     ("Customer Balances", "balances.set", "Set a new balance during billing", "Manage", True),
     ("Customer Balances", "balances.edit", "Modify customer balances", "Edit", True),
@@ -243,7 +243,12 @@ URL_PERMISSION_MAP = {
 }
 
 
-def permission_for_url(url_name):
+def permission_for_url(url_name, method="GET"):
+    if method not in {"GET", "HEAD", "OPTIONS"}:
+        if url_name == "customer_contacts":
+            return "customers.edit"
+        if url_name == "cash_drawer":
+            return "cash_drawer.create"
     return URL_PERMISSION_MAP.get(url_name)
 
 
@@ -263,3 +268,121 @@ def sync_permission_registry(apps, schema_editor):
             },
         )
     definition_model.objects.exclude(codename__in=active).update(is_active=False)
+
+
+# Task permissions describe actual application actions. Legacy data grants are
+# accepted only for the exact operation; a create grant never implies delete.
+ADMIN_ONLY_ROUTES = {name for name, code in URL_PERMISSION_MAP.items()
+                     if code.startswith(("user_management.", "audit.", "database."))}
+PUBLIC_ROUTES = {"landing", "notification_dismiss", "profile", "login", "logout"}
+TASK_SPECS = [
+    ("categories", "Categories", "categories.manage", "category", {
+        "create": "category_create", "edit": "category_update", "delete": "category_delete"}),
+    ("production", "Production", "production.manage", "productionentry", {
+        "create": "production_create", "edit": "production_edit", "delete": "production_delete"}),
+    ("machines", "Machines and Daily Work", "production.manage", "machine", {
+        "view": "machine_list", "create": "machine_create", "edit": "machine_edit", "delete": "machine_delete"}),
+    ("daily_work", "Machines and Daily Work", "production.manage", "dailymachinerun", {
+        "view": "daily_run_history", "edit": "daily_run"}),
+    ("supplier_bills", "Supplier Bills", "supplier_bills.manage", "supplierbill", {
+        "create": "supplier_bill_create", "edit": "supplier_bill_edit", "delete": "supplier_bill_delete", "pay": "supplier_bill_pay"}),
+    ("returns", "Customer Returns", "returns.manage", "customerreturn", {
+        "create": "customer_return_create customer_return_bills", "delete": "customer_return_delete"}),
+    ("orders", "Orders and Quotations", "orders.manage", "order", {
+        "create": "order_create", "edit": "order_edit order_set_status", "delete": "order_delete"}),
+    ("cheques", "Cheques", "cheques.manage", "cheque", {
+        "edit": "cheque_bulk_status cheque_deposit cheque_hold cheque_bounce cheque_edit", "delete": "cheque_delete"}),
+    ("cash_drawer", "Cash Drawer", "cash_drawer.manage", "cashdrawer", {
+        "create": "cash_drawer_insert", "edit": "cash_drawer_edit cash_drawer_adjust", "delete": "cash_drawer_delete"}),
+    ("petty_cash", "Petty Cash and Expenses", "petty_cash.manage", "pettycashentry", {
+        "create": "petty_cash_expense_create petty_cash_reimbursement_create", "edit": "petty_cash_expense_edit petty_cash_reimbursement_edit", "delete": "petty_cash_expense_delete petty_cash_reimbursement_delete"}),
+    ("vehicles", "Vehicles", "vehicles.manage", "vehicle", {
+        "view": "vehicle_list", "create": "vehicle_create", "edit": "vehicle_edit", "delete": "vehicle_delete"}),
+    ("riders", "Riders and Trips", "trips.manage", "rider", {
+        "view": "rider_list", "create": "rider_create", "edit": "rider_edit", "delete": "rider_delete"}),
+    ("trips", "Riders and Trips", "trips.manage", "vehicletrip", {
+        "view": "vehicle_trip_list", "create": "vehicle_trip_create", "edit": "vehicle_trip_edit", "delete": "vehicle_trip_delete"}),
+    ("material_suppliers", "Suppliers", "suppliers.manage", "materialsupplier", {
+        "view": "material_supplier_list", "create": "material_supplier_create", "edit": "material_supplier_edit", "delete": "material_supplier_delete"}),
+    ("materials", "Raw Material Purchasing", "purchasing.manage", "material", {
+        "view": "material_list", "create": "material_create", "edit": "material_edit", "delete": "material_delete"}),
+    ("purchases", "Raw Material Purchasing", "purchasing.manage", "materialpurchase", {
+        "view": "material_purchase_list material_purchase_detail", "create": "material_purchase_create", "edit": "material_purchase_edit", "delete": "material_purchase_delete", "weigh": "material_purchase_weigh_add material_purchase_weigh_edit material_purchase_weigh_delete"}),
+]
+# Broad manage grants remain compatible, but legacy row grants cannot activate them.
+for code in list(PERMISSION_ALIASES):
+    if code.endswith(".manage"):
+        PERMISSION_ALIASES[code] = ()
+PERMISSION_ALIASES["pricing.edit"] = ("data.customerprice.edit",)
+PERMISSION_ALIASES["pricing.view"] = ("data.customerprice.view",)
+PERMISSION_ALIASES["balances.view"] = ()
+PERMISSION_ALIASES["balances.edit"] = ()
+for prefix, module, broad, model, operations in TASK_SPECS:
+    for operation, routes in operations.items():
+        code = f"{prefix}.{operation}"
+        if not any(row[1] == code for row in PERMISSION_REGISTRY):
+            PERMISSION_REGISTRY.append((module, code, f"{operation.title()} {prefix.replace('_', ' ')}", operation.title(), operation != "view"))
+        legacy = (f"data.{model}.{operation}",) if operation in {"view", "create", "edit", "delete"} else ()
+        PERMISSION_ALIASES[code] = (broad, *legacy)
+        for route in routes.split():
+            URL_PERMISSION_MAP[route] = code
+# Do not offer raw-table or reserved administration grants as manager tasks.
+UNAVAILABLE_MANAGER_CODES = {"balances.set", "payments.delete", "audit.view", "database.manage", "user_management.view", "user_management.manage"}
+ASSIGNABLE_CODES = {row[1] for row in PERMISSION_REGISTRY
+                    if not row[1].startswith("data.") and row[1] not in UNAVAILABLE_MANAGER_CODES}
+
+# Exports require access to their data as well as export permission.
+EXPORT_SCOPES = {
+    "product_export_excel": "products.view", "stock_ledger_excel": "stock.view", "stock_ledger_bulk_excel": "stock.view",
+    "customer_list_excel": "customers.view", "customer_ledger_pdf": "balances.view", "customer_ledger_bulk_excel": "balances.view",
+    "bill_list_excel": "billing.view", "cheque_list_excel": "cheques.view", "cash_drawer_excel": "cash_drawer.view",
+    "supplier_bill_list_excel": "supplier_bills.view", "petty_cash_excel": "petty_cash.view", "petty_cash_pdf": "petty_cash.view",
+    "vehicle_trip_pdf": "trips.view", "order_pdf": "orders.view", "order_excel": "orders.view", "order_delivery_note": "orders.view",
+    "sales_report_pdf": "reports.view", "outstanding_report_pdf": "reports.view",
+}
+for route in EXPORT_SCOPES:
+    URL_PERMISSION_MAP[route] = "reports.export"
+
+
+def can_access(user, route, method="GET"):
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+    route = (route or "").removeprefix("core:")
+    if user.role == "super_admin":
+        return True
+    if route in ADMIN_ONLY_ROUTES:
+        return False
+    if route in PUBLIC_ROUTES:
+        return True
+    if route == "bill_products":
+        return user.has_erp_permission("billing.create") or user.has_erp_permission("billing.edit")
+    code = permission_for_url(route, method)
+    return bool(code and user.has_erp_permission(code) and (
+        route not in EXPORT_SCOPES or user.has_erp_permission(EXPORT_SCOPES[route])))
+
+
+def with_required_views(codes):
+    """Include navigation/detail access needed to complete an assigned task."""
+    result = set(codes)
+    extra = {"pricing": "products.view", "balances": "customers.view", "payments": "balances.view",
+             "billing": "customers.view", "stock": "products.view", "returns": "customers.view",
+             "supplier_bills": "customers.view", "purchases": "materials.view"}
+    while True:
+        before = set(result)
+        if "products.create" in result:
+            result.add("pricing.create")
+        if "payments.create" in result or "billing.settle" in result:
+            result.update({"billing.view", "balances.view"})
+        if "stock.view" in result:
+            result.add("products.view")
+        if "purchases.create" in result or "purchases.edit" in result:
+            result.add("material_suppliers.view")
+        for code in tuple(result):
+            prefix, operation = code.split(".", 1)
+            view = f"{prefix}.view"
+            if operation != "view" and view in ASSIGNABLE_CODES:
+                result.add(view)
+            if operation != "view" and prefix in extra:
+                result.add(extra[prefix])
+        if before == result:
+            return result

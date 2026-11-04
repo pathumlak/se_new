@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Materials · Senovka Plastics{% endblock %}
@@ -50,7 +51,7 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <button type="button"
+              {% permitted 'material_edit' %}<button type="button"
                       class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       data-action="{% url 'core:material_edit' material.pk %}"
                       data-name="{{ material.name }}"
@@ -58,14 +59,14 @@
                       data-price="{{ material.default_unit_price|stringformat:'.2f' }}"
                       data-active="{{ material.is_active|yesno:'1,' }}">
                 Edit
-              </button>
-              <button type="button"
+              </button>{% endpermitted %}
+              {% permitted 'material_delete' %}<button type="button"
                       class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                       data-action="{% url 'core:material_delete' material.pk %}"
                       data-label="{{ material.name }}"
                       {% if material.purchase_count %}data-blocked="1"{% endif %}>
                 Delete
-              </button>
+              </button>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
@@ -89,7 +90,7 @@
         </svg>
       </button>
     </div>
-    <form id="form-form" method="post" action="{% url 'core:material_create' %}" class="mt-4 space-y-4">
+    {% permitted 'material_create' 'POST' %}<form id="form-form" method="post" action="{% url 'core:material_create' %}" class="mt-4 space-y-4">
       {% csrf_token %}
       <div>
         <label for="mt-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
@@ -119,7 +120,7 @@
         <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
         <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 

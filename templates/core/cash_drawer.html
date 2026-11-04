@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Cash Drawer · Senovka Plastics{% endblock %}
@@ -391,7 +392,7 @@
       </svg>
       Record Transfer / Withdrawal
     </button>
-    {% if is_super_admin %}
+    {% if user|can_task:'cash_drawer_adjust' %}
       <button type="button" id="open-adjust-form"
               style="background:#7c3aed;box-shadow:0 1px 3px rgba(124,58,237,0.25)"
               class="btn-record hover:!bg-violet-700">
@@ -451,16 +452,16 @@
     </button>
     <a href="?month=all" class="btn-clear">All time</a>
     {% if is_filtered and not from_date and not to_date %}
-      <a href="{% url 'core:cash_drawer' %}" class="btn-clear">
+      {% permitted 'cash_drawer' 'GET' %}<a href="{% url 'core:cash_drawer' %}" class="btn-clear">
         <svg class="h-3.5 w-3.5 mr-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
         </svg>
         Reset to this month
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
   </form>
 
-  <a href="{% url 'core:cash_drawer_excel' %}?month={{ month_filter.param }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}"
+  {% permitted 'cash_drawer_excel' 'GET' %}<a href="{% url 'core:cash_drawer_excel' %}?month={{ month_filter.param }}{% if from_date %}&from_date={{ from_date|date:'Y-m-d' }}{% endif %}{% if to_date %}&to_date={{ to_date|date:'Y-m-d' }}{% endif %}"
      class="btn-filter"
      style="border-color:#a7f3d0;background:#ecfdf5;color:#065f46"
      title="Download the drawer log as an Excel sheet">
@@ -468,7 +469,7 @@
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4.5 21h15"/>
     </svg>
     Download Excel
-  </a>
+  </a>{% endpermitted %}
 
   <span class="text-xs text-slate-500">
     Showing: <strong class="text-slate-800">{{ month_filter.label }}</strong>
@@ -527,9 +528,9 @@
 
             <td>
               {% if row.entry.bill_id %}
-                <a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
+                {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
                   Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}
-                </a>
+                </a>{% endpermitted %}
                 {% if row.entry.bill.customer_id %}
                   <span style="color:#94a3b8;font-size:12px"> · {{ row.entry.bill.customer.name }}</span>
                 {% elif row.entry.bill.walk_in_name %}
@@ -565,20 +566,20 @@
             <td class="text-right whitespace-nowrap">
               {% if row.is_manual %}
                 <div style="display:flex;justify-content:flex-end;gap:6px">
-                  <button type="button"
+                  {% permitted 'cash_drawer_edit' %}<button type="button"
                           data-url="{% url 'core:cash_drawer_edit' row.entry.pk %}"
                           data-date="{{ row.entry.txn_date|date:'Y-m-d' }}"
                           data-type="{{ row.entry.txn_type }}"
                           data-amount="{{ row.entry.amount }}"
                           data-reason="{{ row.entry.reason }}"
-                          class="js-edit btn-row-edit">Edit</button>
-                  <button type="button"
+                          class="js-edit btn-row-edit">Edit</button>{% endpermitted %}
+                  {% permitted 'cash_drawer_delete' %}<button type="button"
                           data-url="{% url 'core:cash_drawer_delete' row.entry.pk %}"
                           data-date="{{ row.entry.txn_date|date:'j M Y' }}"
                           data-type="{{ row.entry.get_txn_type_display }}"
                           data-amount="{{ row.entry.amount|floatformat:2|intcomma }}"
                           data-reason="{{ row.entry.reason }}"
-                          class="js-delete btn-row-delete">Delete</button>
+                          class="js-delete btn-row-delete">Delete</button>{% endpermitted %}
                 </div>
               {% else %}
                 <span class="from-bill-tag">From Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}</span>
@@ -594,7 +595,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803M10.5 7.5v3m0 0v3m0-3h3m-3 0H7.5"/>
                   </svg>
                   <p>No drawer activity in this date range.</p>
-                  <a href="{% url 'core:cash_drawer' %}" style="margin-top:8px;display:inline-block">Clear dates</a>
+                  {% permitted 'cash_drawer' 'GET' %}<a href="{% url 'core:cash_drawer' %}" style="margin-top:8px;display:inline-block">Clear dates</a>{% endpermitted %}
                 {% else %}
                   <svg style="margin:0 auto 12px;display:block;color:#cbd5e1" class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9v3"/>
@@ -712,7 +713,7 @@
 <!-- ═══════════════════════ INSERT MODAL ═══════════════════════ -->
 <div id="insert-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="insert-modal-title">
   <div class="modal-box">
-    <form method="post" action="{% url 'core:cash_drawer_insert' %}" novalidate>
+    {% permitted 'cash_drawer_insert' 'POST' %}<form method="post" action="{% url 'core:cash_drawer_insert' %}" novalidate>
       {% csrf_token %}
 
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
@@ -761,16 +762,16 @@
         <button type="button" id="insert-modal-cancel" class="btn-modal-cancel">Cancel</button>
         <button type="submit" class="btn-modal-insert">Insert</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 
 
-{% if is_super_admin %}
+{% if user|can_task:'cash_drawer_adjust' %}
 <!-- ═══════════════════════ ADJUST BALANCE MODAL (super admin) ═══════════════════════ -->
 <div id="adjust-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="adjust-modal-title">
   <div class="modal-box">
-    <form method="post" action="{% url 'core:cash_drawer_adjust' %}" novalidate>
+    {% permitted 'cash_drawer_adjust' 'POST' %}<form method="post" action="{% url 'core:cash_drawer_adjust' %}" novalidate>
       {% csrf_token %}
 
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px">
@@ -816,7 +817,7 @@
         <button type="button" id="adjust-modal-cancel" class="btn-modal-cancel">Cancel</button>
         <button type="submit" class="btn-modal-primary" style="background:#7c3aed" onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">Adjust</button>
       </div>
-    </form>
+    </form>{% endpermitted %}
   </div>
 </div>
 {% endif %}

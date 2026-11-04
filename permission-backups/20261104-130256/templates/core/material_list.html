@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Materials · Senovka Plastics{% endblock %}
+{% block header %}Materials{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <p class="text-sm text-slate-500">
+    Raw materials bought on Material Purchases. Not the same as Products —
+    Materials never touch product stock.
+  </p>
+  <button type="button" id="open-create"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+    </svg>
+    New Material
+  </button>
+</div>
+
+{% include 'partials/pagination.html' with page_obj=page_obj %}
+
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-200 text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Name</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Unit</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Default Unit Price</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Purchases</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+          <th class="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for material in materials %}
+          <tr class="hover:bg-slate-50">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{{ material.name }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ material.get_unit_display }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-900">{{ material.default_unit_price|floatformat:2|intcomma }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-right text-slate-500">{{ material.purchase_count }}</td>
+            <td class="whitespace-nowrap px-4 py-3">
+              {% if material.is_active %}
+                <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Active</span>
+              {% else %}
+                <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="whitespace-nowrap px-4 py-3 text-right">
+              <button type="button"
+                      class="js-edit rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      data-action="{% url 'core:material_edit' material.pk %}"
+                      data-name="{{ material.name }}"
+                      data-unit="{{ material.unit }}"
+                      data-price="{{ material.default_unit_price|stringformat:'.2f' }}"
+                      data-active="{{ material.is_active|yesno:'1,' }}">
+                Edit
+              </button>
+              <button type="button"
+                      class="js-delete ml-1 rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      data-action="{% url 'core:material_delete' material.pk %}"
+                      data-label="{{ material.name }}"
+                      {% if material.purchase_count %}data-blocked="1"{% endif %}>
+                Delete
+              </button>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="px-4 py-12 text-center text-sm text-slate-500">No materials yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Create / edit modal -->
+<div id="form-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+    <div class="flex items-start justify-between">
+      <h3 id="form-modal-title" class="text-base font-semibold text-slate-900">New Material</h3>
+      <button type="button" class="js-close rounded-md p-1 text-slate-400 hover:bg-slate-100" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <form id="form-form" method="post" action="{% url 'core:material_create' %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+      <div>
+        <label for="mt-name" class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+        <input type="text" id="mt-name" name="name" maxlength="150" required class="{{ form.name.field.widget.attrs.class }}">
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label for="mt-unit" class="mb-1 block text-xs font-medium text-slate-600">Unit</label>
+          <select id="mt-unit" name="unit" required class="{{ form.unit.field.widget.attrs.class }}">
+            {% for value, label in units %}
+              <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="mt-price" class="mb-1 block text-xs font-medium text-slate-600">Default unit price</label>
+          <input type="number" step="0.01" min="0" id="mt-price" name="default_unit_price" required class="{{ form.default_unit_price.field.widget.attrs.class }}">
+        </div>
+      </div>
+      <div>
+        <label class="flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" id="mt-active" name="is_active" class="{{ form.is_active.field.widget.attrs.class }}">
+          <span>Active</span>
+        </label>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div id="delete-modal"
+     class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+     role="dialog" aria-modal="true">
+  <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+    <h3 class="text-base font-semibold text-slate-900">Delete material</h3>
+    <p class="mt-2 text-sm text-slate-600">
+      Delete <span id="del-label" class="font-semibold text-slate-900"></span>?
+    </p>
+    <p id="del-blocked" class="mt-2 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      This material is used on purchases — deactivate instead.
+    </p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="js-close rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+      <form id="del-form" method="post">
+        {% csrf_token %}
+        <button id="del-submit" type="submit" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50">Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const CREATE = "{% url 'core:material_create' %}";
+    const modal   = document.getElementById('form-modal');
+    const form    = document.getElementById('form-form');
+    const title   = document.getElementById('form-modal-title');
+    const nameEl  = document.getElementById('mt-name');
+    const unitEl  = document.getElementById('mt-unit');
+    const priceEl = document.getElementById('mt-price');
+    const activeEl = document.getElementById('mt-active');
+
+    function open(m){m.classList.remove('hidden');m.classList.add('flex');}
+    function close(m){m.classList.add('hidden');m.classList.remove('flex');}
+
+    document.querySelectorAll('.js-close').forEach(function (b) {
+      b.addEventListener('click', function () { const m = b.closest('[role="dialog"]'); if (m) close(m); });
+    });
+    document.querySelectorAll('[role="dialog"]').forEach(function (m) {
+      m.addEventListener('click', function (e) { if (e.target === m) close(m); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') document.querySelectorAll('[role="dialog"]').forEach(function (m) { if (!m.classList.contains('hidden')) close(m); });
+    });
+
+    document.getElementById('open-create').addEventListener('click', function () {
+      title.textContent = 'New Material';
+      form.action = CREATE;
+      nameEl.value = ''; unitEl.value = 'kg'; priceEl.value = '0.00'; activeEl.checked = true;
+      open(modal);
+      setTimeout(function () { nameEl.focus(); }, 30);
+    });
+
+    document.querySelectorAll('.js-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Edit Material';
+        form.action = btn.dataset.action;
+        nameEl.value = btn.dataset.name;
+        unitEl.value = btn.dataset.unit;
+        priceEl.value = btn.dataset.price;
+        activeEl.checked = btn.dataset.active === '1';
+        open(modal);
+        setTimeout(function () { nameEl.focus(); nameEl.select(); }, 30);
+      });
+    });
+
+    const delModal  = document.getElementById('delete-modal');
+    const delForm   = document.getElementById('del-form');
+    const delLabel  = document.getElementById('del-label');
+    const delBlock  = document.getElementById('del-blocked');
+    const delSubmit = document.getElementById('del-submit');
+    document.querySelectorAll('.js-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        delForm.action = btn.dataset.action;
+        delLabel.textContent = '“' + btn.dataset.label + '”';
+        const blocked = btn.dataset.blocked === '1';
+        delBlock.classList.toggle('hidden', !blocked);
+        delSubmit.disabled = blocked;
+        open(delModal);
+      });
+    });
+  })();
+</script>
+{% endblock %}

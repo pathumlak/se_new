@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Return Items List · Senovka Plastics{% endblock %}
@@ -38,15 +39,15 @@
              class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
     </div>
     <button type="submit" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Apply</button>
-    <a href="{% url 'core:customer_return_list' %}?month=all"
-       class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">All time</a>
-    <a href="{% url 'core:customer_return_create' %}"
+    {% permitted 'customer_return_list' 'GET' %}<a href="{% url 'core:customer_return_list' %}?month=all"
+       class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">All time</a>{% endpermitted %}
+    {% permitted 'customer_return_create' 'GET' %}<a href="{% url 'core:customer_return_create' %}"
        class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
       </svg>
       Return Items
-    </a>
+    </a>{% endpermitted %}
   </form>
 </div>
 
@@ -84,15 +85,15 @@
         {% for ret in returns %}
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-              <a href="{% url 'core:customer_return_detail' ret.pk %}" class="hover:underline">{{ ret.reference_no }}</a>
+              {% permitted 'customer_return_detail' 'GET' %}<a href="{% url 'core:customer_return_detail' ret.pk %}" class="hover:underline">{{ ret.reference_no }}</a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ ret.return_date|date:"j M Y" }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-900">
-              <a href="{% url 'core:customer_ledger' ret.customer_id %}" class="hover:underline">{{ ret.customer.name }}</a>
+              {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' ret.customer_id %}" class="hover:underline">{{ ret.customer.name }}</a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">
               {% if ret.bill %}
-                <a href="{% url 'core:bill_detail' ret.bill_id %}" class="hover:underline">#{% if ret.bill.bill_number %}{{ ret.bill.bill_number|stringformat:"04d" }}{% else %}{{ ret.bill_id|stringformat:"04d" }}{% endif %}</a>
+                {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' ret.bill_id %}" class="hover:underline">#{% if ret.bill.bill_number %}{{ ret.bill.bill_number|stringformat:"04d" }}{% else %}{{ ret.bill_id|stringformat:"04d" }}{% endif %}</a>{% endpermitted %}
               {% else %}
                 <span class="text-slate-300">—</span>
               {% endif %}
@@ -103,8 +104,8 @@
             <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">{{ ret.total_amount|floatformat:2|intcomma }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right text-slate-600">{{ ret.balance_after|floatformat:2|intcomma }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <a href="{% url 'core:customer_return_detail' ret.pk %}"
-                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+              {% permitted 'customer_return_detail' 'GET' %}<a href="{% url 'core:customer_return_detail' ret.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>{% endpermitted %}
             </td>
           </tr>
         {% empty %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Material Purchases · Senovka Plastics{% endblock %}
@@ -31,20 +32,20 @@
       Apply
     </button>
     {% if is_filtered %}
-      <a href="{% url 'core:material_purchase_list' %}?month=all"
+      {% permitted 'material_purchase_list' 'GET' %}<a href="{% url 'core:material_purchase_list' %}?month=all"
          class="rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
         Clear
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
   </form>
 
-  <a href="{% url 'core:material_purchase_create' %}"
+  {% permitted 'material_purchase_create' 'GET' %}<a href="{% url 'core:material_purchase_create' %}"
      class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
     </svg>
     New Purchase
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
@@ -68,9 +69,9 @@
         {% for purchase in purchases %}
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-              <a href="{% url 'core:material_purchase_detail' purchase.pk %}" class="hover:underline">
+              {% permitted 'material_purchase_detail' 'GET' %}<a href="{% url 'core:material_purchase_detail' purchase.pk %}" class="hover:underline">
                 #{{ purchase.pk }}
-              </a>
+              </a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ purchase.purchase_date|date:"j M Y" }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-slate-600">
@@ -89,8 +90,8 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <a href="{% url 'core:material_purchase_detail' purchase.pk %}"
-                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+              {% permitted 'material_purchase_detail' 'GET' %}<a href="{% url 'core:material_purchase_detail' purchase.pk %}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>{% endpermitted %}
             </td>
           </tr>
         {% empty %}

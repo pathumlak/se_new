@@ -41,7 +41,9 @@ class User(AbstractUser):
 
     def has_erp_permission(self, codename):
         """Return whether this user may perform an ERP operation."""
-        if self.role == self.Role.SUPER_ADMIN or self.is_superuser:
+        if not self.is_active:
+            return False
+        if self.role == self.Role.SUPER_ADMIN:
             return True
         from .permissions import permission_candidates
 

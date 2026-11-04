@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Billing Settings · Senovka Plastics{% endblock %}
+{% block header %}Billing Settings{% endblock %}
+
+{% block content %}
+
+<div class="mx-auto max-w-4xl">
+
+  <!-- Intro -->
+  <div class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-blue-600">Company details</p>
+        <h2 class="mt-1 text-[16px] font-bold text-slate-900">What prints at the top of every bill</h2>
+        <p class="mt-1 text-[13px] text-slate-500">
+          Everything below shows on the printable bill. Blank fields are silently
+          skipped — leave any block you don't use empty. The change lands on the
+          very next bill printed; no restart, no cache to clear.
+        </p>
+      </div>
+      {% if sample_bill_id %}
+        <a href="{% url 'core:bill_print' sample_bill_id %}?noprint=1" target="_blank"
+           class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+          Preview latest bill
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <form method="post" class="space-y-6">
+    {% csrf_token %}
+
+    <!-- Header block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Header</h3>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2">
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Company name *</label>
+          {{ form.company_name }}
+        </div>
+        <div class="sm:col-span-2">
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Tagline / subtitle</label>
+          {{ form.tagline }}
+          <p class="mt-1 text-[11px] text-slate-400">Prints under the company name in a lighter weight.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Contact block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Contact</h3>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2">
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Address</label>
+          {{ form.address }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Phone</label>
+          {{ form.phone }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Alternate phone</label>
+          {{ form.phone_alt }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Email</label>
+          {{ form.email }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Website</label>
+          {{ form.website }}
+        </div>
+      </div>
+    </section>
+
+    <!-- Registration block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Registration / Tax</h3>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Business registration no</label>
+          {{ form.business_reg_no }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Tax / VAT ID</label>
+          {{ form.tax_id }}
+        </div>
+      </div>
+    </section>
+
+    <!-- Bank block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Bank details</h3>
+      <p class="text-[12px] text-slate-500 mb-4">
+        Optional. Prints as a small "Please pay to" block in the footer.
+        Leave everything blank to hide the block entirely.
+      </p>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Bank name</label>
+          {{ form.bank_name }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Branch</label>
+          {{ form.bank_branch }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Account name</label>
+          {{ form.bank_account_name }}
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Account number</label>
+          {{ form.bank_account_no }}
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Footer</h3>
+      <div class="grid gap-4">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Closing line</label>
+          {{ form.footer_note }}
+          <p class="mt-1 text-[11px] text-slate-400">One-liner at the bottom of the bill (e.g. "Thank you for your business.").</p>
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-700 mb-1">Terms line</label>
+          {{ form.terms_line }}
+          <p class="mt-1 text-[11px] text-slate-400">Short T&amp;C line under the footer. A full T&amp;C page belongs elsewhere.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Watermark block -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 class="text-[13px] font-bold uppercase tracking-widest text-slate-500 mb-4">Watermark</h3>
+      <div class="flex items-start gap-3 mb-3">
+        <label class="flex items-start gap-2">
+          {{ form.show_watermark }}
+          <span class="text-sm text-slate-700">Show a diagonal watermark across the page</span>
+        </label>
+      </div>
+      <div>
+        <label class="block text-[11px] font-semibold text-slate-700 mb-1">Watermark text</label>
+        {{ form.watermark_text }}
+        <p class="mt-1 text-[11px] text-slate-400">Prints in a very faint colour behind the bill. Leave the checkbox on to enable it.</p>
+      </div>
+    </section>
+
+    <!-- Sticky actions -->
+    <div class="sticky bottom-4 z-10 flex justify-end gap-3 rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur">
+      <a href="{% url 'core:dashboard' %}"
+         class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Cancel
+      </a>
+      <button type="submit"
+              class="rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        Save settings
+      </button>
+    </div>
+  </form>
+
+  <p class="mt-4 text-[11px] text-slate-400 text-center">
+    Last updated {{ settings.updated_at|date:"d M Y · H:i" }}
+  </p>
+</div>
+
+{% endblock %}

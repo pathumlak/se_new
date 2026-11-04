@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Daily Run · {{ when|date:"j M Y" }} · Senovka Plastics{% endblock %}
@@ -40,10 +41,10 @@
         Go
       </button>
     </form>
-    <a href="{% url 'core:daily_run_history' %}"
+    {% permitted 'daily_run_history' 'GET' %}<a href="{% url 'core:daily_run_history' %}"
        class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
       History
-    </a>
+    </a>{% endpermitted %}
   </div>
 </div>
 
@@ -52,7 +53,7 @@
     <p class="font-semibold">No active machines yet.</p>
     <p class="mt-1 text-xs">
       Add machines from
-      <a href="{% url 'core:machine_list' %}" class="font-medium underline">Machines</a>
+      {% permitted 'machine_list' 'GET' %}<a href="{% url 'core:machine_list' %}" class="font-medium underline">Machines</a>{% endpermitted %}
       first — then this page will list one row per machine for the day.
     </p>
   </div>

@@ -48,3 +48,17 @@ def role_required(
 
 #: Views only a super admin may open.
 super_admin_required = role_required(User.Role.SUPER_ADMIN, allow_permission=False)
+
+
+def task_permission_required(view_func):
+    """Business tasks may be delegated; administration remains role-only."""
+    from django.core.exceptions import PermissionDenied
+    from .permissions import can_access
+
+    @wraps(view_func)
+    @login_required
+    def wrapped(request, *args, **kwargs):
+        if not can_access(request.user, request.resolver_match.url_name, request.method):
+            raise PermissionDenied
+        return view_func(request, *args, **kwargs)
+    return wrapped

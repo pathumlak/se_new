@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Daily Run History · Senovka Plastics{% endblock %}
@@ -11,13 +12,13 @@
     Every day that has anything logged. Click a date to open its full daily
     run form.
   </p>
-  <a href="{% url 'core:daily_run' %}"
+  {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}"
      class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007M3.75 12h.007m-.007 5.25h.007"/>
     </svg>
     Today's log
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
@@ -38,9 +39,9 @@
         {% for row in rows %}
           <tr class="hover:bg-slate-50">
             <td class="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-              <a href="{% url 'core:daily_run' %}?date={{ row.date|date:'Y-m-d' }}" class="hover:underline">
+              {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}?date={{ row.date|date:'Y-m-d' }}" class="hover:underline">
                 {{ row.date|date:"l, j M Y" }}
-              </a>
+              </a>{% endpermitted %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right font-medium text-emerald-700">{{ row.running }}</td>
             <td class="whitespace-nowrap px-4 py-3 text-right font-medium
@@ -55,13 +56,13 @@
               {% endif %}
             </td>
             <td class="whitespace-nowrap px-4 py-3 text-right">
-              <a href="{% url 'core:daily_run' %}?date={{ row.date|date:'Y-m-d' }}"
-                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>
+              {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}?date={{ row.date|date:'Y-m-d' }}"
+                 class="rounded-md px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100">Open</a>{% endpermitted %}
             </td>
           </tr>
         {% empty %}
           <tr><td colspan="5" class="px-4 py-12 text-center text-sm text-slate-500">
-            No daily runs logged yet. <a href="{% url 'core:daily_run' %}" class="font-medium text-slate-900 hover:underline">Start today's</a>.
+            No daily runs logged yet. {% permitted 'daily_run' 'GET' %}<a href="{% url 'core:daily_run' %}" class="font-medium text-slate-900 hover:underline">Start today's</a>{% endpermitted %}.
           </td></tr>
         {% endfor %}
       </tbody>

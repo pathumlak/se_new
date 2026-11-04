@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}Purchase #{{ purchase.pk }} · Senovka Plastics{% endblock %}
@@ -9,13 +10,13 @@
 <!-- Header -->
 <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div>
-    <a href="{% url 'core:material_purchase_list' %}"
+    {% permitted 'material_purchase_list' 'GET' %}<a href="{% url 'core:material_purchase_list' %}"
        class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
       </svg>
       Material Purchases
-    </a>
+    </a>{% endpermitted %}
 
     <h2 class="mt-2 text-xl font-semibold text-slate-900">
       {{ purchase.supplier.name }}
@@ -42,11 +43,11 @@
   </div>
 
   <div class="flex shrink-0 flex-wrap gap-2">
-    <a href="{% url 'core:material_purchase_edit' purchase.pk %}"
+    {% permitted 'material_purchase_edit' 'GET' %}<a href="{% url 'core:material_purchase_edit' purchase.pk %}"
        class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       Edit
-    </a>
-    {% if is_super_admin %}
+    </a>{% endpermitted %}
+    {% if user|can_task:'material_purchase_delete' %}
       <button type="button" id="open-delete"
               class="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50">
         Delete
@@ -94,7 +95,7 @@
             {% else %}
               <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">Pending</span>
             {% endif %}
-            <button type="button"
+            {% permitted 'material_purchase_weigh_add' %}<button type="button"
                     class="js-add-weigh inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
                     data-item-pk="{{ item.pk }}"
                     data-material="{{ item.material.name }}"
@@ -102,7 +103,7 @@
                     data-remaining="{{ item.remaining_qty|stringformat:'.3f' }}"
                     data-action="{% url 'core:material_purchase_weigh_add' item.pk %}">
               + Weigh in
-            </button>
+            </button>{% endpermitted %}
           </div>
         </div>
       </div>
@@ -127,20 +128,20 @@
                   <td class="whitespace-nowrap px-4 py-2 text-slate-800">{{ entry.checked_by }}</td>
                   <td class="whitespace-nowrap px-4 py-2 text-slate-500">{{ entry.submitted_by.username }}</td>
                   <td class="whitespace-nowrap px-4 py-2 text-right">
-                    <button type="button"
+                    {% permitted 'material_purchase_weigh_edit' %}<button type="button"
                             class="js-edit-weigh rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                             data-action="{% url 'core:material_purchase_weigh_edit' entry.pk %}"
                             data-date="{{ entry.weigh_date|date:'Y-m-d' }}"
                             data-qty="{{ entry.weighed_qty|stringformat:'.3f' }}"
                             data-checked-by="{{ entry.checked_by }}">
                       Edit
-                    </button>
-                    <button type="button"
+                    </button>{% endpermitted %}
+                    {% permitted 'material_purchase_weigh_delete' %}<button type="button"
                             class="js-del-weigh ml-1 rounded-md border border-rose-200 px-2 py-0.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
                             data-action="{% url 'core:material_purchase_weigh_delete' entry.pk %}"
                             data-label="{{ entry.weighed_qty }} on {{ entry.weigh_date|date:'j M Y' }}">
                       Delete
-                    </button>
+                    </button>{% endpermitted %}
                   </td>
                 </tr>
               {% endfor %}

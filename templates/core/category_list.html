@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 
 {% block title %}Categories · Senovka Plastics{% endblock %}
 {% block header %}Categories{% endblock %}
@@ -25,21 +26,21 @@
       Search
     </button>
     {% if query %}
-      <a href="{% url 'core:category_list' %}"
+      {% permitted 'category_list' 'GET' %}<a href="{% url 'core:category_list' %}"
          class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
         Clear
-      </a>
+      </a>{% endpermitted %}
     {% endif %}
   </form>
 
-  <a href="{% url 'core:category_create' %}"
+  {% permitted 'category_create' 'GET' %}<a href="{% url 'core:category_create' %}"
      class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
             text-sm font-semibold text-white hover:bg-slate-800">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
     </svg>
     New Category
-  </a>
+  </a>{% endpermitted %}
 </div>
 
 {% include 'partials/pagination.html' with page_obj=page_obj %}
@@ -75,17 +76,17 @@
             </td>
             <td class="whitespace-nowrap px-5 py-3 text-right">
               <div class="flex justify-end gap-1">
-                <a href="{% url 'core:category_update' category.pk %}"
+                {% permitted 'category_update' 'GET' %}<a href="{% url 'core:category_update' category.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
-                </a>
-                <button type="button"
+                </a>{% endpermitted %}
+                {% permitted 'category_delete' %}<button type="button"
                         data-delete-url="{% url 'core:category_delete' category.pk %}"
                         data-name="{{ category.name }}"
                         data-count="{{ category.product_count }}"
                         class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
                   Delete
-                </button>
+                </button>{% endpermitted %}
               </div>
             </td>
           </tr>
@@ -94,14 +95,14 @@
             <td colspan="4" class="px-5 py-12 text-center">
               {% if query %}
                 <p class="text-sm text-slate-500">No categories match “{{ query }}”.</p>
-                <a href="{% url 'core:category_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'category_list' 'GET' %}<a href="{% url 'core:category_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Clear search
-                </a>
+                </a>{% endpermitted %}
               {% else %}
                 <p class="text-sm text-slate-500">No categories yet.</p>
-                <a href="{% url 'core:category_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'category_create' 'GET' %}<a href="{% url 'core:category_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Create the first one
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
           </tr>

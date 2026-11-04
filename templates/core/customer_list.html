@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load erp_access %}
 {% load humanize %}
 
 {% block title %}{% if kind == 'suppliers' %}Suppliers{% else %}Customers{% endif %} · Senovka Plastics{% endblock %}
@@ -25,13 +26,13 @@
         </div>
       </div>
 
-      <a href="{% url 'core:supplier_bill_create' %}"
+      {% permitted 'supplier_bill_create' 'GET' %}<a href="{% url 'core:supplier_bill_create' %}"
          class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
         </svg>
         New Supplier Bill
-      </a>
+      </a>{% endpermitted %}
     </div>
 
     <div class="grid gap-px border-t border-indigo-200 bg-indigo-100/70 sm:grid-cols-3">
@@ -59,7 +60,7 @@
 <div class="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
 
   {# Card 1 — Total Outstanding (customers owe us) #}
-    <a href="{% url 'core:customer_list' %}?balance=customers_owe"
+    {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}?balance=customers_owe"
       class="relative block overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-sm transition hover:border-rose-300 hover:shadow-md">
     <div class="absolute inset-y-0 left-0 w-1 rounded-l-2xl bg-rose-500"></div>
     <div class="flex items-center gap-4 px-5 py-4">
@@ -80,10 +81,10 @@
         <p class="mt-0.5 text-xs text-slate-400">Customers owe us</p>
       </div>
     </div>
-  </a>
+  </a>{% endpermitted %}
 
   {# Card 2 — We Owe (we owe customers) #}
-    <a href="{% url 'core:customer_list' %}?balance=we_owe"
+    {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}?balance=we_owe"
       class="relative block overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-sm transition hover:border-emerald-300 hover:shadow-md">
     <div class="absolute inset-y-0 left-0 w-1 rounded-l-2xl bg-emerald-500"></div>
     <div class="flex items-center gap-4 px-5 py-4">
@@ -104,7 +105,7 @@
         <p class="mt-0.5 text-xs text-slate-400">We must pay customers</p>
       </div>
     </div>
-  </a>
+  </a>{% endpermitted %}
 
 </div>
 {% endif %}
@@ -159,30 +160,30 @@
         Search
       </button>
       {% if is_filtered %}
-        <a href="{% url 'core:customer_list' %}"
+        {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}"
            class="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-900">
           Clear
-        </a>
+        </a>{% endpermitted %}
       {% endif %}
     </div>
   </form>
 
   <div class="flex gap-2 shrink-0">
-    <a href="{% url 'core:customer_list_excel' %}?q={{ query|urlencode }}&kind={{ kind }}&status={{ status }}&balance={{ balance_filter }}&sort={{ sort }}"
+    {% permitted 'customer_list_excel' 'GET' %}<a href="{% url 'core:customer_list_excel' %}?q={{ query|urlencode }}&kind={{ kind }}&status={{ status }}&balance={{ balance_filter }}&sort={{ sort }}"
        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
       <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
       </svg>
       Export to Excel
-    </a>
-    <a href="{% url 'core:customer_create' %}"
+    </a>{% endpermitted %}
+    {% permitted 'customer_create' 'GET' %}<a href="{% url 'core:customer_create' %}"
        class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
               text-sm font-semibold text-white hover:bg-slate-800">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
       </svg>
       New Customer
-    </a>
+    </a>{% endpermitted %}
   </div>
 </div>
 
@@ -190,7 +191,7 @@
 
 <!-- Bulk selection form wraps the whole table so the checkbox column and
      the floating action bar share one submission target. -->
-<form method="get" action="{% url 'core:customer_ledger_bulk_excel' %}"
+{% permitted 'customer_ledger_bulk_excel' 'GET' %}<form method="get" action="{% url 'core:customer_ledger_bulk_excel' %}"
       id="js-bulk-ledger-form">
 
 <!-- Table -->
@@ -224,10 +225,10 @@
                      aria-label="Select {{ customer.name }}">
             </td>
             <td class="whitespace-nowrap px-5 py-3">
-              <a href="{% url 'core:customer_detail' customer.pk %}"
+              {% permitted 'customer_detail' 'GET' %}<a href="{% url 'core:customer_detail' customer.pk %}"
                  class="font-medium text-slate-900 hover:underline">
                 {{ customer.name }}
-              </a>
+              </a>{% endpermitted %}
             </td>
 
             <td class="whitespace-nowrap px-5 py-3 text-slate-600">
@@ -279,19 +280,19 @@
 
             <td class="whitespace-nowrap px-5 py-3 text-right">
               <div class="flex justify-end gap-1">
-                <a href="{% url 'core:customer_ledger' customer.pk %}"
+                {% permitted 'customer_ledger' 'GET' %}<a href="{% url 'core:customer_ledger' customer.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Ledger
-                </a>
-                <a href="{% url 'core:customer_prices' customer.pk %}"
+                </a>{% endpermitted %}
+                {% permitted 'customer_prices' 'GET' %}<a href="{% url 'core:customer_prices' customer.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Prices
-                </a>
-                <a href="{% url 'core:customer_update' customer.pk %}"
+                </a>{% endpermitted %}
+                {% permitted 'customer_update' 'GET' %}<a href="{% url 'core:customer_update' customer.pk %}"
                    class="rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                   Edit
-                </a>
-                {% if is_super_admin %}
+                </a>{% endpermitted %}
+                {% if user|can_task:'customer_delete' %}
                   {% if customer.history_count %}
                     {# History PROTECTs the row — don't offer a delete the server will refuse. #}
                     <span class="cursor-not-allowed rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-300"
@@ -299,13 +300,13 @@
                       Delete
                     </span>
                   {% else %}
-                    <button type="button"
+                    {% permitted 'customer_delete' %}<button type="button"
                             data-delete-url="{% url 'core:customer_delete' customer.pk %}"
                             data-name="{{ customer.name }}"
                             data-prices="{{ customer.custom_price_count }}"
                             class="js-delete rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50">
                       Delete
-                    </button>
+                    </button>{% endpermitted %}
                   {% endif %}
                 {% endif %}
               </div>
@@ -316,14 +317,14 @@
             <td colspan="9" class="px-5 py-12 text-center">
               {% if is_filtered %}
                 <p class="text-sm text-slate-500">No customers match your filters.</p>
-                <a href="{% url 'core:customer_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'customer_list' 'GET' %}<a href="{% url 'core:customer_list' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Clear filters
-                </a>
+                </a>{% endpermitted %}
               {% else %}
                 <p class="text-sm text-slate-500">No customers yet.</p>
-                <a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
+                {% permitted 'customer_create' 'GET' %}<a href="{% url 'core:customer_create' %}" class="mt-2 inline-block text-sm font-medium text-slate-900 hover:underline">
                   Create the first one
-                </a>
+                </a>{% endpermitted %}
               {% endif %}
             </td>
           </tr>
@@ -363,9 +364,9 @@
   </button>
 </div>
 
-</form>
+</form>{% endpermitted %}
 
-{% if is_super_admin %}
+{% if user|can_task:'customer_delete' %}
   {% include "core/_customer_delete_modal.html" %}
 {% endif %}
 {% endblock %}

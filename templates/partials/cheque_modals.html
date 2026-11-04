@@ -1,5 +1,6 @@
+{% load erp_access %}
 
-{% if is_super_admin %}
+{% if user|can_task:'cheque_delete' %}
 <!-- ====================== Delete modal ====================== -->
 <div id="delete-modal"
      class="fixed inset-0 z-50 hidden items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-12 backdrop-blur-sm"

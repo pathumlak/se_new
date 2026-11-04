@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Return Items · Senovka Plastics{% endblock %}
+{% block header %}Return Items{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% url 'core:customer_return_list' %}"
+     class="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+    </svg>
+    Back to Return Items List
+  </a>
+</div>
+
+<form method="post" id="return-form" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="items_json" id="items-json" value="[]">
+
+  <div class="grid gap-5 lg:grid-cols-3">
+
+    <!-- =================== LEFT: HEADER + PRODUCT GRID =================== -->
+    <div class="space-y-5 lg:col-span-2">
+
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <label for="r-customer" class="mb-1 block text-xs font-medium text-slate-600">Customer <span class="text-rose-500">*</span></label>
+            <select name="customer" id="r-customer"
+                    class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+              <option value="">Choose a customer…</option>
+              {% for c in customers %}
+                <option value="{{ c.pk }}" data-balance="{{ c.balance|stringformat:'.2f' }}"
+                        {% if form_values.customer == c.pk|stringformat:'s' %}selected{% endif %}>
+                  {{ c.name }} (Balance: {{ c.balance|floatformat:2|intcomma }})
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div>
+            <label for="r-bill" class="mb-1 block text-xs font-medium text-slate-600">
+              Bill number <span class="text-slate-400">(optional)</span>
+            </label>
+            <select name="bill" id="r-bill" disabled data-initial="{{ form_values.bill }}"
+                    class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900 disabled:bg-slate-50 disabled:text-slate-400">
+              <option value="">Pick a customer first</option>
+            </select>
+            <p class="mt-1 text-[11px] text-slate-400">Leave blank if the bill number isn't known.</p>
+          </div>
+
+          <div>
+            <label for="r-date" class="mb-1 block text-xs font-medium text-slate-600">Return date <span class="text-rose-500">*</span></label>
+            <input type="date" name="return_date" id="r-date" required
+                   value="{{ form_values.return_date }}" max="{{ today|date:'Y-m-d' }}"
+                   class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+          </div>
+
+          <div class="sm:col-span-2">
+            <label for="r-notes" class="mb-1 block text-xs font-medium text-slate-600">Notes <span class="text-slate-400">(optional)</span></label>
+            <textarea name="notes" id="r-notes" rows="2" maxlength="1000"
+                      placeholder="e.g. Collected by driver on delivery run"
+                      class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">{{ form_values.notes }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Product picker -->
+      <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-900">Add returned items</h3>
+            <p class="text-xs text-slate-500">Click a product to add a line. Add the same product twice to split damaged and good units.</p>
+          </div>
+          <input type="search" id="product-search" placeholder="Search…" autocomplete="off"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900 sm:w-56">
+        </div>
+
+        <div class="mb-3 flex flex-wrap gap-1.5">
+          <button type="button" data-category="" class="js-cat rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white">All</button>
+          {% for c in categories %}
+            <button type="button" data-category="{{ c.pk }}"
+                    class="js-cat rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">{{ c.name }}</button>
+          {% endfor %}
+        </div>
+
+        <div id="panel-msg" class="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+          Choose a customer to load their prices.
+        </div>
+        <div id="panel-grid" class="hidden">
+          <div id="product-grid" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+          <p id="grid-empty" class="hidden py-8 text-center text-sm text-slate-500">No products match that search.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================== RIGHT: RETURNED LINES + TOTAL =================== -->
+    <div class="lg:col-span-1">
+      <div class="sticky top-20 rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-900">
+            Returned items <span id="items-count" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">0</span>
+          </h3>
+        </div>
+        <div id="items-list" class="max-h-[28rem] divide-y divide-slate-100 overflow-y-auto"></div>
+        <p id="items-empty" class="px-4 py-8 text-center text-sm text-slate-400">No items added yet.</p>
+
+        <div class="border-t border-slate-200 bg-slate-50 px-4 py-3">
+          <dl class="space-y-1 text-sm">
+            <div class="flex items-center justify-between text-slate-500"><dt>Back to stock</dt><dd id="tot-restock">0</dd></div>
+            <div class="flex items-center justify-between text-slate-500"><dt>Damaged (not restocked)</dt><dd id="tot-damaged">0</dd></div>
+            <div class="mt-1 flex items-baseline justify-between border-t border-slate-200 pt-2">
+              <dt class="font-semibold text-slate-900">Total return value</dt>
+              <dd id="grand-total" class="text-xl font-semibold text-slate-900">0.00</dd>
+            </div>
+            <div id="balance-preview" class="hidden items-center justify-between pt-1 text-xs text-slate-500">
+              <dt>Customer balance</dt>
+              <dd><span id="bal-before"></span> → <span id="bal-after" class="font-semibold text-slate-900"></span></dd>
+            </div>
+          </dl>
+
+          <button type="submit" id="save-return" disabled
+                  class="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+            Save Return
+          </button>
+          <p id="save-note" class="mt-1.5 text-center text-xs text-slate-400">Pick a customer, then add at least one item.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<template id="item-row-tmpl">
+  <div class="js-item p-3">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <p class="js-name truncate text-sm font-medium text-slate-900"></p>
+        <p class="js-size text-xs text-slate-500"></p>
+      </div>
+      <button type="button" class="js-remove shrink-0 rounded-md px-1.5 text-lg leading-none text-slate-300 hover:bg-rose-50 hover:text-rose-600" aria-label="Remove">&times;</button>
+    </div>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Return qty</span>
+        <input type="number" step="0.001" min="0.001" inputmode="decimal"
+               class="js-qty block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+      <label class="block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Unit price</span>
+        <input type="number" step="0.01" min="0" inputmode="decimal"
+               class="js-price block w-full rounded-md border border-slate-300 px-2 py-1 text-right text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+      <label class="col-span-2 block">
+        <span class="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Reason</span>
+        <select class="js-reason block w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+          <option value="">Choose a reason…</option>
+          {% for value, label in reasons %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="col-span-2 block">
+        <span class="js-note-label mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-500">Note (optional)</span>
+        <input type="text" maxlength="255"
+               class="js-note block w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 shadow-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900">
+      </label>
+    </div>
+    <div class="mt-1.5 flex items-center justify-between text-xs">
+      <span class="js-stock-badge rounded-full px-2 py-0.5 font-semibold"></span>
+      <span class="text-slate-500">Line total: <span class="js-line-total font-semibold text-slate-900">0.00</span></span>
+    </div>
+  </div>
+</template>
+
+{% endblock %}
+
+{% block extra_js %}
+<script id="initial-items-data" type="application/json">{{ initial_items_json|safe }}</script>
+<script>
+  (function () {
+    const PRODUCTS_URL = "{{ products_url_template }}";
+    const BILLS_URL = "{{ bills_url_template }}";
+    const DAMAGED = "{{ damaged_reason }}";
+    const OTHER = "{{ other_reason }}";
+    const INITIAL_ITEMS = JSON.parse(document.getElementById('initial-items-data').textContent || '[]');
+
+    const custSelect = document.getElementById('r-customer');
+    const billSelect = document.getElementById('r-bill');
+    const searchEl = document.getElementById('product-search');
+    const panelMsg = document.getElementById('panel-msg');
+    const panelGrid = document.getElementById('panel-grid');
+    const grid = document.getElementById('product-grid');
+    const gridEmpty = document.getElementById('grid-empty');
+    const itemsList = document.getElementById('items-list');
+    const itemsEmpty = document.getElementById('items-empty');
+    const itemsCount = document.getElementById('items-count');
+    const rowTmpl = document.getElementById('item-row-tmpl');
+    const jsonEl = document.getElementById('items-json');
+    const saveBtn = document.getElementById('save-return');
+    const saveNote = document.getElementById('save-note');
+
+    const MONEY = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const QTY = new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 });
+    function money(n) { return MONEY.format(n); }
+    function num(v) { const n = parseFloat(v); return isFinite(n) ? n : NaN; }
+    function round(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+    let loaded = [];
+    let currentCategory = '';
+    let token = 0;
+    let nextRowId = 1;
+    // row id -> record. Keyed by row, not product: one product can sit on
+    // two lines with different reasons (some damaged, some fine).
+    const rows = new Map();
+
+    // ---- customer → bills + prices ----
+    function loadBills(preselect) {
+      const id = custSelect.value;
+      billSelect.replaceChildren();
+      if (!id) {
+        billSelect.append(new Option('Pick a customer first', ''));
+        billSelect.disabled = true;
+        return;
+      }
+      billSelect.append(new Option('Loading bills…', ''));
+      billSelect.disabled = true;
+      fetch(BILLS_URL.replace('999999999', id), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (custSelect.value !== id) return;
+          billSelect.replaceChildren(new Option('Not sure / no bill', ''));
+          (data.bills || []).forEach(function (b) {
+            billSelect.append(new Option(b.label, b.id, false, String(b.id) === String(preselect)));
+          });
+          billSelect.disabled = false;
+        })
+        .catch(function () {
+          billSelect.replaceChildren(new Option('Could not load bills', ''));
+        });
+    }
+
+    function loadProducts() {
+      const id = custSelect.value;
+      if (!id) {
+        loaded = [];
+        panelMsg.textContent = 'Choose a customer to load their prices.';
+        panelMsg.classList.remove('hidden');
+        panelGrid.classList.add('hidden');
+        return;
+      }
+      const mine = ++token;
+      panelMsg.textContent = 'Loading products…';
+      panelMsg.classList.remove('hidden');
+      panelGrid.classList.add('hidden');
+      fetch(PRODUCTS_URL.replace('999999999', id), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          if (mine !== token) return;
+          const list = res.data && Array.isArray(res.data.products) ? res.data.products
+                     : (Array.isArray(res.data) ? res.data : null);
+          if (!res.ok || !list) throw new Error((res.data && res.data.error) || 'Could not load products.');
+          loaded = list;
+          renderGrid();
+          panelMsg.classList.add('hidden');
+          panelGrid.classList.remove('hidden');
+        })
+        .catch(function (err) {
+          if (mine !== token) return;
+          panelMsg.textContent = err.message;
+        });
+    }
+
+    custSelect.addEventListener('change', function () {
+      loadBills('');
+      loadProducts();
+      pushTotals();
+    });
+
+    // ---- product grid ----
+    function renderGrid() {
+      const term = searchEl.value.trim().toLowerCase();
+      const list = loaded.filter(function (p) {
+        if (currentCategory && String(p.category_id) !== currentCategory) return false;
+        return !term || (p.name + ' ' + (p.size || '')).toLowerCase().indexOf(term) !== -1;
+      });
+      grid.replaceChildren();
+      list.forEach(function (p) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'rounded-xl border-2 border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 hover:shadow-sm';
+        const name = document.createElement('p');
+        name.className = 'truncate text-sm font-semibold text-slate-900';
+        name.textContent = p.name;
+        const size = document.createElement('p');
+        size.className = 'truncate text-xs ' + (p.size ? 'text-slate-500' : 'text-slate-300');
+        size.textContent = p.size || 'No size';
+        const price = document.createElement('p');
+        price.className = 'mt-2 text-base font-semibold text-slate-900';
+        price.textContent = p.unit_price;
+        const tag = document.createElement('p');
+        tag.className = 'text-[10px] font-semibold uppercase tracking-wide ' + (p.has_custom_price ? 'text-indigo-600' : 'text-slate-400');
+        tag.textContent = (p.has_custom_price ? 'Customer price' : 'Default price') + ' · ' + p.qty + ' in stock';
+        card.append(name, size, price, tag);
+        card.addEventListener('click', function () {
+          addRow({ product_id: p.id, product_name: p.name, size: p.size, qty: '1', unit_price: p.unit_price, reason: '', reason_note: '' }, true);
+        });
+        grid.appendChild(card);
+      });
+      gridEmpty.classList.toggle('hidden', list.length > 0);
+    }
+    searchEl.addEventListener('input', renderGrid);
+    document.querySelectorAll('.js-cat').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        currentCategory = btn.dataset.category;
+        document.querySelectorAll('.js-cat').forEach(function (b) {
+          const on = b === btn;
+          b.classList.toggle('bg-slate-900', on); b.classList.toggle('text-white', on);
+          b.classList.toggle('bg-slate-100', !on); b.classList.toggle('text-slate-600', !on);
+        });
+        renderGrid();
+      });
+    });
+
+    // ---- returned lines ----
+    function addRow(item, focus) {
+      const node = rowTmpl.content.firstElementChild.cloneNode(true);
+      const rec = {
+        id: nextRowId++,
+        node: node,
+        productId: item.product_id,
+        qtyEl: node.querySelector('.js-qty'),
+        priceEl: node.querySelector('.js-price'),
+        reasonEl: node.querySelector('.js-reason'),
+        noteEl: node.querySelector('.js-note'),
+      };
+      node.querySelector('.js-name').textContent = item.product_name;
+      node.querySelector('.js-size').textContent = item.size || '';
+      rec.qtyEl.value = item.qty;
+      rec.priceEl.value = item.unit_price;
+      rec.reasonEl.value = item.reason || '';
+      rec.noteEl.value = item.reason_note || '';
+
+      [rec.qtyEl, rec.priceEl, rec.noteEl].forEach(function (el) { el.addEventListener('input', pushTotals); });
+      rec.reasonEl.addEventListener('change', pushTotals);
+      node.querySelector('.js-remove').addEventListener('click', function () {
+        rows.delete(rec.id);
+        node.remove();
+        pushTotals();
+      });
+
+      rows.set(rec.id, rec);
+      itemsList.appendChild(node);
+      pushTotals();
+      if (focus) setTimeout(function () { rec.qtyEl.focus(); rec.qtyEl.select(); }, 30);
+    }
+
+    function paintRow(rec) {
+      const q = num(rec.qtyEl.value), p = num(rec.priceEl.value);
+      rec.node.querySelector('.js-line-total').textContent = money((q > 0 && p >= 0) ? round(q * p) : 0);
+      const reason = rec.reasonEl.value;
+      const badge = rec.node.querySelector('.js-stock-badge');
+      if (!reason) {
+        badge.textContent = 'Choose a reason';
+        badge.className = 'js-stock-badge rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-500';
+      } else if (reason === DAMAGED) {
+        badge.textContent = 'Not restocked';
+        badge.className = 'js-stock-badge rounded-full bg-rose-50 px-2 py-0.5 font-semibold text-rose-700';
+      } else {
+        badge.textContent = 'Back to stock';
+        badge.className = 'js-stock-badge rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700';
+      }
+      rec.node.querySelector('.js-note-label').textContent = reason === OTHER ? 'Describe the reason *' : 'Note (optional)';
+    }
+
+    function pushTotals() {
+      let total = 0, restock = 0, damaged = 0, bad = '';
+      const payload = [];
+      rows.forEach(function (rec) {
+        paintRow(rec);
+        const q = num(rec.qtyEl.value), p = num(rec.priceEl.value);
+        const reason = rec.reasonEl.value, note = rec.noteEl.value.trim();
+        if (!(q > 0)) { bad = bad || 'Enter a return quantity on every line.'; return; }
+        if (!(p >= 0)) { bad = bad || 'Enter a price on every line.'; return; }
+        if (!reason) { bad = bad || 'Choose a reason on every line.'; return; }
+        if (reason === OTHER && !note) { bad = bad || 'Describe the reason on lines marked Other.'; return; }
+        total += round(q * p);
+        if (reason === DAMAGED) damaged += q; else restock += q;
+        payload.push({ product_id: rec.productId, qty: q.toFixed(3), unit_price: p.toFixed(2), reason: reason, reason_note: note });
+      });
+      jsonEl.value = JSON.stringify(payload);
+      document.getElementById('grand-total').textContent = money(round(total));
+      document.getElementById('tot-restock').textContent = QTY.format(restock);
+      document.getElementById('tot-damaged').textContent = QTY.format(damaged);
+      itemsCount.textContent = rows.size;
+      itemsEmpty.classList.toggle('hidden', rows.size > 0);
+
+      // Returned goods are credited: the balance rises by the return value.
+      const opt = custSelect.selectedOptions[0];
+      const preview = document.getElementById('balance-preview');
+      if (opt && opt.value) {
+        const before = parseFloat(opt.dataset.balance) || 0;
+        document.getElementById('bal-before').textContent = money(before);
+        document.getElementById('bal-after').textContent = money(round(before + total));
+        preview.classList.remove('hidden');
+        preview.classList.add('flex');
+      } else {
+        preview.classList.add('hidden');
+        preview.classList.remove('flex');
+      }
+
+      let note = ' ';
+      if (!custSelect.value) note = 'Pick the customer returning the goods.';
+      else if (rows.size === 0) note = 'Add at least one item.';
+      else if (bad) note = bad;
+      saveNote.textContent = note;
+      saveBtn.disabled = note !== ' ';
+    }
+
+    // ---- init ----
+    if (custSelect.value) {
+      loadBills(billSelect.dataset.initial);
+      loadProducts();
+    }
+    INITIAL_ITEMS.forEach(function (item) { addRow(item, false); });
+    pushTotals();
+  })();
+</script>
+{% endblock %}
