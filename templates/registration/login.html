@@ -1,38 +1,14 @@
 {% extends "base.html" %}
 {% load static %}
-
 {% block title %}Sign in · Senovka Plastics{% endblock %}
-
 {% block anon_content %}
-<div class="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-12">
-  <div class="w-full max-w-md">
-
-    <!-- Brand -->
-    <div class="mb-8 text-center">
-      <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl  ">
-        <span class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden ">
-          <img
-            src="{% static 'images/logo.jpeg' %}"
-            alt="Senovka Plastics Logo"
-            class="h-full w-full object-cover"
-          >
-        </span>
-      </div>
-
-      <h1 class="text-2xl font-bold tracking-tight text-slate-900">
-        Senovka Plastics
-      </h1>
-      <p class="mt-1 text-sm text-slate-500">
-        Enterprise Resource Planning
-      </p>
-    </div>
-
-    <!-- Login Card -->
-    <div class="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-      <h2 class="mb-6 text-lg font-semibold text-slate-900">
-        Sign in to your account
-      </h2>
-
+<main id="workspace-main-login" class="auth-shell">
+  <section class="auth-story" aria-label="Senovka workspace">
+    <a href="/" class="auth-brand"><img src="{% static 'images/logo.jpeg' %}" alt="Senovka"><span>Senovka<small>Plastics ERP</small></span></a>
+    <div class="auth-story-copy"><span class="auth-eyebrow">Your everyday operations, connected</span><h1>A clearer view.<br>A better workday.</h1><p>Bring your factory, sales, stock and finances together in one organized workspace.</p><div class="auth-pills"><span>Production & stock</span><span>Sales & customers</span><span>Cash & reporting</span></div></div>
+    <p class="auth-story-footer">Built around the way Senovka works.</p>
+  </section>
+  <section class="auth-panel"><div class="auth-form-wrap"><h2>Welcome back.</h2><p class="auth-subtitle">Sign in to your Senovka workspace.</p>
       {% if form.errors %}
       <div class="mb-5 flex gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
         <svg class="mt-0.5 h-5 w-5 shrink-0 text-red-500"
@@ -54,7 +30,6 @@
         </p>
       </div>
       {% endif %}
-
       <form method="post" novalidate>
         {% csrf_token %}
 
@@ -116,12 +91,7 @@
           Sign in
         </button>
       </form>
-    </div>
-
-    <p class="mt-6 text-center text-xs text-slate-400">
-      Accounts are provisioned by your administrator.
-    </p>
-
-  </div>
-</div>
+    <p class="auth-note">Need access? Contact your administrator.</p>
+  </div></section>
+</main>
 {% endblock %}

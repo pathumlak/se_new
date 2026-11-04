@@ -365,8 +365,10 @@
     .apple-toast-close:hover { color: #fff; background: rgba(255,255,255,0.12); }
   </style>
   {% block extra_head %}{% endblock %}
+  <link rel="stylesheet" href="{% static 'css/workspace.css' %}">
 </head>
 <body class="h-full bg-slate-100 text-slate-800">
+<a class="skip-link" href="{% if user.is_authenticated %}#workspace-main{% else %}#workspace-main-login{% endif %}">Skip to content</a>
 
 {% if user.is_authenticated %}
 {% with active=request.resolver_match.url_name %}
@@ -400,6 +402,7 @@
       </button>
     </div>
 
+    <div class="px-4 pt-4 pb-1"><label class="sr-only" for="nav-filter">Find a section</label><input id="nav-filter" class="nav-filter" type="search" placeholder="Find a section…" autocomplete="off"></div>
     <!-- Nav -->
     <nav class="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
 
@@ -827,7 +830,7 @@
       </div>
     </header>
 
-    <main class="p-4 sm:p-6 lg:p-8">
+    <main id="workspace-main" class="p-4 sm:p-6 lg:p-8">
       {% if messages %}
         <div class="mb-5 space-y-2">
           {% for message in messages %}
@@ -851,6 +854,7 @@
 
       {% block content %}{% endblock %}
     </main>
+    <footer class="workspace-footer"><span>Senovka Plastics · Workspace</span><span>Production. People. Progress.</span></footer>
   </div>
 
 {% endwith %}
@@ -1065,7 +1069,7 @@
       } catch (e) { /* no Audio in this browser; fine */ }
 
       // Stagger the toasts so the stack animates rather than piling.
-      fresh.slice(0, 5).forEach(function (n, i) { showToast(n, i * 220); });
+      fresh.slice(0, window.innerWidth < 768 ? 1 : 3).forEach(function (n, i) { showToast(n, i * 220); });
 
       // Remember every fresh key + everything currently shown so we don't
       // re-toast on the next page navigation.
@@ -1086,6 +1090,7 @@
 {% endif %}
 
 {% block extra_js %}{% endblock %}
+<script src="{% static 'js/workspace.js' %}" defer></script>
 
 <script>
   /* ── Global input UX polish ────────────────────────────────────────────────
