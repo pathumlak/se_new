@@ -523,11 +523,19 @@
       <tbody>
         {% for row in rows %}
           <tr class="js-drawer-row"
-              data-search="{{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% elif row.entry.bill.walk_in_name %}{{ row.entry.bill.walk_in_name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
+              data-search="{{ row.search_text|lower }} {{ row.entry.txn_date|date:'j M Y'|lower }} {{ row.entry.reason|lower }} {% if row.entry.bill_id %}bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }} {% if row.entry.bill.customer_id %}{{ row.entry.bill.customer.name|lower }}{% elif row.entry.bill.walk_in_name %}{{ row.entry.bill.walk_in_name|lower }}{% endif %}{% endif %} {{ row.entry.get_txn_type_display|lower }} {{ row.entry.amount }}">
             <td class="whitespace-nowrap" style="color:#64748b">{{ row.entry.txn_date|date:"j M Y" }}</td>
 
             <td>
-              {% if row.entry.bill_id %}
+              {% if row.customer %}
+                <span class="font-semibold">{{ row.description }}</span>
+                <details class="mt-2 text-xs text-slate-500"><summary class="cursor-pointer">View receipt records</summary>
+                  <ul class="mt-2 space-y-2">{% for source in row.source_entries %}<li>
+                    Drawer #{{ source.pk }} · {{ source.reason }} · {{ source.amount|floatformat:2|intcomma }}
+                    {% if source.payment_id %}{% permitted 'customer_ledger' %}<a href="{% url 'core:customer_ledger' row.customer.pk %}?month=all&edit_payment={{ source.payment_id }}" class="ml-2 text-teal-700">Payment #{{ source.payment_id }}</a>{% endpermitted %}{% endif %}
+                  </li>{% endfor %}</ul>
+                </details>
+              {% elif row.entry.bill_id %}
                 {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
                   Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}
                 </a>{% endpermitted %}
@@ -582,7 +590,7 @@
                           class="js-delete btn-row-delete">Delete</button>{% endpermitted %}
                 </div>
               {% else %}
-                <span class="from-bill-tag">From Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}</span>
+                <span class="from-bill-tag">{% if row.customer %}Customer receipt{% elif row.entry.bill_id %}From Bill #{{ row.entry.bill.bill_number|default:row.entry.bill_id }}{% else %}Linked payment{% endif %}</span>
               {% endif %}
             </td>
           </tr>

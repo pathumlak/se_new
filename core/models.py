@@ -803,6 +803,11 @@ class CashDrawer(models.Model):
         related_name="cash_drawer_entries",
     )
 
+    payment = models.ForeignKey(
+        Payment, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="drawer_entries",
+    )
+
     edit_reason = models.CharField(max_length=500, blank=True)
     edited_at = models.DateTimeField(null=True, blank=True)
     edited_by = models.ForeignKey(

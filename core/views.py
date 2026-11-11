@@ -1,3 +1,5 @@
+from .payment_display import consolidate_ledger_payments, cash_drawer_rows
+
 import hmac
 import json
 import re
@@ -3350,10 +3352,11 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         .exclude(cheques__status=Cheque.Status.HELD)
     )
     for payment in direct_payments:
+        cheque = payment.cheques.order_by("pk").first()
         if customer.is_supplier:
             entries.append(
                 {
-                    "date": timezone.localdate(payment.paid_at),
+                    "date": cheque.received_date if cheque else timezone.localdate(payment.paid_at),
                     "kind": 2,
                     "pk": payment.pk,
                     "description": (
@@ -3369,7 +3372,7 @@ def _ledger_rows(customer, from_date=None, to_date=None):
         else:
             entries.append(
                 {
-                    "date": timezone.localdate(payment.paid_at),
+                    "date": cheque.received_date if cheque else timezone.localdate(payment.paid_at),
                     "kind": 2,
                     "pk": payment.pk,
                     "description": f"{payment.get_method_display()} received (against balance)",
@@ -3542,6 +3545,8 @@ def _ledger_rows(customer, from_date=None, to_date=None):
                 "return_lines": lines,
             }
         )
+
+    entries = consolidate_ledger_payments(entries)
 
     # ── Opening balance ──────────────────────────────────────────────────
     # The system went live after these customers already had money on their
@@ -3844,12 +3849,16 @@ def customer_payment_edit(request, pk, payment_pk):
             Payment.objects.filter(pk=payment.pk).update(amount=new_amount)
             payment.amount = new_amount
 
-        payment.paid_at = payment.paid_at.replace(
+        payment.paid_at = timezone.localtime(payment.paid_at).replace(
             year=new_date.year, month=new_date.month, day=new_date.day
         )
         payment.save(update_fields=["amount", "paid_at"])
         payment.cheques.update(amount=new_amount, received_date=new_date)
-        CashTransfer.objects.filter(payment=payment).update(amount=new_amount)
+        payment.drawer_entries.update(amount=new_amount, txn_date=new_date)
+        CashTransfer.objects.filter(payment=payment).update(amount=new_amount, transferred_at=payment.paid_at)
+        if payment.bill_id:
+            payment.bill.refresh_from_db()
+            _refresh_bill_status(payment.bill)
         PaymentEditAudit.objects.create(
             payment=payment,
             original_date=original_date,
@@ -4122,6 +4131,15 @@ def _read_bill_date(raw):
     if parsed > timezone.localdate():
         raise BillError("A bill can't be dated in the future.")
     return parsed
+
+
+def _read_payment_date(raw):
+    selected = _parse_date(str(raw or "").strip())
+    if selected is None:
+        raise BillError("Select a valid payment date.")
+    if selected > timezone.localdate():
+        raise BillError("A payment date cannot be in the future.")
+    return selected
 
 
 def _optional_decimal(raw, label):
@@ -4417,16 +4435,12 @@ def _record_payments(bill, customer, parts, when=None, paid_on=None):
     one. Kept explicit so a corrective settlement on last month's date
     lands in last month's cash drawer, not today's.
 
-    `paid_on`, when given, dates the Payment rows themselves (the ledger reads
-    a cash payment's day off paid_at). Only a settlement passes it; a bill's
-    payments keep the moment they were taken.
+    `paid_on` supplies the actual receipt date for cash in every entry flow.
+    Cheques use their individually selected received dates.
     """
-    now = timezone.now()
-    if paid_on is not None:
-        local = timezone.localtime(now)
-        now = local.replace(year=paid_on.year, month=paid_on.month, day=paid_on.day)
-    if when is None:
-        when = bill.bill_date if bill is not None else timezone.localdate()
+    receipt_date = paid_on or when or timezone.localdate()
+    now = timezone.localtime().replace(year=receipt_date.year, month=receipt_date.month, day=receipt_date.day)
+    when = receipt_date
 
     # A short label used on CashDrawer.reason so a drawer entry can be read
     # back without joining anything. bill.bill_number, not bill.pk: that's the
@@ -4462,6 +4476,7 @@ def _record_payments(bill, customer, parts, when=None, paid_on=None):
                 amount=parts["cash"],
                 reason=f"{source_label} cash",
                 bill=bill,
+                payment=payment,
             )
             CashDrawer.objects.create(
                 txn_date=when,
@@ -4469,6 +4484,7 @@ def _record_payments(bill, customer, parts, when=None, paid_on=None):
                 amount=parts["cash"],
                 reason=f"{source_label} cash to {payment.get_account_display()}",
                 bill=bill,
+                payment=payment,
             )
         else:
             CashDrawer.objects.create(
@@ -4477,6 +4493,7 @@ def _record_payments(bill, customer, parts, when=None, paid_on=None):
                 amount=parts["cash"],
                 reason=f"{source_label} cash",
                 bill=bill,
+                payment=payment,
             )
 
     for cheque in parts["cheques"]:
@@ -4485,7 +4502,7 @@ def _record_payments(bill, customer, parts, when=None, paid_on=None):
             customer=customer if bill is None else None,
             method=Payment.Method.CHEQUE,
             amount=cheque["amount"],
-            paid_at=now,
+            paid_at=timezone.localtime().replace(year=cheque["received_date"].year, month=cheque["received_date"].month, day=cheque["received_date"].day),
         )
         Cheque.objects.create(
             payment=payment,
@@ -4747,6 +4764,8 @@ def _write_bill(bill, user, payload):
         parts["credit_override"] = bool((payload.get("payment") or {}).get("credit_override"))
         _check_credit_limit(customer, total, parts, user)
 
+    payment_date = _read_payment_date(payload.get("payment_date", timezone.localdate().isoformat())) if parts["cash"] > ZERO else timezone.localdate()
+
     paid = parts["paid"]
     if customer is not None and customer.balance > ZERO and not user.has_erp_permission("balances.use"):
         raise BillError("You do not have permission to use the customer's existing credit.")
@@ -4849,7 +4868,7 @@ def _write_bill(bill, user, payload):
     # 3. money. Payment/Cheque/CashDrawer rows don't need a customer — a
     # walk-in still hits the till and the drawer exactly like any other cash
     # sale, it just isn't collected against anyone's account.
-    _record_payments(bill, customer, parts)
+    _record_payments(bill, customer, parts, paid_on=payment_date)
 
     # 4. balance. F() so a balance moved by another till in the meantime is
     # adjusted rather than overwritten. Skipped entirely for a walk-in: there
@@ -5098,7 +5117,7 @@ def bill_add_payment(request, pk):
             }
 
         with transaction.atomic():
-            _record_payments(bill, bill.customer, parts)
+            _record_payments(bill, bill.customer, parts, paid_on=data["payment_date"])
 
             # Two counters move by the same figure: the bill's paid_amount so
             # remaining_balance drops, and balance_change so the pre-edit
@@ -5414,6 +5433,7 @@ def _bill_initial(bill):
     return {
         "customer_id": bill.customer_id,
         "bill_date": bill.bill_date.isoformat(),
+        "payment_date": timezone.localdate(bill.payments.order_by("paid_at", "pk").first().paid_at).isoformat() if bill.payments.exists() else timezone.localdate().isoformat(),
         "is_walk_in": bill.is_walk_in,
         "walk_in_name": bill.walk_in_name,
         "delivery_charge": f"{bill.delivery_charge:.2f}",
@@ -6848,7 +6868,7 @@ def _is_manual(entry):
     bill would go on insisting the cash arrived. Those are corrected by editing
     the bill.
     """
-    return entry.bill_id is None
+    return not (entry.bill_id or entry.supplier_bill_id or entry.payment_id)
 
 
 def _cash_drawer_balance_as_of(on_date):
@@ -6893,7 +6913,7 @@ def _cash_drawer_page(
     from_date = _parse_date(request.GET.get("from_date"))
     to_date = _parse_date(request.GET.get("to_date"))
 
-    entries = CashDrawer.objects.select_related("bill", "bill__customer")
+    entries = CashDrawer.objects.select_related("bill", "bill__customer", "payment", "payment__customer")
     if from_date:
         entries = entries.filter(txn_date__gte=from_date)
     if to_date:
@@ -6920,26 +6940,7 @@ def _cash_drawer_page(
     else:
         opening = ZERO
 
-    rows = []
-    running = opening
-    total_in = ZERO
-    total_out = ZERO
-    for entry in entries:
-        is_in = entry.txn_type == CashDrawer.TxnType.IN
-        running += entry.amount if is_in else -entry.amount
-        if is_in:
-            total_in += entry.amount
-        else:
-            total_out += entry.amount
-        rows.append(
-            {
-                "entry": entry,
-                "is_in": is_in,
-                "running": running,
-                # Drives the Actions column: only a hand-typed row gets buttons.
-                "is_manual": _is_manual(entry),
-            }
-        )
+    rows, total_in, total_out, running = cash_drawer_rows(entries, opening)
 
     # The rows are paginated, the arithmetic above is not. Every row's running
     # balance depends on every row before it, and opening/closing/totals
@@ -7015,7 +7016,7 @@ def cash_drawer_excel(request):
     to_date = _parse_date(request.GET.get("to_date"))
     month_filter = get_month_filter(request)
 
-    entries = CashDrawer.objects.select_related("bill", "bill__customer")
+    entries = CashDrawer.objects.select_related("bill", "bill__customer", "payment", "payment__customer")
     if from_date:
         entries = entries.filter(txn_date__gte=from_date)
     if to_date:
@@ -7078,31 +7079,13 @@ def cash_drawer_excel(request):
         c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
         row += 1
 
-    running = opening
-    total_in = ZERO
-    total_out = ZERO
-
-    for entry in entries:
-        is_in = entry.txn_type == CashDrawer.TxnType.IN
-        running += entry.amount if is_in else -entry.amount
-        if is_in:
-            total_in += entry.amount
-        else:
-            total_out += entry.amount
-
-        # Description mirrors what the page shows.
-        if entry.bill_id:
-            desc = f"Bill #{entry.bill_id}"
-            if entry.bill and entry.bill.customer_id:
-                desc += f" · {entry.bill.customer.name}"
-            if entry.reason:
-                desc += f" — {entry.reason}"
-        elif entry.reason:
-            desc = entry.reason
-        else:
-            desc = entry.get_txn_type_display()
-
-        source = f"Bill #{entry.bill_id}" if entry.bill_id else "Manual"
+    display_rows, total_in, total_out, running = cash_drawer_rows(entries, opening)
+    for display in display_rows:
+        entry = display["entry"]
+        is_in = display["is_in"]
+        running = display["running"]
+        desc = display["description"]
+        source = "; ".join(f"Drawer #{item.pk}" for item in display["source_entries"])
 
         ws.cell(row=row, column=1, value=entry.txn_date.strftime("%Y-%m-%d"))
         ws.cell(row=row, column=2, value=desc)

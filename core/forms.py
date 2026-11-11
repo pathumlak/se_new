@@ -1173,6 +1173,17 @@ class BillPaymentForm(forms.Form):
     a generic 'too much'.
     """
 
+    payment_date = forms.DateField(
+        initial=timezone.localdate,
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={"class": INPUT_CLASSES, "type": "date"}),
+    )
+
+    def clean_payment_date(self):
+        value = self.cleaned_data["payment_date"]
+        if value > timezone.localdate():
+            raise forms.ValidationError("A payment date cannot be in the future.")
+        return value
+
     METHOD_CHOICES = [
         (Payment.Method.CASH, "Cash"),
         (Payment.Method.CHEQUE, "Cheque"),
@@ -1260,6 +1271,7 @@ class BillPaymentForm(forms.Form):
         method = cleaned.get("method")
 
         if method == Payment.Method.CHEQUE:
+            cleaned["received_date"] = cleaned.get("payment_date")
             required = {
                 "cheque_no": "Cheque number is required.",
                 "bank_name": "Bank name is required.",

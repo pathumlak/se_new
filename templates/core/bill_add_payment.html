@@ -40,6 +40,12 @@
 
     <form method="post" novalidate>
       {% csrf_token %}
+      <div class="mb-5">
+        <label for="{{ form.payment_date.id_for_label }}" class="mb-2 block text-sm font-medium text-slate-700">Actual payment date</label>
+        {{ form.payment_date }}
+        {% for error in form.payment_date.errors %}<p class="mt-1 text-sm text-rose-600">{{ error }}</p>{% endfor %}
+      </div>
+
 
       <div class="space-y-5">
 
@@ -113,13 +119,7 @@
               {{ form.acc_no }}
             </div>
 
-            <div>
-              <label for="{{ form.received_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">
-                Received <span class="text-rose-500">*</span>
-              </label>
-              {{ form.received_date }}
-              {% for error in form.received_date.errors %}<p class="mt-1.5 text-xs text-rose-600">{{ error }}</p>{% endfor %}
-            </div>
+
 
             <div>
               <label for="{{ form.maturity_date.id_for_label }}" class="mb-1.5 block text-sm font-medium text-slate-700">

@@ -1,0 +1,15 @@
+[
+  "core/tests_payment_consolidation.py",
+  "core/models.py",
+  "core/payment_display.py",
+  "core/forms.py",
+  "core/views.py",
+  "core/migrations/0040_link_existing_cash_receipts.py",
+  "core/migrations/0039_cashdrawer_payment.py",
+  "templates/core/customer_ledger.html",
+  "templates/core/cash_drawer.html",
+  "templates/core/_bill_form.html",
+  "templates/core/_bill_create_js.html",
+  "templates/core/bill_add_payment.html",
+  "PAYMENT_DISPLAY.md"
+]

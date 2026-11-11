@@ -443,6 +443,11 @@ spanning lines, it isn't stripped and renders onto the page as text.
 </template>
 
 <div id="step-pay" class="hidden grid gap-5 lg:grid-cols-3">
+  <div class="lg:col-span-3 rounded-xl border border-slate-200 bg-white p-5">
+    <label for="payment-date" class="mb-2 block text-sm font-semibold text-slate-900">Cash payment date</label>
+    <input type="date" id="payment-date" value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+    <p class="mt-2 text-xs text-slate-500">Select the date cash was actually received. Each cheque uses its own received date below.</p>
+  </div>
 
   <div class="lg:col-span-2">
     <!-- Type selector -->
