@@ -29,6 +29,7 @@ class User(AbstractUser):
         MANAGER = "manager", "Manager"
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.MANAGER)
+    notification_reads = models.JSONField(default=dict, blank=True, editable=False)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

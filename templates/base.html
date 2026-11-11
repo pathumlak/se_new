@@ -298,6 +298,7 @@
       border-bottom: 1px solid #f1f5f9;
       transition: background 0.12s;
     }
+    html.dark #notif-read-all { color: #5eead4; }
     .notif-item:last-child { border-bottom: none; }
     .notif-item:hover { background: #f8fafc; }
     .notif-icon {
@@ -752,16 +753,16 @@
             <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
               <div>
                 <p class="text-[13px] font-bold text-slate-900">Notifications</p>
-                <p class="text-[11px] text-slate-500 mt-0.5">
-                  {% if notification_count %}{{ notification_count }} needs attention{% else %}You're all caught up{% endif %}
+                <p id="notif-status" class="text-[11px] text-slate-500 mt-0.5" role="status">
+                  {% if notification_count %}{{ notification_count }} unread{% else %}You're all caught up{% endif %}
                 </p>
               </div>
-              <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Live</span>
+              <button type="button" id="notif-read-all" class="rounded-lg px-2 py-2 text-[11px] font-semibold text-teal-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-default" {% if not notification_count %}disabled{% endif %}>Mark all as read</button>
             </div>
 
             <div class="max-h-[420px] overflow-y-auto" id="notif-list">
               {% for notif in notifications %}
-                <div class="notif-item" data-key="{{ notif.key }}">
+                <div class="notif-item {% if notif.is_read %}is-read{% endif %}" data-key="{{ notif.key }}" data-read="{{ notif.is_read|yesno:'true,false' }}">
                   <a href="{{ notif.url }}" class="flex flex-1 min-w-0 gap-3">
                     <span class="notif-icon {{ notif.level }}">
                       {% if notif.icon == 'package' %}
@@ -784,6 +785,7 @@
                     </span>
                     <div class="min-w-0 flex-1">
                       <p class="text-[13px] font-semibold text-slate-900 truncate">{{ notif.title }}</p>
+                      <span class="notif-read-label text-[10px] text-slate-500" {% if not notif.is_read %}hidden{% endif %}>Read</span>
                       <p class="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{{ notif.body }}</p>
                     </div>
                   </a>
@@ -965,6 +967,46 @@
     }
     const csrftoken = getCookie('csrftoken');
 
+    const readAll = document.getElementById('notif-read-all');
+    const status = document.getElementById('notif-status');
+    function updateNotificationCount() {
+      const unread = [...root.querySelectorAll('.notif-item')].filter(item => item.style.display !== 'none' && item.dataset.read !== 'true').length;
+      const badge = bell.querySelector('.bell-badge');
+      if (badge) {
+        badge.textContent = unread > 9 ? '9+' : String(unread);
+        badge.style.display = unread === 0 ? 'none' : '';
+      }
+      bell.classList.toggle('has-new', unread > 0);
+      status.textContent = unread ? unread + ' unread' : "You're all caught up";
+      readAll.disabled = unread === 0;
+    }
+    readAll.addEventListener('click', async function () {
+      readAll.disabled = true;
+      readAll.textContent = 'Marking…';
+      const form = new FormData();
+      form.append('action', 'read_all');
+      try {
+        const response = await fetch(dismissUrl, {
+          method: 'POST', credentials: 'same-origin', body: form,
+          headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!response.ok || !(await response.json()).ok) throw new Error('Not saved');
+        root.querySelectorAll('.notif-item').forEach(item => {
+          item.dataset.read = 'true';
+          item.classList.add('is-read');
+          item.querySelector('.notif-read-label').hidden = false;
+        });
+        if (stack) stack.replaceChildren();
+        notifications.forEach(item => { item.is_read = true; });
+        updateNotificationCount();
+      } catch (error) {
+        status.textContent = 'Could not mark notifications as read. Please try again.';
+        readAll.disabled = false;
+      } finally {
+        readAll.textContent = 'Mark all as read';
+      }
+    });
+
     // ── Per-item dismiss (× button) ─────────────────────────────────────
     document.querySelectorAll('.js-notif-dismiss').forEach(function (btn) {
       btn.addEventListener('click', function (e) {
@@ -974,13 +1016,7 @@
         const item = btn.closest('.notif-item');
         if (item) item.style.display = 'none';
 
-        // Adjust the badge count so the UI feels instant.
-        const badge = bell.querySelector('.bell-badge');
-        if (badge) {
-          const n = parseInt((badge.textContent || '0').replace('9+', '10'), 10) - 1;
-          if (n <= 0) { badge.remove(); bell.classList.remove('has-new'); }
-          else badge.textContent = n > 9 ? '9+' : String(n);
-        }
+        updateNotificationCount();
 
         // Fire-and-forget POST. If it fails, the notification comes back on
         // the next page load anyway — no user-facing error needed.
@@ -1005,7 +1041,7 @@
     try { seen = new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]')); }
     catch (e) { seen = new Set(); }
 
-    const fresh = notifications.filter(function (n) { return !seen.has(n.key); });
+    const fresh = notifications.filter(function (n) { return !n.is_read && !seen.has(n.key); });
 
     function iconSVG(kind) {
       if (kind === 'cheque') {
@@ -1041,7 +1077,7 @@
       });
 
       // Slide in on the next tick so the transition kicks.
-      setTimeout(function () { toast.classList.add('show'); }, 50 + offsetMs);
+      setTimeout(function () { if (!notif.is_read) toast.classList.add('show'); }, 50 + offsetMs);
       // Auto-dismiss after ~7s, matching the Apple "banner" style.
       setTimeout(function () { dismissToast(toast); }, 7500 + offsetMs);
     }

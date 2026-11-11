@@ -231,6 +231,12 @@ def notification_dismiss(request):
     before the request even completes, and this write only exists so the
     same alert doesn't come back on the next page load.
     """
+    if request.POST.get("action") == "read_all":
+        from .context_processors import notifications as visible_notifications
+        from .notifications import mark_all_read
+        mark_all_read(request.user, visible_notifications(request)["notifications"])
+        return JsonResponse({"ok": True, "unread_count": 0})
+
     key = (request.POST.get("key") or "").strip()
     if key:
         dismiss_notification(request.session, key)

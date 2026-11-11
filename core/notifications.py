@@ -275,3 +275,24 @@ def build_notifications(session, low_threshold, warning_days, order_followup_day
     visible = [item for item in all_items if item["key"] not in dismissals]
 
     return visible, total
+
+
+def read_signature(notification):
+    """A changed alert is unread again; generated timestamps are not content."""
+    import hashlib
+    import json
+    content = [notification.get(field, "") for field in ("kind", "level", "title", "body")]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest()
+
+
+def mark_all_read(user, notifications):
+    """Persist read state per account, independently of temporary dismissals."""
+    from django.db import transaction
+    from .models import User
+    with transaction.atomic():
+        current = User.objects.select_for_update().get(pk=user.pk)
+        reads = dict(current.notification_reads or {})
+        for notification in notifications:
+            reads[notification["key"]] = read_signature(notification)
+        User.objects.filter(pk=user.pk).update(notification_reads=reads)
+    user.notification_reads = reads

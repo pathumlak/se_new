@@ -64,7 +64,11 @@ def notifications(request):
     from django.urls import resolve
     from .permissions import can_access
     visible = [item for item in visible if can_access(user, resolve(item["url"]).url_name)]
+    from .notifications import read_signature
+    reads = user.notification_reads or {}
+    for item in visible:
+        item["is_read"] = reads.get(item["key"]) == read_signature(item)
     return {
         "notifications": visible,
-        "notification_count": len(visible),
+        "notification_count": sum(not item["is_read"] for item in visible),
     }

@@ -1,0 +1,9 @@
+[
+  "core/models.py",
+  "core/notifications.py",
+  "core/context_processors.py",
+  "core/views.py",
+  "templates/base.html",
+  "core/migrations/0041_user_notification_reads.py",
+  "core/tests_notification_reads.py"
+]
