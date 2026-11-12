@@ -372,7 +372,7 @@
       Rs {{ balance|floatformat:2|intcomma }}
     </p>
     <p class="mt-2 text-[11px] text-slate-400 leading-relaxed">
-      Cash taken in on bills, less what has been withdrawn or moved out.
+      Cash received from bills and account settlements, less withdrawals and transfers.
     </p>
   </div>
 
@@ -417,10 +417,10 @@
   </div>
 
   <div class="drawer-stat strip-emerald">
-    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Transferred · Senovka Acc</p>
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Banked · Senovka Acc</p>
     <p class="text-2xl font-extrabold tracking-tight text-slate-900">{{ senovka_banked|floatformat:2|intcomma }}</p>
     <p class="mt-1.5 text-[11px] text-slate-400">
-      {% if month_filter.is_all_time %}All time · bill payments only.{% else %}{{ month_filter.label }} · resets each month.{% endif %}
+      {% if month_filter.is_all_time %}All time · linked customer receipts.{% else %}{{ month_filter.label }} · resets each month.{% endif %}
     </p>
   </div>
 
@@ -428,11 +428,11 @@
 
 <!-- Info callout -->
 <div class="info-callout mb-5">
-  The account total tracks how much was transferred to the Senovka account
-  {% if month_filter.is_all_time %}across all time{% else %}in {{ month_filter.label }}{% endif %}
-  from bill payments. They reset to zero at the start of each month — pick another month above to see its total.
-  A transfer recorded on this page comes off the drawer and is named in the log below, but isn't counted in
-  those totals — the drawer has nowhere to record which account it went to.
+  The Senovka account total includes direct bank receipts and cash transferred from customer payments
+  {% if month_filter.is_all_time %}across all time{% else %}in {{ month_filter.label }}{% endif %}.
+  Cheques and direct bank receipts appear in the log without increasing physical cash.
+  Manual withdrawals and transfers remain in the cash log.
+
 </div>
 
 <!-- ═══════════════ MONTH FILTER ═══════════════ -->
@@ -529,11 +529,17 @@
             <td>
               {% if row.customer %}
                 <span class="font-semibold">{{ row.description }}</span>
+                {% if row.non_cash %}<p class="mt-1 text-xs font-medium text-slate-600">Total received: {{ row.entry.amount|floatformat:2|intcomma }} · Physical cash: {{ row.cash_in|floatformat:2|intcomma }} · Non-cash: {{ row.non_cash|floatformat:2|intcomma }}</p>{% endif %}
                 <details class="mt-2 text-xs text-slate-500"><summary class="cursor-pointer">{% if row.is_transfer %}View transfer records{% else %}View receipt records{% endif %}</summary>
                   <ul class="mt-2 space-y-2">{% for source in row.source_entries %}<li>
                     Drawer #{{ source.pk }} · {{ source.reason }} · {{ source.amount|floatformat:2|intcomma }}
-                    {% if source.payment_id %}{% permitted 'customer_ledger' %}<a href="{% url 'core:customer_ledger' row.customer.pk %}?month=all&edit_payment={{ source.payment_id }}" class="ml-2 text-teal-700">Payment #{{ source.payment_id }}</a>{% endpermitted %}{% endif %}
+                    {% if source.payment.settlement_id %}
+                      <span> · {{ source.payment.get_method_display }}</span>
+                      {% for cheque in source.payment.cheques.all %}<span> · Cheque {{ cheque.cheque_no }} · {{ cheque.bank_name }} · {{ cheque.get_status_display }}</span>{% endfor %}
+                      {% permitted 'customer_settlement_detail' %}<a class="ml-2 text-teal-700" href="{% url 'core:customer_settlement_detail' source.payment.settlement_id %}">{{ source.payment.settlement.reference }}</a>{% endpermitted %}
+                    {% elif source.payment_id %}{% permitted 'customer_ledger' %}<a href="{% url 'core:customer_ledger' row.customer.pk %}?month=all&edit_payment={{ source.payment_id }}" class="ml-2 text-teal-700">Payment #{{ source.payment_id }}</a>{% endpermitted %}{% endif %}
                   </li>{% endfor %}</ul>
+                  {% for settlement in row.settlements %}{% include 'core/partials/settlement_details.html' %}{% endfor %}
                 </details>
               {% elif row.entry.bill_id %}
                 {% permitted 'bill_detail' 'GET' %}<a href="{% url 'core:bill_detail' row.entry.bill_id %}" class="bill-link">
@@ -562,10 +568,10 @@
             </td>
 
             <td class="text-right whitespace-nowrap">
-              {% if row.is_in %}<span class="amt-in">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
+              {% if row.cash_in %}<span class="amt-in">{{ row.cash_in|floatformat:2|intcomma }}</span>{% endif %}
             </td>
             <td class="text-right whitespace-nowrap">
-              {% if not row.is_in %}<span class="amt-out">{{ row.entry.amount|floatformat:2|intcomma }}</span>{% endif %}
+              {% if row.cash_out %}<span class="amt-out">{{ row.cash_out|floatformat:2|intcomma }}</span>{% endif %}
             </td>
             <td class="text-right whitespace-nowrap font-bold {% if row.running < 0 %}amt-neg{% else %}text-slate-900{% endif %}">
               {{ row.running|floatformat:2|intcomma }}
@@ -643,6 +649,7 @@
 
       {% if rows %}
         <tfoot>
+          {% if non_cash_total %}<tr><td colspan="6" class="text-right text-sm text-slate-600">Non-cash receipts: {{ non_cash_total|floatformat:2|intcomma }} · excluded from physical cash totals</td></tr>{% endif %}
           <tr>
             <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8">
               Totals{% if is_filtered %} <span style="font-weight:400;text-transform:none;letter-spacing:0">(range shown)</span>{% endif %}

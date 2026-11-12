@@ -1,3 +1,4 @@
+import uuid
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -1425,6 +1426,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
         )
 
     def test_customer_settlement_uses_receipt_date_for_ledger_and_drawer(self):
+        self.client.force_login(self.make_admin())
         customer = Customer.objects.create(
             name="August Settlement",
             balance=Decimal("-300.00"),
@@ -1451,6 +1453,7 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
             response = self.client.post(
                 reverse("core:customer_settle", args=[customer.pk]),
                 {
+                    "request_token": str(uuid.uuid4()), "note": "Outstanding payment", "notice": "Account receipt",
                     "method": "cash",
                     "cash_amount": "300.00",
                     "cash_account": "",
@@ -1459,22 +1462,22 @@ class CustomerLedgerTests(UserFactoryMixin, TestCase):
                 },
             )
 
-        self.assertRedirects(response, reverse("core:customer_ledger", args=[customer.pk]))
+        self.assertRedirects(response, reverse("core:customer_settlement_detail", args=[Payment.objects.get(customer=customer, settlement__isnull=False).settlement_id]))
         first_bill.refresh_from_db()
         second_bill.refresh_from_db()
         self.assertEqual(first_bill.bill_date, date(2026, 7, 1))
         self.assertEqual(second_bill.bill_date, date(2026, 7, 1))
         self.assertEqual(
             list(CashDrawer.objects.order_by("txn_date", "id").values_list("txn_date", "amount")),
-            [(date(2026, 8, 2), Decimal("100.00")), (date(2026, 8, 2), Decimal("200.00"))],
+            [(date(2026, 8, 2), Decimal("300.00"))],
         )
 
         rows = self.client.get(
             reverse("core:customer_ledger", args=[customer.pk]),
             {"month": "all"},
         ).context["rows"]
-        payment_rows = [row for row in rows if row.get("payment_pk")]
-        self.assertEqual([row["date"] for row in payment_rows], [date(2026, 8, 2), date(2026, 8, 2)])
+        payment_rows = [row for row in rows if row.get("settlement")]
+        self.assertEqual([row["date"] for row in payment_rows], [date(2026, 8, 2)])
 
 
 class CustomerPricePageTests(UserFactoryMixin, TestCase):
@@ -8043,7 +8046,7 @@ class CustomerSettlementDateTests(UserFactoryMixin, TestCase):
         self.url = reverse("core:customer_settle", args=[self.customer.pk])
 
     def settle(self, **extra):
-        data = {"method": "cash", "cash_amount": "400.00", "cash_account": "", "cheques_json": ""}
+        data = {"request_token": str(uuid.uuid4()), "note": "Account payment", "notice": "Receipt", "method": "cash", "cash_amount": "400.00", "cash_account": "", "cheques_json": ""}
         data.update(extra)
         return self.client.post(self.url, data)
 
@@ -8068,12 +8071,12 @@ class CustomerSettlementDateTests(UserFactoryMixin, TestCase):
     def test_selected_date_dates_the_payment_drawer_and_ledger(self):
         chosen = timezone.localdate() - timedelta(days=10)
         response = self.settle(settlement_date=chosen.isoformat())
-        self.assertRedirects(response, reverse("core:customer_ledger", args=[self.customer.pk]))
+        self.assertRedirects(response, reverse("core:customer_settlement_detail", args=[Payment.objects.get().settlement_id]))
         payment = Payment.objects.get()
         self.assertEqual(timezone.localtime(payment.paid_at).date(), chosen)
         self.assertEqual(CashDrawer.objects.get().txn_date, chosen)
         self.customer.refresh_from_db()
-        row = next(r for r in views._ledger_rows(self.customer) if r.get("payment_pk"))
+        row = next(r for r in views._ledger_rows(self.customer) if r.get("settlement"))
         self.assertEqual(row["date"], chosen)
         self.assertEqual(self.customer.balance, Decimal("-600.00"))
 

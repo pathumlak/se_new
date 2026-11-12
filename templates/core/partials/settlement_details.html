@@ -1,0 +1,10 @@
+{% load humanize erp_access %}
+<div class="mt-2 space-y-1 text-xs text-slate-600">
+  <p><strong>Outstanding Balance Settlement</strong> · {% permitted 'customer_settlement_detail' %}<a class="font-semibold text-teal-700 hover:underline" href="{% url 'core:customer_settlement_detail' settlement.pk %}">{{ settlement.reference }}</a>{% endpermitted %} · {{ settlement.method_label }} · {{ settlement.get_status_display }}</p>
+  <p>{{ settlement.customer.name }} · {{ settlement.settlement_date|date:"j M Y" }} · {{ settlement.amount|floatformat:2|intcomma }}</p>
+  <div><strong>Settlement note</strong><div class="whitespace-pre-wrap">{{ settlement.note }}</div></div>
+  <div><strong>Payment notice / description</strong><div class="whitespace-pre-wrap">{{ settlement.notice }}</div></div>
+  {% if settlement.bank_reference %}<p>Bank: {{ settlement.bank_name }} · Reference: {{ settlement.bank_reference }}</p>{% endif %}
+  {% for cheque in settlement.cheque_records %}<p>Cheque {{ cheque.cheque_no }} · {{ cheque.bank_name }} · {{ cheque.get_status_display }} · {{ cheque.amount|floatformat:2|intcomma }}</p>{% endfor %}
+  <p>Available balance at recording: {{ settlement.previous_balance|floatformat:2|intcomma }} → {{ settlement.updated_balance|floatformat:2|intcomma }}</p>
+</div>

@@ -1,3 +1,4 @@
+import uuid
 """Task delegation must agree across administration, navigation and HTTP writes."""
 from datetime import date
 from decimal import Decimal
@@ -219,7 +220,7 @@ class TaskPermissionTests(TestCase):
         self.customer.balance=-100
         self.customer.save()
         self.grant('billing.settle')
-        payload={'method':'cash','cash_amount':'20','settlement_date':date.today().isoformat()}
+        payload={'request_token':str(uuid.uuid4()),'note':'Partial receipt','notice':'Payment', 'method':'cash','cash_amount':'20','settlement_date':date.today().isoformat()}
         url=reverse('core:customer_settle',args=[self.customer.pk])
         response=self.client.post(url,payload)
         self.assertContains(response,'permission to record a partial payment')

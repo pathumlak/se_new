@@ -703,6 +703,7 @@ class CashDrawerEditForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         #: The drawer with this entry left out — what it would hold if this row
         #: didn't exist. An edited 'out' can't take more than that.
+        self.fields["txn_type"].choices = [(key, label) for key, label in CashDrawer.TxnType.choices if key in {"in", "out", "transfer"}]
         self.drawer_balance = drawer_balance
 
     def clean_reason(self):
@@ -1298,24 +1299,8 @@ class BillPaymentForm(forms.Form):
         return "Could not save."
 
 
-class CustomerSettlementForm(forms.Form):
-    """Settle one lump payment against a customer's outstanding bills.
-
-    Not a ModelForm: a settlement can produce many Payment rows across many
-    Bills — the view fans out the amount FIFO across the customer's unpaid
-    bills, then creates one Payment per bill via the same _record_payments
-    the bill-write path uses.
-
-    Cheques are supplied as JSON on `cheques_json` so any number of them can
-    ride on the same submission; the view parses and validates each one.
-
-    Amount rules:
-      * Cash: cash > 0.
-      * Cheque: at least one cheque row, each with amount > 0.
-      * Mixed: both a cash amount and at least one cheque.
-    A total larger than what is outstanding is allowed — the excess lands on
-    the customer's balance as credit for the next bill.
-    """
+class PaymentBreakdownForm(forms.Form):
+    """Existing cash/cheque validation retained for supplier bill payments."""
 
     METHOD_CHOICES = [
         ("cash", "Cash"),
@@ -1476,7 +1461,80 @@ class CustomerSettlementForm(forms.Form):
         return "Could not save."
 
 
-class SupplierBillPaymentForm(CustomerSettlementForm):
+class CustomerSettlementForm(PaymentBreakdownForm):
+    """A single account settlement, with independently validated method amounts."""
+    method = forms.ChoiceField(choices=[("cash", "Cash"), ("cheque", "Cheque"),
+        ("transfer", "Bank transfer"), ("mixed", "Mixed")], widget=forms.RadioSelect(), initial="cash")
+    request_token = forms.UUIDField(widget=forms.HiddenInput())
+    note = forms.CharField(label="Settlement note", strip=False, max_length=5000,
+        widget=forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 3}))
+    notice = forms.CharField(label="Payment notice / description", strip=False, max_length=5000,
+        widget=forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 3}))
+    bank_amount = forms.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False,
+        widget=forms.NumberInput(attrs={"class": INPUT_CLASSES, "step": "0.01", "min": "0"}))
+    bank_account = forms.ChoiceField(choices=list(Payment.Account.choices), required=False,
+        widget=forms.Select(attrs={"class": SELECT_CLASSES}))
+    bank_name = forms.CharField(max_length=100, required=False, widget=forms.TextInput(attrs={"class": INPUT_CLASSES}))
+    bank_reference = forms.CharField(max_length=150, required=False, widget=forms.TextInput(attrs={"class": INPUT_CLASSES}))
+    correction_reason = forms.CharField(required=False, max_length=1000,
+        widget=forms.Textarea(attrs={"class": INPUT_CLASSES, "rows": 2}))
+
+    def __init__(self, *args, correcting=False, **kwargs):
+        import uuid
+        super().__init__(*args, **kwargs)
+        self.fields["correction_reason"].required = correcting
+        if not self.is_bound:
+            self.initial.setdefault("request_token", uuid.uuid4())
+
+    def clean(self):
+        # Supplier and bill payment forms retain their existing rules.
+        cleaned = forms.Form.clean(self)
+        for field in ("note", "notice"):
+            if not (cleaned.get(field) or "").strip():
+                self.add_error(field, "This field is required.")
+        cash = cleaned.get("cash_amount") or Decimal("0")
+        bank = cleaned.get("bank_amount") or Decimal("0")
+        try:
+            items = json.loads(cleaned.get("cheques_json") or "[]")
+        except (ValueError, TypeError):
+            raise forms.ValidationError("Cheque list is malformed.")
+        if not isinstance(items, list) or len(items) > 100:
+            raise forms.ValidationError("Enter a valid list of up to 100 cheques.")
+        self.parsed_cheques = []
+        for index, row in enumerate(items, 1):
+            if not isinstance(row, dict):
+                raise forms.ValidationError(f"Cheque {index}: malformed row.")
+            amount = forms.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01")).clean(row.get("amount"))
+            maturity = forms.DateField().clean(row.get("maturity_date"))
+            received = cleaned.get("settlement_date")
+            if received and maturity < received:
+                raise forms.ValidationError(f"Cheque {index}: maturity cannot be before the settlement date.")
+            cheque = {"amount": amount, "received_date": received, "maturity_date": maturity}
+            for name, length, required in [("cheque_no",50,True),("bank_name",100,True),("branch",100,False),("acc_no",50,False)]:
+                cheque[name] = forms.CharField(max_length=length, required=required).clean(row.get(name))
+            cheque["_original_id"] = forms.IntegerField(required=False, min_value=1).clean(row.get("original_cheque_id"))
+            self.parsed_cheques.append(cheque)
+        cheque_total = sum((c["amount"] for c in self.parsed_cheques), Decimal("0"))
+        amounts = {"cash": cash, "cheque": cheque_total, "transfer": bank}
+        method = cleaned.get("method")
+        positive = [key for key, amount in amounts.items() if amount > 0]
+        if method == "mixed":
+            if len(positive) < 2:
+                raise forms.ValidationError("Mixed payments need amounts for at least two payment methods.")
+        elif method in amounts and positive != [method]:
+            raise forms.ValidationError("Enter an amount for the selected method only, or choose Mixed.")
+        if bank:
+            for name in ("bank_name", "bank_reference", "bank_account"):
+                if not cleaned.get(name):
+                    self.add_error(name, "Required for a bank transfer.")
+        total = cash + bank + cheque_total
+        if total <= 0 or total > Decimal("9999999999.99"):
+            raise forms.ValidationError("Enter a settlement total between 0.01 and 9,999,999,999.99.")
+        cleaned.update(_cash_amount=cash, _bank_amount=bank, _cheque_total=cheque_total, _total_paid=total)
+        return cleaned
+
+
+class SupplierBillPaymentForm(PaymentBreakdownForm):
     """Pay a supplier bill — the money-out mirror of CustomerSettlementForm.
 
     Same Cash / Cheque / Mixed shape, same validation, same overpayment

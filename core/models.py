@@ -1,4 +1,5 @@
 import secrets
+import uuid
 from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
@@ -569,7 +570,76 @@ class BillEditAudit(models.Model):
         return f"Bill #{self.bill_id} edited {self.edit_date} · {self.reason}"
 
 
+class CustomerSettlement(models.Model):
+    """One customer-account receipt; never allocated to previous bills."""
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        CANCELLED = "cancelled", "Cancelled"
+        REPLACED = "replaced", "Corrected"
+
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="account_settlements")
+    request_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    settlement_date = models.DateField()
+    method = models.CharField(max_length=20)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    note = models.TextField()
+    notice = models.TextField()
+    bank_name = models.CharField(max_length=100, blank=True)
+    bank_reference = models.CharField(max_length=150, blank=True)
+    previous_balance = models.DecimalField(max_digits=12, decimal_places=2)
+    updated_balance = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    replaces = models.OneToOneField("self", null=True, blank=True, on_delete=models.PROTECT, related_name="replacement")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="account_settlements")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-settlement_date", "-pk"]
+
+    @property
+    def reference(self):
+        return f"SET-{self.pk:06d}"
+
+    def __str__(self):
+        return f"{self.reference} · {self.customer.name} · {self.amount}"
+
+    @property
+    def cheque_records(self):
+        return Cheque.all_objects.filter(payment__settlement=self).order_by("pk")
+
+    @property
+    def method_label(self):
+        return {"cash": "Cash", "cheque": "Cheque", "transfer": "Bank transfer", "mixed": "Mixed"}.get(self.method, self.method)
+
+
+class SettlementAudit(models.Model):
+    settlement = models.ForeignKey(CustomerSettlement, on_delete=models.PROTECT, related_name="audits")
+    action = models.CharField(max_length=40)
+    reason = models.TextField()
+    details = models.JSONField(default=dict)
+    actor = models.ForeignKey(User, null=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "pk"]
+
+
+class ActiveSettlementPaymentManager(models.Manager):
+    """Voided records remain in all_objects for audit, outside live accounting."""
+    def get_queryset(self):
+        return super().get_queryset().filter(models.Q(settlement__isnull=True) | models.Q(settlement__status="active"))
+
+
+class ActiveSettlementRecordManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(models.Q(payment__settlement__isnull=True) | models.Q(payment__settlement__status="active"))
+
+
 class Payment(models.Model):
+    objects = ActiveSettlementPaymentManager()
+    all_objects = models.Manager()
+    settlement = models.ForeignKey(CustomerSettlement, null=True, blank=True, on_delete=models.PROTECT, related_name="payments")
+
     class Method(models.TextChoices):
         CASH = "cash", "Cash"
         CHEQUE = "cheque", "Cheque"
@@ -614,6 +684,7 @@ class Payment(models.Model):
     paid_at = models.DateTimeField()
 
     class Meta:
+        base_manager_name = "all_objects"
         ordering = ["-paid_at", "-id"]
 
     def __str__(self):
@@ -651,6 +722,9 @@ class PaymentEditAudit(models.Model):
 
 
 class Cheque(models.Model):
+    objects = ActiveSettlementRecordManager()
+    all_objects = models.Manager()
+
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         DEPOSITED = "deposited", "Deposited"
@@ -714,6 +788,7 @@ class Cheque(models.Model):
     bounced_at = models.DateField(null=True, blank=True)
 
     class Meta:
+        base_manager_name = "all_objects"
         ordering = ["maturity_date", "-id"]
 
     def __str__(self):
@@ -758,6 +833,9 @@ class ChequeReceivedDateEditAudit(models.Model):
 
 
 class CashTransfer(models.Model):
+    objects = ActiveSettlementRecordManager()
+    all_objects = models.Manager()
+
     class Account(models.TextChoices):
         SENOVKA = "senovka", "Senovka"
 
@@ -771,6 +849,7 @@ class CashTransfer(models.Model):
     transferred_at = models.DateTimeField()
 
     class Meta:
+        base_manager_name = "all_objects"
         ordering = ["-transferred_at", "-id"]
 
     def __str__(self):
@@ -778,10 +857,15 @@ class CashTransfer(models.Model):
 
 
 class CashDrawer(models.Model):
+    objects = ActiveSettlementRecordManager()
+    all_objects = models.Manager()
+
     class TxnType(models.TextChoices):
         IN = "in", "In"
         OUT = "out", "Out"
         TRANSFER = "transfer", "Transfer"
+        BANK = "bank", "Bank receipt (non-cash)"
+        CHEQUE = "cheque", "Cheque receipt (non-cash)"
 
     txn_date = models.DateField()
     txn_type = models.CharField(max_length=20, choices=TxnType.choices)
@@ -820,6 +904,7 @@ class CashDrawer(models.Model):
     )
 
     class Meta:
+        base_manager_name = "all_objects"
         ordering = ["-txn_date", "-id"]
 
     def __str__(self):

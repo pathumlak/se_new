@@ -76,7 +76,7 @@ def _client_ip(request):
 _LOGGED_MODELS = [
     # Sales / money
     "Bill", "BillSettlement", "Payment", "Cheque", "CashDrawer",
-    "CashTransfer", "CustomerBalanceAdjustment",
+    "CashTransfer", "CustomerBalanceAdjustment", "CustomerSettlement",
     # Customers & catalogue
     "Customer", "Category", "Product", "CustomerPrice",
     # Suppliers & purchasing

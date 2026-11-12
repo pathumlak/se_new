@@ -234,11 +234,14 @@
                 <details class="mt-2 text-xs text-slate-600"><summary class="cursor-pointer">View individual payments</summary>
                   <ul class="mt-2 space-y-2">
                     {% for member in row.payment_members %}<li>
-                      #{{ member.payment_pk }} · {{ member.description }} · {{ member.credit|floatformat:2|intcomma }}
+                      {% if member.payment_pk %}#{{ member.payment_pk }} · {% endif %}{{ member.description }} · {{ member.credit|floatformat:2|intcomma }}
+                      {% if member.settlement %}{% include 'core/partials/settlement_details.html' with settlement=member.settlement %}{% endif %}
                       {% if member.payment_editable %}{% permitted 'customer_payment_edit' %}<a href="?month=all&edit_payment={{ member.payment_pk }}" class="ml-2 font-semibold text-teal-700">Edit</a>{% endpermitted %}{% endif %}
                     </li>{% endfor %}
                   </ul>
                 </details>
+              {% elif row.settlement %}
+                {% include 'core/partials/settlement_details.html' with settlement=row.settlement %}
               {% elif row.is_opening %}
                 <span class="inline-flex items-center gap-1.5">
                   <span class="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">Opening</span>

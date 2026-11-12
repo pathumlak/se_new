@@ -172,6 +172,8 @@ URL_PERMISSION_MAP = {
     "customer_opening_balance_edit": "balances.opening_edit",
     "customer_adjustment_create": "balances.edit", "customer_adjustment_edit": "balances.edit",
     "customer_adjustment_delete": "balances.edit", "customer_payment_edit": "payments.edit",
+    "customer_settlement_detail": "balances.view",
+    "customer_settlement_edit": "payments.edit", "customer_settlement_cancel": "payments.edit",
     "customer_settle": "billing.settle", "bill_create": "billing.create",
     "bill_products": "billing.create", "bill_save": "billing.create", "bill_list": "billing.view",
     "bill_list_excel": "reports.export", "bill_detail": "billing.view", "bill_print": "billing.view",

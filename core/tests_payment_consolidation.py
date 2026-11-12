@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -9,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 from openpyxl import load_workbook
 from .models import (User, Customer, Category, Product, Bill, Payment, CashDrawer, CashTransfer, Cheque)
-from .views import (_save_bill, _ledger_rows, _allocate_settlement, _record_payments,
+from .views import (_save_bill, _ledger_rows, _record_payments,
                     _cash_drawer_balance, _customer_ledger_period_slice)
 from .payment_display import cash_drawer_rows
 
@@ -47,21 +48,22 @@ class DailyReceiptTests(TestCase):
         first=self.bill(100);second=self.bill(200)
         self.pay(first,40)
         response=self.client.post(reverse('core:customer_settle',args=[self.customer.pk]),{
+            'request_token':str(uuid.uuid4()),'note':'Against outstanding','notice':'Account payment',
             'method':'cash','cash_amount':'280','settlement_date':self.day.isoformat()})
         self.assertEqual(response.status_code,302)
-        # 40 + allocations of 60, 200, and detached excess 20.
-        self.assertEqual(list(Payment.objects.order_by('pk').values_list('amount',flat=True)),[40,60,200,20])
+        # One bill payment and one customer-level settlement; bills remain unchanged.
+        self.assertEqual(list(Payment.objects.order_by('pk').values_list('amount',flat=True)),[40,280])
         self.assertEqual(len(self.credits()),1)
         self.assertEqual(self.credits()[0]['credit'],320)
-        self.assertEqual(len(self.credits()[0]['payment_members']),4)
+        self.assertEqual(len(self.credits()[0]['payment_members']),2)
         rows,total_in,total_out,closing=self.drawer_rows()
         self.assertEqual((len(rows),total_in,total_out,closing),(1,320,0,320))
         self.assertFalse(rows[0]['is_manual'])
-        for bill in [first,second]:
-            bill.refresh_from_db();self.assertEqual(bill.remaining_balance,0);self.assertEqual(bill.status,'paid')
+        first.refresh_from_db();second.refresh_from_db()
+        self.assertEqual((first.remaining_balance,second.remaining_balance),(60,200))
         self.customer.refresh_from_db();self.assertEqual(self.customer.balance,20)
         self.assertEqual(_ledger_rows(self.customer)[-1]['balance'],-20)
-        self.assertEqual(CashDrawer.objects.count(),4)
+        self.assertEqual(CashDrawer.objects.count(),2)
 
     def test_different_dates_and_customers_remain_separate(self):
         bill=self.bill(100)

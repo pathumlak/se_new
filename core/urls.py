@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import views, settlement_views
 
 app_name = "core"
 
@@ -128,13 +128,15 @@ urlpatterns = [
         views.customer_ledger_bulk_excel,
         name="customer_ledger_bulk_excel",
     ),
-    # One lump payment fanned out across the customer's outstanding bills,
-    # oldest first — see _allocate_settlement.
+    # Customer-level settlement: no allocation to old bills.
     path(
         "customers/<int:pk>/settle/",
         views.customer_settle,
         name="customer_settle",
     ),
+    path("settlements/<int:pk>/", settlement_views.customer_settlement_detail, name="customer_settlement_detail"),
+    path("settlements/<int:pk>/edit/", settlement_views.customer_settlement_edit, name="customer_settlement_edit"),
+    path("settlements/<int:pk>/cancel/", settlement_views.customer_settlement_cancel, name="customer_settlement_cancel"),
     # Super-admin only, enforced per view.
     path(
         "customers/<int:pk>/adjustments/create/",
