@@ -219,3 +219,51 @@ class DailyReceiptTests(TestCase):
                 if not node or 'application/json' in attrs or not body.strip():continue
                 checked=subprocess.run([node,'--check'],input=body,text=True,capture_output=True)
                 self.assertEqual(checked.returncode,0,checked.stderr)
+
+    def test_screenshot_case_consolidates_receipts_and_bank_transfers_separately(self):
+        self.customer.credit_limit = 200000
+        self.customer.save(update_fields=['credit_limit'])
+        first=self.bill(93250);second=self.bill(8750)
+        self.pay(first,93250,cash_account='senovka')
+        self.pay(second,8750,cash_account='senovka')
+        _record_payments(None,self.customer,{'cash':Decimal(48000),'cash_account':'senovka','cheques':[]},paid_on=self.day)
+        before=list(CashDrawer.objects.values())
+        entries=CashDrawer.objects.select_related('bill__customer','payment__customer').order_by('txn_date','pk')
+        rows,total_in,total_out,closing=cash_drawer_rows(entries,Decimal(37322))
+        self.assertEqual(len(rows),2)
+        receipt,transfer=rows
+        self.assertEqual(receipt['entry'].amount,150000)
+        self.assertEqual(transfer['entry'].amount,150000)
+        self.assertTrue(transfer['is_transfer'])
+        self.assertIn('Transferred to Senovka',transfer['description'])
+        self.assertEqual((receipt['running'],transfer['running']),(187322,37322))
+        self.assertEqual((total_in,total_out,closing),(150000,150000,37322))
+        self.assertEqual(len(transfer['source_entries']),3)
+        self.assertEqual(before,list(CashDrawer.objects.values()))
+        response=self.client.get(reverse('core:cash_drawer'),{'month':'all'})
+        self.assertContains(response,'class="js-drawer-row"',count=2)
+        self.assertContains(response,'View transfer records')
+        export=self.client.get(reverse('core:cash_drawer_excel'),{'month':'all'})
+        ws=load_workbook(BytesIO(export.content)).active
+        outgoing=[r for r in ws.iter_rows(values_only=True) if 'Transferred to Senovka' in str(r[1])]
+        self.assertEqual(len(outgoing),1)
+        self.assertEqual(outgoing[0][3],150000)
+
+    def test_transfers_with_different_accounts_dates_or_customers_stay_separate(self):
+        first=self.bill();self.pay(first,10,cash_account='senovka');self.pay(first,10,cash_account='senovka')
+        self.pay(first,10,self.day+timedelta(days=1),cash_account='senovka')
+        other=Customer.objects.create(name=self.customer.name)
+        _record_payments(None,other,{'cash':Decimal(5),'cash_account':'senovka','cheques':[]},paid_on=self.day)
+        # Retained legacy account values still must not mix with Senovka.
+        _record_payments(None,self.customer,{'cash':Decimal(7),'cash_account':'dinusha','cheques':[]},paid_on=self.day)
+        transfers=[r for r in self.drawer_rows()[0] if r['is_transfer']]
+        self.assertEqual(len(transfers),4)
+        self.assertEqual(sorted(r['entry'].amount for r in transfers),[5,7,10,20])
+
+    def test_legacy_bill_transfers_group_without_a_payment_link(self):
+        first=self.bill();second=self.bill()
+        self.pay(first,20,cash_account='senovka');self.pay(second,30,cash_account='senovka')
+        CashDrawer.objects.filter(txn_type='transfer').update(payment=None)
+        transfers=[r for r in self.drawer_rows()[0] if r['is_transfer']]
+        self.assertEqual(len(transfers),1)
+        self.assertEqual(transfers[0]['entry'].amount,50)

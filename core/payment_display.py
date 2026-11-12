@@ -31,7 +31,7 @@ def consolidate_ledger_payments(entries):
 
 
 def cash_drawer_rows(entries, opening=ZERO):
-    """Group only customer cash receipts; expenses and bank transfers stay separate."""
+    """Group customer receipts and transfers separately by day and destination."""
     rows, groups = [], {}
     for entry in entries:
         customer = entry.bill.customer if entry.bill_id and entry.bill.customer_id else None
@@ -41,14 +41,30 @@ def cash_drawer_rows(entries, opening=ZERO):
             if payment.customer_id and not payment.supplier_bill_id and not payment.customer.is_supplier:
                 customer = payment.customer
         is_receipt = customer is not None and entry.txn_type == 'in'
-        key = (customer.pk, entry.txn_date) if is_receipt else None
+        destination = ""
+        if customer is not None and entry.txn_type == 'transfer':
+            if entry.payment_id and entry.payment.account:
+                destination = entry.payment.get_account_display()
+            elif entry.bill_id:
+                # Older generated transfers may predate the payment link.
+                prefix = f"Bill #{entry.bill.bill_number or entry.bill_id} cash to "
+                if entry.reason.startswith(prefix):
+                    destination = entry.reason[len(prefix):].strip()
+        is_transfer = bool(destination)
+        if is_receipt:
+            key = (customer.pk, entry.txn_date, 'in', '')
+        elif is_transfer:
+            key = (customer.pk, entry.txn_date, 'transfer', destination.casefold())
+        else:
+            key = None
         if key is not None and key in groups:
             row = groups[key]
             row['entry'].amount += entry.amount
             row['source_entries'].append(entry)
         else:
             row = {'entry': copy(entry), 'source_entries': [entry],
-                   'customer': customer if is_receipt else None,
+                   'customer': customer if is_receipt or is_transfer else None,
+                   'is_transfer': is_transfer, 'destination': destination,
                    'is_in': entry.txn_type == 'in',
                    'is_manual': not (entry.bill_id or entry.supplier_bill_id or entry.payment_id)}
             rows.append(row)
@@ -59,7 +75,8 @@ def cash_drawer_rows(entries, opening=ZERO):
         entry = row['entry']
         row['is_grouped'] = len(row['source_entries']) > 1
         if row['customer']:
-            row['description'] = f"{row['customer'].name} · Cash received"
+            movement = f"Transferred to {row['destination']}" if row['is_transfer'] else 'Cash received'
+            row['description'] = f"{row['customer'].name} · {movement}"
             if row['is_grouped']:
                 row['description'] += f" · {len(row['source_entries'])} records"
         else:
