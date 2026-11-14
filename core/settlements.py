@@ -37,7 +37,9 @@ def _void_locked(settlement, customer, actor, reason, status):
 
 @transaction.atomic
 def record_settlement(customer_id, data, cheques, actor, replaces=None):
-    customer = Customer.objects.select_for_update().get(pk=customer_id, is_supplier=False)
+    customer = Customer.objects.select_for_update().get(pk=customer_id)
+    if not customer.can_receive_settlement:
+        raise ValidationError('This supplier has no customer balance or sales history to settle.')
     existing = CustomerSettlement.objects.filter(request_token=data['request_token']).first()
     if existing:
         if existing.customer_id != customer_id or existing.replaces_id != replaces:

@@ -8611,7 +8611,10 @@ def _outstanding_context(request):
         live_bills.values("customer").annotate(total=Sum("total_amount")).values("total")
     )
     customer_payments = Payment.objects.filter(
-        Q(bill__customer=OuterRef("pk")) | Q(customer=OuterRef("pk"), supplier_bill__isnull=True)
+        Q(bill__customer=OuterRef("pk")) | (
+            Q(customer=OuterRef("pk"), supplier_bill__isnull=True)
+            & (Q(settlement__isnull=False) | Q(customer__is_supplier=False))
+        )
     ).exclude(bill__status=Bill.Status.CANCELLED)
     received = (customer_payments.exclude(cheques__status=Cheque.Status.BOUNCED)
         .exclude(settlement__isnull=True, cheques__status=Cheque.Status.HELD)

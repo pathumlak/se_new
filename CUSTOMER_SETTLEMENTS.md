@@ -23,3 +23,9 @@ Permissions reuse the existing tasks: `billing.settle` to create, `billing.parti
 Commit and push all changed files, including `0042_customer_account_settlements.py`, before pulling on the server. Back up the server database, then run the normal deployment with `python manage.py migrate`, `collectstatic` and service restart. There is no need to generate migrations on the server for this update. Migration 0042 only adds the settlement schema and non-cash categories; it does not rewrite historical financial records.
 
 Validation: 95 focused tests passed across account settlements, daily consolidation, permission tasks, notifications, supplier payments and payment dates. UI checks confirmed a 50,000 cash + 60,000 bank + 30,000 cheque receipt totals 140,000 while physical cash increases by 50,000. The existing broader suite has legacy permission/expectation failures; comparison of 177 related tests against the unchanged Desktop checkout found the same failing test names before and after this update.
+
+## Accounts that are both customers and suppliers
+
+The supplier flag does not prevent collection of a customer receivable. Settlement is available when an account is a regular customer, has a negative available balance, has non-cancelled sales bills, or has existing account-settlement history. This preserves settlement corrections even after its outstanding balance reaches zero. Supplier-only accounts with no customer receivable or sales history continue using supplier payment screens.
+
+Payment direction comes from the transaction: customer settlements and sales-bill cheques are incoming, supplier-bill cheques are outgoing. Older detached payments retain their existing role-based classification. Daily receipt grouping and outstanding-report totals include incoming settlements without treating supplier payouts as money received. No customer flags, balances or historical bills are rewritten by this fix; no migration is required.

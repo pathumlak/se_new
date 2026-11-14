@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db.models import Prefetch
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -59,7 +60,10 @@ def _form_page(request, customer, original=None):
 
 @task_permission_required
 def customer_settle(request, pk):
-    return _form_page(request, get_object_or_404(Customer, pk=pk, is_supplier=False))
+    customer = get_object_or_404(Customer, pk=pk)
+    if not customer.can_receive_settlement:
+        raise Http404("This supplier has no customer balance or sales history to settle.")
+    return _form_page(request, customer)
 
 
 @task_permission_required

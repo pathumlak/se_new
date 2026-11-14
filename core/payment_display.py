@@ -52,8 +52,9 @@ def cash_drawer_rows(entries, opening=ZERO):
         customer = entry.bill.customer if entry.bill_id and entry.bill.customer_id else None
         if customer is None and entry.payment_id:
             payment = entry.payment
-            # Detached supplier payments are outgoing, never customer receipts.
-            if payment.customer_id and not payment.supplier_bill_id and not payment.customer.is_supplier:
+            # A settlement is an incoming receipt even when its customer also supplies us.
+            # Keep older detached supplier payouts outside the receipt groups.
+            if payment.customer_id and not payment.supplier_bill_id and (payment.settlement_id or not payment.customer.is_supplier):
                 customer = payment.customer
         is_receipt = customer is not None and entry.txn_type in {'in', 'bank', 'cheque'}
         destination = ""

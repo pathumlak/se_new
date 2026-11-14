@@ -223,6 +223,17 @@ class Customer(models.Model):
         return self.name
 
 
+    @property
+    def can_receive_settlement(self):
+        """Suppliers may also buy from us or carry a customer receivable."""
+        return (
+            not self.is_supplier
+            or self.balance < 0
+            or self.bills.exclude(status=Bill.Status.CANCELLED).exists()
+            or self.account_settlements.exists()
+        )
+
+
 
 class CustomerBalanceAdjustment(models.Model):
     """A manual correction to a customer's running balance.
@@ -796,18 +807,17 @@ class Cheque(models.Model):
 
     @property
     def is_issued(self):
-        """True for a cheque we wrote to pay a supplier; False for one we
-        received from a customer. Every other field means the same thing
-        either way — this just says which direction the money moves.
+        """Use the transaction's direction when a party trades both ways.
 
-        Keyed off `customer.is_supplier` rather than `supplier_bill_id`: a
-        cheque attached to a specific bill has that FK set, but a detached
-        one (the overpayment spillover — see _record_supplier_payments) is
-        still an issued cheque even with no bill behind it. `customer` is
-        always set either way, so it's the one field that tells the two
-        apart in every case.
+        The supplier flag is only a fallback for older detached payments.
+        A customer-account settlement is always an incoming receipt.
         """
+        if self.supplier_bill_id:
+            return True
+        if self.bill_id or (self.payment_id and self.payment.settlement_id):
+            return False
         return bool(self.customer_id) and self.customer.is_supplier
+
 
 
 class ChequeReceivedDateEditAudit(models.Model):

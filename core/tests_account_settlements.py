@@ -273,3 +273,107 @@ class AccountSettlementTests(TestCase):
         self.record(cash_amount='160000')
         self.assert_balance('10000','160000')
         self.assertFalse(Payment.objects.filter(bill__isnull=False).exists())
+
+
+@override_settings(ALLOWED_HOSTS=['testserver'])
+class CustomerSupplierSettlementTests(TestCase):
+    """An account may buy from us and supply us without changing its role flag."""
+    payload = AccountSettlementTests.payload
+    cheque = AccountSettlementTests.cheque
+    record = AccountSettlementTests.record
+    assert_balance = AccountSettlementTests.assert_balance
+
+    def setUp(self):
+        from .models import SupplierBill
+        self.admin = User.objects.create_user('dual-role-admin', role='super_admin')
+        self.client.force_login(self.admin)
+        self.day = timezone.localdate() - timedelta(days=2)
+        self.customer = Customer.objects.create(name='INDIKA', is_supplier=True,
+            balance=-256600, opening_balance=0, opening_balance_date=self.day-timedelta(days=10))
+        for _ in range(8):
+            Bill.objects.create(customer=self.customer, bill_date=self.day-timedelta(days=5),
+                total_amount=40000, balance_change=-40000, payment_type='pay_later', status='unpaid')
+        for _ in range(2):
+            SupplierBill.objects.create(supplier=self.customer, bill_date=self.day-timedelta(days=4),
+                total_amount=31700, status='unpaid')
+        self.url = reverse('core:customer_settle', args=[self.customer.pk])
+
+    def test_indika_form_and_cash_receipt_preserve_both_trading_histories(self):
+        before_sales = list(self.customer.bills.values())
+        before_purchases = list(self.customer.supplier_bills.values())
+        response = self.client.get(self.url)
+        self.assertContains(response, 'INDIKA')
+        self.assertEqual(response.context['total_owed'],256600)
+        self.record()
+        self.assert_balance('-116600','140000')
+        self.assertTrue(self.customer.is_supplier)
+        self.assertEqual(before_sales,list(self.customer.bills.values()))
+        self.assertEqual(before_purchases,list(self.customer.supplier_bills.values()))
+
+    def test_mixed_receipt_groups_once_and_incoming_cheque_is_not_issued(self):
+        settlement = self.record(method='mixed', cash_amount='50000', bank_amount='60000',
+            bank_name='BOC', bank_account='senovka', bank_reference='IN-96',
+            cheques_json=json.dumps([self.cheque()]))
+        self.assert_balance('-116600','50000')
+        self.assertFalse(Cheque.objects.get().is_issued)
+        response = self.client.get(reverse('core:cash_drawer'), {'month':'all'})
+        row = response.context['rows'][0]
+        self.assertEqual(len(response.context['rows']),1)
+        self.assertEqual(row['customer'].pk,self.customer.pk)
+        self.assertEqual(row['entry'].amount,140000)
+        self.assertEqual((row['cash_in'],row['non_cash']),(50000,90000))
+        self.assertContains(response,settlement.note)
+        self.assertContains(response,settlement.notice)
+        self.assertEqual(self.client.get(reverse('core:outstanding_report')).context['total_received'],140000)
+
+    def test_received_cheque_return_and_cancellation_do_not_move_balance_the_wrong_way(self):
+        settlement = self.record(method='cheque',cash_amount='',cheques_json=json.dumps([self.cheque('140000')]))
+        cheque = Cheque.objects.get()
+        self.assertFalse(cheque.is_issued)
+        self.assert_balance('-116600','0')
+        self.client.post(reverse('core:cheque_bounce',args=[cheque.pk]), {'bounce_new_date':timezone.localdate().isoformat()})
+        self.assert_balance('-256600','0')
+        self.client.post(reverse('core:cheque_deposit',args=[cheque.pk]))
+        self.assert_balance('-116600','0')
+        self.client.post(reverse('core:customer_settlement_cancel',args=[settlement.pk]),{'reason':'Receipt entered in error'})
+        self.assert_balance('-256600','0')
+
+    def test_correction_and_cancellation_preserve_supplier_classification(self):
+        settlement = self.record()
+        response = self.client.post(reverse('core:customer_settlement_edit',args=[settlement.pk]),
+            self.payload(cash_amount='130000',correction_reason='Amount correction'))
+        self.assertEqual(response.status_code,302)
+        corrected = CustomerSettlement.objects.get(replaces=settlement)
+        self.assert_balance('-126600','130000')
+        self.client.post(reverse('core:customer_settlement_cancel',args=[corrected.pk]),{'reason':'Cancelled correction'})
+        self.assert_balance('-256600','0')
+        self.assertTrue(self.customer.is_supplier)
+
+    def test_full_receipt_remains_accessible_after_balance_is_cleared(self):
+        self.record(cash_amount='256600')
+        self.assert_balance('0','256600')
+        self.assertEqual(self.client.get(self.url).status_code,200)
+
+    def test_supplier_receivable_without_sales_bills_can_be_collected(self):
+        party = Customer.objects.create(name='Opening receivable',is_supplier=True,balance=-500)
+        url=reverse('core:customer_settle',args=[party.pk])
+        self.assertEqual(self.client.get(url).status_code,200)
+        self.assertEqual(self.client.post(url,self.payload(cash_amount='500')).status_code,302)
+        party.refresh_from_db();self.assertEqual(party.balance,0)
+        self.assertTrue(party.is_supplier)
+        self.assertEqual(self.client.get(url).status_code,200)
+
+    def test_outgoing_supplier_cheques_and_payouts_keep_their_direction(self):
+        self.record()
+        # A historical detached supplier payout is not a customer receipt.
+        payout = Payment.objects.create(customer=self.customer,method='cheque',amount=1000,paid_at=timezone.now())
+        cheque = Cheque.objects.create(payment=payout,customer=self.customer,cheque_no='OUT-96',
+            bank_name='BOC',amount=1000,received_date=self.day,maturity_date=self.day)
+        self.assertTrue(cheque.is_issued)
+        self.assertEqual(self.client.get(reverse('core:outstanding_report')).context['total_received'],140000)
+        # Explicit bill links override the party flag in both directions.
+        cheque.supplier_bill=self.customer.supplier_bills.first()
+        self.assertTrue(cheque.is_issued)
+        cheque.supplier_bill=None
+        cheque.bill=self.customer.bills.first()
+        self.assertFalse(cheque.is_issued)
