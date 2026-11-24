@@ -6939,7 +6939,6 @@ def cash_drawer_excel(request):
         c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
 
         ws.cell(row=row, column=6, value=source).alignment = center
-        ws.cell(row=row, column=7, value=float(display["non_cash"])).number_format = "#,##0.00"
         row += 1
 
     # Totals + closing balance.
@@ -6949,15 +6948,11 @@ def cash_drawer_excel(request):
     c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
     c = ws.cell(row=row, column=4, value=float(total_out))
     c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
-    ws.cell(row=row, column=7, value=float(sum((r["non_cash"] for r in display_rows), ZERO))).number_format = "#,##0.00"
     row += 1
     ws.cell(row=row, column=2, value="Closing balance").font = Font(bold=True)
     c = ws.cell(row=row, column=5, value=float(running))
     c.number_format = "#,##0.00"; c.alignment = right; c.font = Font(bold=True)
 
-    ws.cell(row=header_row, column=7, value="Non-cash received").font = header_font
-    ws.cell(row=header_row, column=7).fill = header_fill
-    ws.column_dimensions["G"].width = 22
     ws.freeze_panes = f"A{header_row + 1}"
 
     widths = {"A": 12, "B": 42, "C": 14, "D": 14, "E": 16, "F": 18}

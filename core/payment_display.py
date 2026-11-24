@@ -49,6 +49,8 @@ def cash_drawer_rows(entries, opening=ZERO):
     """Group customer receipts and transfers separately by day and destination."""
     rows, groups = [], {}
     for entry in entries:
+        if entry.txn_type in {'bank', 'cheque'}:
+            continue
         customer = entry.bill.customer if entry.bill_id and entry.bill.customer_id else None
         if customer is None and entry.payment_id:
             payment = entry.payment
